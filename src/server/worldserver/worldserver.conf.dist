@@ -3613,6 +3613,49 @@ CharDelete.KeepDays = 30
 ###################################################################################################
 # CUSTOM SERVER OPTIONS
 #
+#    StarterGuild.Enable
+#    StarterGuild.Announce
+#        Description: Automatically add eligible characters to their faction's starter guild.
+#                     Announce the feature on login when enabled.
+#        Default:     0 - (Disabled)
+#                     1 - (Enabled)
+
+StarterGuild.Enable = 0
+StarterGuild.Announce = 0
+
+#
+#    StarterGuild.Horde
+#    StarterGuild.Alliance
+#        Description: IDs of existing guilds for the respective factions. Create the guilds
+#                     before enabling the feature. Automatic joins stop at 1000 members.
+#                     Assigning the same ID bypasses the normal cross-faction invite check;
+#                     enable AllowTwoSide.Interaction.Guild for a shared guild.
+#        Default:     1 - (Horde)
+#                     2 - (Alliance)
+
+StarterGuild.Horde = 1
+StarterGuild.Alliance = 2
+
+#
+#    StarterGuild.Level
+#        Description: Join on first login if the character starts at or above this level,
+#                     otherwise join when leveling across it. Existing guild members are skipped.
+#                     Characters who leave later are not automatically rejoined on login.
+#        Default:     0 - (Join on first login)
+#        Range:       0-255
+
+StarterGuild.Level = 0
+
+#
+#    StarterGuild.HordeWelcomeText
+#    StarterGuild.AllianceWelcomeText
+#        Description: Message sent after joining. {GUILD} and {PLAYER} are replaced with the
+#                     guild and character names. Set to "" to suppress the message.
+
+StarterGuild.HordeWelcomeText = "Welcome to {GUILD}, {PLAYER}!"
+StarterGuild.AllianceWelcomeText = "Welcome to {GUILD}, {PLAYER}!"
+
+#
 #    PlayerStart.AllReputation
 #        Description: Players will start with most of the high level reputations that are needed
 #                     for items, mounts etc.

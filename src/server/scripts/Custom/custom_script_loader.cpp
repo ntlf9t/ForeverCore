@@ -17,10 +17,12 @@
 
 // This is where scripts' loading functions should be declared:
 void AddClassicScripts();
+void AddStarterGuildScripts();
 
 // The name of this function should match:
 // void Add${NameOfDirectory}Scripts()
 void AddCustomScripts()
 {
     AddClassicScripts();
+	AddStarterGuildScripts();
 }
