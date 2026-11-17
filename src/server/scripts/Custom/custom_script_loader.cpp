@@ -23,6 +23,7 @@ void AddSC_rune_system();
 void AddSC_reroll_addon();
 void AddSC_creature_random_buff();
 void AddSC_player_modes();
+void AddSC_congrats_on_level();
 
 // The name of this function should match:
 // void Add${NameOfDirectory}Scripts()
@@ -35,4 +36,5 @@ void AddCustomScripts()
     AddSC_reroll_addon();
     AddSC_creature_random_buff();
     AddSC_player_modes();
+    AddSC_congrats_on_level();
 }

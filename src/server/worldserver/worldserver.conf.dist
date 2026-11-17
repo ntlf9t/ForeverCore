@@ -3668,6 +3668,22 @@ CharDelete.KeepDays = 30
 ###################################################################################################
 # CUSTOM SERVER OPTIONS
 #
+#    Congrats.Enable
+#    Congrats.Announce
+#    CongratsPerLevel.Enable
+#        Description: Enable level rewards through level 60, announce the feature on login,
+#                     and broadcast each level gained through level 60, respectively.
+#                     Rewards apply to the reached level only, including GM level changes;
+#                     leveling down and then up can grant the rewards again.
+#                     Import sql/custom/world/congrats_on_level.sql before enabling.
+#        Default:     0 - (Disabled for Enable and Announce)
+#                     1 - (Enabled for CongratsPerLevel.Enable)
+
+Congrats.Enable = 0
+Congrats.Announce = 0
+CongratsPerLevel.Enable = 1
+
+#
 #    StarterGuild.Enable
 #    StarterGuild.Announce
 #        Description: Automatically add eligible characters to their faction's starter guild.
