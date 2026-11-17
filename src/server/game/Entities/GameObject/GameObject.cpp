@@ -4021,6 +4021,20 @@ bool GameObject::IsMiningVein() const
     return false;
 }
 
+// An herb or ore node: both are chests whose lock needs Herbalism or Mining
+bool GameObject::IsHerbNode() const
+{
+    LockEntry const* lock = sLockStore.LookupEntry(GetGOInfo()->GetLockId());
+    if (!lock)
+        return false;
+
+    for (uint8 i = 0; i < MAX_LOCK_CASE; ++i)
+        if (lock->Type[i] == LOCK_KEY_SKILL && lock->Index[i] == LOCKTYPE_HERBALISM)
+            return true;
+
+    return false;
+}
+
 void GameObject::RollChestOpens()
 {
     GameObjectTemplate const* goInfo = GetGOInfo();
@@ -4030,6 +4044,10 @@ void GameObject::RollChestOpens()
     float miningRate = sWorld->getRate(RATE_MINING_AMOUNT);
     if (miningRate != 1.0f && IsMiningVein())
         m_goValue.Chest.MaxOpens = std::max<uint32>(1, uint32(std::lround(std::max<uint32>(1, m_goValue.Chest.MaxOpens) * miningRate)));
+
+    // Forever server tweak: every herb and ore node can be gathered 3 times before it disappears
+    if (IsHerbNode() || IsMiningVein())
+        m_goValue.Chest.MaxOpens = 3;
 
     m_goValue.Chest.Opens = 0;
 }

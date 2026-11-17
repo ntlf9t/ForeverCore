@@ -16,6 +16,7 @@
  */
 
 #include "Player.h"
+#include "PlayerMode.h"
 #include "ClassicWeaponImbue.h"
 #include "CombatEnchantProc.h"
 #include "DeathRecap.h"
@@ -104,6 +105,7 @@
 #include "MovementPackets.h"
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
+#include "ItemScoreAffix.h"
 #include "Opcodes.h"
 #include "OutdoorPvP.h"
 #include "OutdoorPvPMgr.h"
@@ -4751,6 +4753,12 @@ void Player::ResurrectPlayer(float restore_percent, bool applySickness)
     if (RefuseHardcoreResurrect())
         return;
 
+    if (PlayerMode::IsDeathLocked(this) && !m_hardcoreReviveAllowed)
+    {
+        ChatHandler(GetSession()).SendSysMessage("孤勇/重生：60 级前死亡无法复活。");
+        return;
+    }
+
     SetAreaSpiritHealer(nullptr);
 
     WorldPackets::Misc::DeathReleaseLoc packet;
@@ -5210,6 +5218,9 @@ bool Player::SnapBuriedLocToFloor(Map* map, WorldLocation& loc, uint32 safeLocId
 
 void Player::RepopAtGraveyard()
 {
+    if (PlayerMode::IsDeathLocked(this) && !m_hardcoreReviveAllowed)
+        return;
+
     // note: this can be called also when the player is alive
     // for example from WorldSession::HandleMovementOpcodes
 
@@ -12361,6 +12372,10 @@ Item* Player::StoreNewItem(ItemPosCountVec const& pos, uint32 itemId, bool updat
 
         item = StoreItem(pos, item, update);
 
+        // 随机词条：物品创建时按评分挂附魔
+        if (item)
+            ItemScoreAffix::Apply(this, item);
+
         ItemAddedQuestCheck(itemId, count, false);
         UpdateCriteria(CriteriaType::ObtainAnyItem, itemId, count);
         UpdateCriteria(CriteriaType::AcquireItem, itemId, count);
@@ -14533,6 +14548,7 @@ void Player::ApplyEnchantment(Item* item, EnchantmentSlot slot, bool apply, bool
         return;
 
     SpellItemEnchantmentEntry const* pEnchant = sSpellItemEnchantmentStore.LookupEntry(enchant_id);
+
     if (!pEnchant)
         return;
 
@@ -27081,6 +27097,20 @@ void Player::SendAurasForTarget(Unit* target) const
         return;
 
     Unit::VisibleAuraContainer const& visibleAuras = target->GetVisibleAuras();
+
+    // 调试：确认怪物随机 buff 的光环是否真的下发给了玩家
+    for (AuraApplication* auraApp : visibleAuras)
+    {
+        uint32 spellId = auraApp->GetBase()->GetId();
+        if (spellId == 6673 || spellId >= 930000)
+        {
+            TC_LOG_INFO("server.loading",
+                ">> AURA send player={} target={} entry={} total={} spell={} flags={} dur={} maxdur={}",
+                GetName(), target->GetName(), target->GetEntry(), uint32(visibleAuras.size()), spellId,
+                uint32(auraApp->GetFlags()), auraApp->GetBase()->GetDuration(), auraApp->GetBase()->GetMaxDuration());
+            break;
+        }
+    }
 
     WorldPackets::Spells::AuraUpdate update;
     update.UpdateAll = true;

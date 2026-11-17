@@ -25,6 +25,7 @@
 #include "Map.h"
 #include "ObjectAccessor.h"
 #include "Player.h"
+#include "PlayerMode.h"
 #include "SocialMgr.h"
 #include "RecentAllies.h"
 #include "Spell.h"
@@ -656,6 +657,15 @@ void WorldSession::HandleInitiateTradeOpcode(WorldPackets::Trade::InitiateTrade&
     if (!pOther)
     {
         info.Status = TRADE_STATUS_NO_TARGET;
+        SendTradeStatus(info);
+        return;
+    }
+
+    // 孤勇模式：双方任意一方都不能交易
+    if (PlayerMode::IsLone(GetPlayer()) || PlayerMode::IsLone(pOther))
+    {
+        SendNotification("孤勇模式不能交易。");
+        info.Status = TRADE_STATUS_FAILED;
         SendTradeStatus(info);
         return;
     }

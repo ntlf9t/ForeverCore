@@ -317,6 +317,10 @@ struct TC_GAME_API Loot
     uint32 GetDungeonEncounterId() const { return _dungeonEncounterId; }
     void SetDungeonEncounterId(uint32 dungeonEncounterId) { _dungeonEncounterId = dungeonEncounterId; }
 
+    // 怪物随机附魔：掉落倍率（默认 1.0，只有带 buff 的怪会 > 1）
+    float GetDropMultiplier() const { return _dropMultiplier; }
+    void SetDropMultiplier(float multiplier) { _dropMultiplier = multiplier; }
+
     bool isLooted() const { return gold == 0 && unlootedCount == 0; }
     bool IsChanged() const { return _changed; }
 
@@ -369,6 +373,7 @@ private:
     bool _wasOpened;                                                // true if at least one player received the loot content
     bool _changed;
     uint32 _dungeonEncounterId;
+    float _dropMultiplier = 1.0f;                                   // 怪物随机附魔：掉落倍率
 };
 
 class TC_GAME_API AELootResult

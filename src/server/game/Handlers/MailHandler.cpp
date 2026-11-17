@@ -33,6 +33,7 @@
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
 #include "Player.h"
+#include "PlayerMode.h"
 #include "RealmList.h"
 #include "World.h"
 
@@ -64,6 +65,12 @@ bool WorldSession::CanOpenMailBox(ObjectGuid guid)
 
 void WorldSession::HandleSendMail(WorldPackets::Mail::SendMail& sendMail)
 {
+    if (PlayerMode::IsLone(_player))
+    {
+        SendNotification("孤勇模式不能发送邮件。");
+        return;
+    }
+
     if (sendMail.Info.Attachments.size() > MAX_CLIENT_MAIL_ITEMS)        // client limit
     {
         GetPlayer()->SendMailResult(0, MAIL_SEND, MAIL_ERR_TOO_MANY_ATTACHMENTS);
@@ -465,6 +472,12 @@ void WorldSession::HandleMailReturnToSender(WorldPackets::Mail::MailReturnToSend
 //called when player takes item attached in mail
 void WorldSession::HandleMailTakeItem(WorldPackets::Mail::MailTakeItem& takeItem)
 {
+    if (PlayerMode::IsLone(_player))
+    {
+        SendNotification("孤勇模式不能收取邮件附件。");
+        return;
+    }
+
     uint64 AttachID = takeItem.AttachID;
 
     if (!CanOpenMailBox(takeItem.Mailbox))
@@ -563,6 +576,12 @@ void WorldSession::HandleMailTakeItem(WorldPackets::Mail::MailTakeItem& takeItem
 
 void WorldSession::HandleMailTakeMoney(WorldPackets::Mail::MailTakeMoney& takeMoney)
 {
+    if (PlayerMode::IsLone(_player))
+    {
+        SendNotification("孤勇模式不能收取邮件金币。");
+        return;
+    }
+
     if (!CanOpenMailBox(takeMoney.Mailbox))
         return;
 

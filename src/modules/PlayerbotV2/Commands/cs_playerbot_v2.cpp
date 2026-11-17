@@ -30,6 +30,7 @@
 #include "Log.h"
 #include <fstream>
 #include "Player.h"
+#include "PlayerMode.h"
 #include "../Fleet/PlayerCraftOrders.h"   // .playerbot craftfor
 #include "../Bot/BotBridge.h"           // .playerbot bridgeask
 #include "GameTime.h"
@@ -992,6 +993,9 @@ public:
         if (!me)
         { handler->SendSysMessage("`.bot add` is in-game only."); return Refuse(handler); }
 
+        if (PlayerMode::IsLone(me))
+        { handler->SendSysMessage("孤勇模式不能使用机器人。"); return Refuse(handler); }
+
         // Say so up front: otherwise a full raid creates a character that can never join and the owner sees nothing.
         if (Group const* ownerGroup = me->GetGroup(); ownerGroup && ownerGroup->isRaidGroup() && ownerGroup->IsFull())
         { handler->SendSysMessage("Bot add failed: your raid is full."); return Refuse(handler); }
@@ -1137,6 +1141,9 @@ public:
         Player* me = sess ? sess->GetPlayer() : nullptr;
         if (!me)
         { handler->SendSysMessage("`.bot call` is in-game only."); return Refuse(handler); }
+
+        if (PlayerMode::IsLone(me))
+        { handler->SendSysMessage("孤勇模式不能使用机器人。"); return Refuse(handler); }
         bool const roster = ToLowerAscii(who) == "all";
         std::vector<Playerbot::BotId> ids;
         if (roster && groupOnly)
@@ -1239,6 +1246,8 @@ public:
         WorldSession* sess = handler ? handler->GetSession() : nullptr;
         if (!sess || !sess->GetPlayer())
             return false;
+        if (PlayerMode::IsLone(sess->GetPlayer()))
+        { handler->SendSysMessage("孤勇模式不能使用机器人。"); handler->SetSentErrorMessage(true); return false; }
         std::string who(args);
         while (!who.empty() && (who.back() == ' ' || who.back() == '\t')) who.pop_back();
         while (!who.empty() && (who.front() == ' ' || who.front() == '\t')) who.erase(who.begin());
@@ -3301,6 +3310,13 @@ public:
     // from the console anyway).
     static bool HandleGroup(ChatHandler* handler, char const* args)
     {
+        if (handler && handler->GetSession() && handler->GetSession()->GetPlayer()
+            && PlayerMode::IsLone(handler->GetSession()->GetPlayer()))
+        {
+            handler->SendSysMessage("孤勇模式不能使用机器人。");
+            return false;
+        }
+
         if (!args || !*args)
         {
             handler->SendSysMessage(
@@ -6505,6 +6521,13 @@ public:
     static bool HandleSummon(ChatHandler* handler, Tail args)
     {
         Playerbot::BotLanguage::LocalizedHandler localized(handler); handler = localized.Get();   // replies in the player's language
+        if (handler && handler->GetSession() && handler->GetSession()->GetPlayer()
+            && PlayerMode::IsLone(handler->GetSession()->GetPlayer()))
+        {
+            handler->SendSysMessage("孤勇模式不能使用机器人。");
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
         if (!Playerbot::Services::Initialized())
         { handler->SendSysMessage("PlayerbotV2 not initialized."); handler->SetSentErrorMessage(true); return false; }
         std::string target_name(args);

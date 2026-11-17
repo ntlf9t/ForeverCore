@@ -911,12 +911,14 @@ void Loot::generateMoneyLoot(uint32 minAmount, uint32 maxAmount)
 {
     if (maxAmount > 0)
     {
+        float moneyRate = sWorld->getRate(RATE_DROP_MONEY) * _dropMultiplier;
+
         if (maxAmount <= minAmount)
-            gold = uint32(maxAmount * sWorld->getRate(RATE_DROP_MONEY));
+            gold = uint32(maxAmount * moneyRate);
         else if ((maxAmount - minAmount) < 32700)
-            gold = uint32(urand(minAmount, maxAmount) * sWorld->getRate(RATE_DROP_MONEY));
+            gold = uint32(urand(minAmount, maxAmount) * moneyRate);
         else
-            gold = uint32(urand(minAmount >> 8, maxAmount >> 8) * sWorld->getRate(RATE_DROP_MONEY)) << 8;
+            gold = uint32(urand(minAmount >> 8, maxAmount >> 8) * moneyRate) << 8;
     }
 }
 

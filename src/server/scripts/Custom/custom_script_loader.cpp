@@ -18,11 +18,21 @@
 // This is where scripts' loading functions should be declared:
 void AddClassicScripts();
 void AddStarterGuildScripts();
+void AddSC_horadric_cube();
+void AddSC_rune_system();
+void AddSC_reroll_addon();
+void AddSC_creature_random_buff();
+void AddSC_player_modes();
 
 // The name of this function should match:
 // void Add${NameOfDirectory}Scripts()
 void AddCustomScripts()
 {
     AddClassicScripts();
-	AddStarterGuildScripts();
+    AddStarterGuildScripts();
+    AddSC_horadric_cube();
+    AddSC_rune_system();
+    AddSC_reroll_addon();
+    AddSC_creature_random_buff();
+    AddSC_player_modes();
 }

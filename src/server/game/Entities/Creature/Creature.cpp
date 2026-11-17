@@ -25,6 +25,7 @@
 #include "CreatureAI.h"
 #include "CreatureAISelector.h"
 #include "CreatureGroups.h"
+#include "CreatureRandomBuff.h"
 #include "DB2Stores.h"
 #include "DatabaseEnv.h"
 #include "Formulas.h"
@@ -360,6 +361,9 @@ void Creature::AddToWorld()
 
         if (GetZoneScript())
             GetZoneScript()->OnCreatureCreate(this);
+
+        // 怪物随机附魔：进世界时抽 buff
+        CreatureRandomBuff::Apply(this);
     }
 }
 
@@ -367,6 +371,9 @@ void Creature::RemoveFromWorld()
 {
     if (IsInWorld())
     {
+        // 怪物随机附魔：离开世界时清理 buff 与体型
+        CreatureRandomBuff::Remove(this);
+
         if (GetZoneScript())
             GetZoneScript()->OnCreatureRemove(this);
 
@@ -2476,6 +2483,8 @@ void Creature::Respawn(bool force)
     TC_LOG_DEBUG("entities.unit", "Respawning creature {} ({})",
         GetName(), GetGUID().ToString());
 
+    // 怪物随机附魔：复活后重新抽 buff（尸体/兼容模式都会走到这里）
+    CreatureRandomBuff::Apply(this);
 }
 
 void Creature::ForcedDespawn(uint32 timeMSToDespawn, Seconds forceRespawnTimer)

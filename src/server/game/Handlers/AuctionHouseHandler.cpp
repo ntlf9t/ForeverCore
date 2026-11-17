@@ -30,6 +30,7 @@
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
 #include "Player.h"
+#include "PlayerMode.h"
 #include "Util.h"
 #include "World.h"
 #include <sstream>
@@ -355,6 +356,12 @@ void WorldSession::HandleAuctionListOwnedItems(WorldPackets::AuctionHouse::Aucti
 // this function is called when client bids or buys out auction
 void WorldSession::HandleAuctionPlaceBid(WorldPackets::AuctionHouse::AuctionPlaceBid& placeBid)
 {
+    if (PlayerMode::IsLone(_player))
+    {
+        SendNotification("孤勇模式不能使用拍卖行。");
+        return;
+    }
+
     AuctionThrottleResult throttle = sAuctionMgr->CheckThrottle(_player, placeBid.TaintedBy.has_value(), AuctionCommand::PlaceBid);
     if (throttle.Throttled)
         return;
@@ -489,6 +496,12 @@ void WorldSession::HandleAuctionPlaceBid(WorldPackets::AuctionHouse::AuctionPlac
 
 void WorldSession::HandleAuctionRemoveItem(WorldPackets::AuctionHouse::AuctionRemoveItem& removeItem)
 {
+    if (PlayerMode::IsLone(_player))
+    {
+        SendNotification("孤勇模式不能使用拍卖行。");
+        return;
+    }
+
     AuctionThrottleResult throttle = sAuctionMgr->CheckThrottle(_player, removeItem.TaintedBy.has_value(), AuctionCommand::Cancel);
     if (throttle.Throttled)
         return;
@@ -815,6 +828,12 @@ void WorldSession::HandleAuctionSellCommodity(WorldPackets::AuctionHouse::Auctio
 
 void WorldSession::HandleAuctionSellItem(WorldPackets::AuctionHouse::AuctionSellItem& sellItem)
 {
+    if (PlayerMode::IsLone(_player))
+    {
+        SendNotification("孤勇模式不能使用拍卖行。");
+        return;
+    }
+
     AuctionThrottleResult throttle = sAuctionMgr->CheckThrottle(_player, sellItem.TaintedBy.has_value(), AuctionCommand::SellItem);
     if (throttle.Throttled)
         return;
