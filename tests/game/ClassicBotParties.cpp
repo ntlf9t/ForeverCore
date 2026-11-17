@@ -17,6 +17,8 @@
 #include "tc_catch2.h"
 
 #include "../../src/modules/PlayerbotV2/Fleet/BotParties.h"
+#include "../../src/modules/PlayerbotV2/Fleet/PickupGroups.h"
+#include "../../src/modules/PlayerbotV2/Bot/InvitePolicy.h"
 
 using namespace Playerbot::V2::Parties;
 
@@ -124,4 +126,61 @@ TEST_CASE("A mate's fight is in the link", "[ClassicBotParties]")
     auto links = f.Step(bots, All(), 2000);
     REQUIRE(links[2].mates[0].in_combat);
     REQUIRE(links[2].mates[0].target == 4242);
+}
+
+// Pickup groups (GitHub #345): two world bots' own game group breaks up again.
+TEST_CASE("A bot pickup group lasts 10 to 20 minutes and breaks up only when nobody of it is near a player or busy", "[ClassicBotParties]")
+{
+    namespace PG = Playerbot::V2::PickupGroups;
+    for (std::uint64_t id : { 1ull, 2ull, 77ull, 123456ull, 0xFFFFFFFFull })
+    {
+        std::uint32_t const life = PG::LifeFor(id);
+        CHECK(life >= PG::kLifeMinMs);
+        CHECK(life < PG::kLifeMinMs + PG::kLifeSpreadMs);
+    }
+    CHECK(PG::LifeFor(1) != PG::LifeFor(2));   // the pairs do not all break up at once
+
+    PG::Entry const e{ 0xFFFFF000u, PG::kLifeMinMs };   // formed just before the 32-bit clock wraps
+    CHECK_FALSE(PG::Expired(e, 0xFFFFF000u + 1000u));
+    CHECK(PG::Expired(e, 0xFFFFF000u + PG::kLifeMinMs));
+
+    CHECK(PG::BreakUpForDistance(PG::Seen{ false, false }));
+    CHECK_FALSE(PG::BreakUpForDistance(PG::Seen{ true, false }));    // a member is near a player
+    CHECK_FALSE(PG::BreakUpForDistance(PG::Seen{ false, true }));    // a member fights or is in an instance
+
+    PG::Note(42, 1000);
+    CHECK(PG::Has(42));
+    PG::Forget(42);
+    CHECK_FALSE(PG::Has(42));
+}
+
+TEST_CASE("Playerbot.Interact.AcceptInvitesFrom: whose invite a bot takes", "[ClassicBotParties]")
+{
+    namespace IP = Playerbot::InvitePolicy;
+    CHECK(IP::Parse("anyone") == IP::From::Anyone);
+    CHECK(IP::Parse("friends_or_higher") == IP::From::Anyone);   // the old key's values mean nothing here
+    CHECK(IP::Parse("guild") == IP::From::Guild);
+    CHECK(IP::Parse("friends") == IP::From::Friends);
+    CHECK(IP::Parse("none") == IP::From::None);
+
+    IP::Inviter const stranger{ true, false, false, false, false };
+    IP::Inviter const pal{ true, false, false, true, false };
+    IP::Inviter const guildie{ true, false, false, false, true };
+    IP::Inviter const owner{ true, true, false, false, false };
+    IP::Inviter const gm{ true, false, true, false, false };
+    IP::Inviter const bot{ false, false, false, false, false };
+
+    CHECK(IP::Accepts(IP::From::Anyone, stranger));
+    CHECK_FALSE(IP::Accepts(IP::From::Guild, stranger));
+    CHECK(IP::Accepts(IP::From::Guild, pal));
+    CHECK(IP::Accepts(IP::From::Guild, guildie));
+    CHECK(IP::Accepts(IP::From::Friends, pal));
+    CHECK_FALSE(IP::Accepts(IP::From::Friends, guildie));
+    for (IP::From f : { IP::From::Anyone, IP::From::Guild, IP::From::Friends, IP::From::None })
+    {
+        CHECK(IP::Accepts(f, owner));
+        CHECK(IP::Accepts(f, gm));
+        CHECK(IP::Accepts(f, bot));
+    }
+    CHECK_FALSE(IP::Accepts(IP::From::None, pal));
 }

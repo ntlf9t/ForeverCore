@@ -7127,31 +7127,49 @@ static float ClassicBonusCoefficient(SpellInfo const* spellProto, SpellEffectInf
 
 int32 Unit::SpellDamageBonusDone(Unit* victim, SpellInfo const* spellProto, int32 pdamage, DamageEffectType damagetype, SpellEffectInfo const& spellEffectInfo, uint32 stack /*= 1*/, Spell* spell /*= nullptr*/, AuraEffect const* aurEff /*= nullptr*/) const
 {
+    return int32(SpellDamageBonusDoneExact(victim, spellProto, float(pdamage), damagetype, spellEffectInfo, stack, spell, aurEff));
+}
+
+float Unit::SpellDamageBonusDoneExact(Unit* victim, SpellInfo const* spellProto, float pdamage, DamageEffectType damagetype, SpellEffectInfo const& spellEffectInfo, uint32 stack /*= 1*/, Spell* spell /*= nullptr*/, AuraEffect const* aurEff /*= nullptr*/) const
+{
     if (!spellProto || !victim)
         return pdamage;
 
-    int32 DoneTotal = 0;
+    // The fractions are kept to the end: a periodic tick carries what it could not deal to its next tick (AuraEffect), so a
+    // 5.33 bleed with +12% from a talent deals 18 over three ticks instead of 15 (Rend, Improved Rend, arrathem 2026-11-15).
+    float DoneTotal = 0.0f;
     float DoneTotalMod = 1.0f;
 
-    auto callDamageScript = [&](int32& dmg, int32& flatMod, float& pctMod)
+    // Damage scripts work on whole numbers; a value a script leaves alone keeps its fraction.
+    auto callDamageScript = [&](float& dmg, float& flatMod, float& pctMod)
     {
+        if (!spell && !aurEff)
+            return;
+        int32 dmgInt = int32(dmg);
+        int32 flatInt = int32(flatMod);
+        int32 const dmgBefore = dmgInt;
+        int32 const flatBefore = flatInt;
         if (spell)
-            spell->CallScriptCalcDamageHandlers(spellEffectInfo, victim, dmg, flatMod, pctMod);
-        else if (aurEff)
-            aurEff->GetBase()->CallScriptCalcDamageAndHealingHandlers(aurEff, aurEff->GetBase()->GetApplicationOfTarget(victim->GetGUID()), victim, dmg, flatMod, pctMod);
+            spell->CallScriptCalcDamageHandlers(spellEffectInfo, victim, dmgInt, flatInt, pctMod);
+        else
+            aurEff->GetBase()->CallScriptCalcDamageAndHealingHandlers(aurEff, aurEff->GetBase()->GetApplicationOfTarget(victim->GetGUID()), victim, dmgInt, flatInt, pctMod);
+        if (dmgInt != dmgBefore)
+            dmg = float(dmgInt);
+        if (flatInt != flatBefore)
+            flatMod = float(flatInt);
     };
 
     // Some spells don't benefit from done mods
     if (damagetype == DIRECT_DAMAGE || spellProto->HasAttribute(SPELL_ATTR3_IGNORE_CASTER_MODIFIERS))
     {
         callDamageScript(pdamage, DoneTotal, DoneTotalMod);
-        return int32(std::max(float(pdamage + DoneTotal) * DoneTotalMod, 0.0f));
+        return std::max((pdamage + DoneTotal) * DoneTotalMod, 0.0f);
     }
 
     // For totems get damage bonus from owner
     if (GetTypeId() == TYPEID_UNIT && IsTotem())
         if (Unit* owner = GetOwner())
-            return owner->SpellDamageBonusDone(victim, spellProto, pdamage, damagetype, spellEffectInfo, stack, spell, aurEff);
+            return owner->SpellDamageBonusDoneExact(victim, spellProto, pdamage, damagetype, spellEffectInfo, stack, spell, aurEff);
 
     DoneTotalMod = SpellDamagePctDone(victim, spellProto, damagetype, spellEffectInfo);
 
@@ -7191,7 +7209,7 @@ int32 Unit::SpellDamageBonusDone(Unit* victim, SpellInfo const* spellProto, int3
         }();
         float attackPowerBonus = float(victim->GetTotalAuraModifier(attType != RANGED_ATTACK ? SPELL_AURA_MELEE_ATTACK_POWER_ATTACKER_BONUS : SPELL_AURA_RANGED_ATTACK_POWER_ATTACKER_BONUS));
         attackPowerBonus += GetTotalAttackPowerValue(attType);
-        DoneTotal += int32(stack * attackPowerCoeff * attackPowerBonus);
+        DoneTotal += float(stack) * attackPowerCoeff * attackPowerBonus;
     }
 
     // Default calculation
@@ -7205,18 +7223,18 @@ int32 Unit::SpellDamageBonusDone(Unit* victim, SpellInfo const* spellProto, int3
             coeff /= 100.0f;
         }
 
-        DoneTotal += int32(DoneAdvertisedBenefit * coeff * stack);
+        DoneTotal += float(DoneAdvertisedBenefit) * coeff * float(stack);
     }
 
     callDamageScript(pdamage, DoneTotal, DoneTotalMod);
 
-    float tmpDamage = float(pdamage + DoneTotal) * DoneTotalMod;
+    float tmpDamage = (pdamage + DoneTotal) * DoneTotalMod;
 
     // apply spellmod to Done damage (flat and pct)
     if (Player* modOwner = GetSpellModOwner())
         modOwner->ApplySpellMod(spellProto, damagetype == DOT ? SpellModOp::PeriodicHealingAndDamage : SpellModOp::HealingAndDamage, tmpDamage);
 
-    return int32(std::max(tmpDamage, 0.0f));
+    return std::max(tmpDamage, 0.0f);
 }
 
 float Unit::SpellDamagePctDone(Unit* victim, SpellInfo const* spellProto, DamageEffectType damagetype, SpellEffectInfo const& spellEffectInfo) const
@@ -13156,7 +13174,10 @@ void Unit::KnockbackFrom(Position const& origin, float speedXY, float speedZ, fl
         }
     }
 
-    if (!player)
+    // A bot has no client to answer SMSG_MOVE_KNOCK_BACK, so a knockback or a pull never moved it: the server flies it as it flies a creature.
+    // naxx_thaddius 1116: Magnetic Pull left both tanks where they stood while Stalagg and Feugen swapped victims, and each add walked off its
+    // platform across the room to the other tank.
+    if (!player || (player == this && player->GetSession()->IsBot()))
         GetMotionMaster()->MoveKnockbackFrom(origin, speedXY, speedZ, angle, spellEffectExtraData);
     else
     {
@@ -15308,31 +15329,30 @@ bool Unit::VisibleAuraSlotCompare::operator()(AuraApplication* left, AuraApplica
     return left->GetSlot() < right->GetSlot();
 }
 
-// Returns collisionheight of the unit. If it is 0, it returns DEFAULT_COLLISION_HEIGHT.
 float Unit::GetCollisionHeight() const
 {
-    float scaleMod = GetObjectScale(); // 99% sure about this
+    CreatureDisplayInfoEntry const* displayInfo = sCreatureDisplayInfoStore.AssertEntry(GetNativeDisplayId());
+    CreatureModelDataEntry const* modelData = sCreatureModelDataStore.AssertEntry(displayInfo->ModelID);
 
+    // Client models can store a negative sentinel for an unset collision height.
+    if (!std::isfinite(modelData->CollisionHeight) || modelData->CollisionHeight <= 0.0f)
+        return DEFAULT_COLLISION_HEIGHT;
+
+    float const scaleMod = GetObjectScale();
+    float collisionHeight = scaleMod * modelData->CollisionHeight * modelData->ModelScale * displayInfo->CreatureModelScale;
     if (IsMounted())
     {
         if (CreatureDisplayInfoEntry const* mountDisplayInfo = sCreatureDisplayInfoStore.LookupEntry(GetMountDisplayId()))
         {
             if (CreatureModelDataEntry const* mountModelData = sCreatureModelDataStore.LookupEntry(mountDisplayInfo->ModelID))
             {
-                CreatureDisplayInfoEntry const* displayInfo = sCreatureDisplayInfoStore.AssertEntry(GetNativeDisplayId());
-                CreatureModelDataEntry const* modelData = sCreatureModelDataStore.AssertEntry(displayInfo->ModelID);
-                float const collisionHeight = scaleMod * ((mountModelData->MountHeight * mountDisplayInfo->CreatureModelScale) + (modelData->GetCollisionHeight() * modelData->ModelScale * displayInfo->CreatureModelScale * 0.5f));
-                return collisionHeight == 0.0f ? DEFAULT_COLLISION_HEIGHT : collisionHeight;
+                if (std::isfinite(mountModelData->MountHeight) && mountModelData->MountHeight >= 0.0f)
+                    collisionHeight = scaleMod * ((mountModelData->MountHeight * mountDisplayInfo->CreatureModelScale) + (modelData->CollisionHeight * modelData->ModelScale * displayInfo->CreatureModelScale * 0.5f));
             }
         }
     }
 
-    //! Dismounting case - use basic default model data
-    CreatureDisplayInfoEntry const* displayInfo = sCreatureDisplayInfoStore.AssertEntry(GetNativeDisplayId());
-    CreatureModelDataEntry const* modelData = sCreatureModelDataStore.AssertEntry(displayInfo->ModelID);
-
-    float const collisionHeight = scaleMod * modelData->GetCollisionHeight() * modelData->ModelScale * displayInfo->CreatureModelScale;
-    return collisionHeight == 0.0f ? DEFAULT_COLLISION_HEIGHT : collisionHeight;
+    return std::isfinite(collisionHeight) && collisionHeight > 0.0f ? collisionHeight : DEFAULT_COLLISION_HEIGHT;
 }
 
 void Unit::AddWorldEffect(int32 worldEffectId)

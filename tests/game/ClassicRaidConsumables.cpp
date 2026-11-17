@@ -158,6 +158,9 @@ TEST_CASE("a combat potion is stocked but never used before the pull", "[classic
         // The caster kit also stocks what is used outside the pre-pull picker: the weapon oil (idle:classic_weapon), the mana potion and the runes (fight rule).
         if (role == RaidConsumableRole::Caster)
             expected.insert({ 20749, 13444, 12662, 20520 });
+        // The healer kit stocks its weapon oil, Brilliant Mana Oil (idle:classic_weapon); its potions and runes come from the supply families.
+        if (role == RaidConsumableRole::Healer)
+            expected.insert(20748);
         CHECK(combat == expected);
     }
 }

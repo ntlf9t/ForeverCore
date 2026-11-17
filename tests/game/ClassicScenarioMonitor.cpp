@@ -834,6 +834,18 @@ TEST_CASE("ScenarioDefs: the other raids are one boss each, 40 raiders (BWL, AQ4
     CHECK(FindScenario("zg_hakkar")->start_instance_data.back() == std::pair<std::uint32_t, std::uint32_t>{ 0u, 0u });
     CHECK(FindScenario("zg_jindo")->start_instance_data.empty());
     CHECK(FindScenario("naxx_horsemen")->keep_entry_c == 16065);
+    // Kel'Thuzad has a scenario of its own (MakeNaxxKelThuzadScenario): the runner starts his phase 1 as his room's area trigger does.
+    {
+        ScenarioDef const* kt = FindScenario("naxx_kelthuzad");
+        REQUIRE(kt != nullptr);
+        CHECK(found.insert(kt->name).second);
+        CHECK(kt->map == 533);
+        CHECK(kt->level == 60);
+        CHECK(kt->squad.size() == 40);
+        CHECK(kt->goal_entry == 15990u);
+        CHECK(kt->start_npc == 15990u);
+        CHECK(kt->start_npc_action == 1);
+    }
     CHECK(found.size() == 5 + 13 + 5 + 8 + 14);
     // Arlokk has no creature row (the gong summons her): the runner summons her at the gong's spot.
     CHECK(FindScenario("zg_arlokk")->lair_z != 0.f);

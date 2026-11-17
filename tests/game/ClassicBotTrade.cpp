@@ -315,6 +315,27 @@ TEST_CASE("BotTrade: reagents of a recipe the bot knows, from a group mate, are 
     CHECK(Decide(mixed).act == Act::Wait);
 }
 
+TEST_CASE("BotTrade: supplies the bot uses itself, from its owner, are a gift, not bought", "[bottrade]")
+{
+    View v;
+    v.gift_partner = true;
+    Line oil = L(20748, 5, 1000);                      // Brilliant Mana Oil handed to a healer (Karrz 11-16: "i'll give you 10s for that")
+    oil.supply = true;
+    v.his = { oil };
+    v.bot_gold = 100000;
+    CHECK(Decide(v).say != Say::OfferBuy);
+    CHECK(Decide(v).act == Act::Wait);                 // waits for him to accept, offers no money
+    v.his_accepted = true;
+    Action const a = Decide(v);
+    CHECK(a.act == Act::Accept);
+    CHECK(a.money == 0);
+
+    View stranger;                                     // a stranger's oil is still goods at its price
+    stranger.his = { oil };
+    stranger.bot_gold = 100000;
+    CHECK(Decide(stranger).act == Act::SetMoney);
+}
+
 TEST_CASE("BotTrade: a group mate's gear for a later level is a gift, not bought", "[bottrade]")
 {
     View v;

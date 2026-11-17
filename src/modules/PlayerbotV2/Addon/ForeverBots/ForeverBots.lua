@@ -94,42 +94,43 @@ local CLIENT_NAMES = not (GetLocale and (GetLocale() == "enUS" or GetLocale() ==
 -- that set it. A call over PERF_SLOW_MS prints one line per handler; "/fb perf" lists the slowest, and the list is saved in
 -- ForeverBotsDB.perf at logout for the SavedVariables file. Secure frames are left alone: their scripts are not ours to wrap.
 local PERF = { stats = {}, said = {} }
-local PERF_SLOW_MS = 15
-local clockMs = debugprofilestop
-local function PerfLabel(kind, level)
+-- kept on PERF, not as file locals: the client's Lua allows the main chunk only 200 locals
+PERF.SLOW_MS = 15
+PERF.clock = debugprofilestop
+function PERF.Label(kind, level)
     local where = debugstack and debugstack(level or 3, 1, 0)
     local line = type(where) == "string" and where:match(":(%d+):") or "?"
     return kind .. "@" .. line
 end
 local function PerfWrap(label, fn)
-    if type(fn) ~= "function" or not clockMs then return fn end
+    if type(fn) ~= "function" or not PERF.clock then return fn end
     local st = PERF.stats[label]
     if not st then st = { n = 0, total = 0, max = 0 }; PERF.stats[label] = st end
     return function(...)
-        local t0 = clockMs()
+        local t0 = PERF.clock()
         local outer = PERF.running
         PERF.running = label
         local r1, r2, r3, r4, r5 = fn(...)
         PERF.running = outer
-        local ms = clockMs() - t0
+        local ms = PERF.clock() - t0
         st.n = st.n + 1
         st.total = st.total + ms
         if ms > st.max then st.max = ms end
-        if ms > PERF_SLOW_MS and not PERF.said[label] and DEFAULT_CHAT_FRAME then
+        if ms > PERF.SLOW_MS and not PERF.said[label] and DEFAULT_CHAT_FRAME then
             PERF.said[label] = true
             DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff66ccffWoW Forever Bots|r: slow handler %s took %.1f ms (/fb perf lists all).", label, ms))
         end
         return r1, r2, r3, r4, r5
     end
 end
-local function PerfFrame(f, tmpl)
+function PERF.Frame(f, tmpl)
     if type(f) ~= "table" or (type(tmpl) == "string" and tmpl:find("Secure", 1, true)) then return f end
     local set, hook = f.SetScript, f.HookScript
     f.SetScript = function(self, what, fn)
-        return set(self, what, PerfWrap(PerfLabel(tostring(what)), fn))
+        return set(self, what, PerfWrap(PERF.Label(tostring(what)), fn))
     end
     f.HookScript = function(self, what, fn, ...)
-        return hook(self, what, PerfWrap(PerfLabel("hook " .. tostring(what)), fn), ...)
+        return hook(self, what, PerfWrap(PERF.Label("hook " .. tostring(what)), fn), ...)
     end
     return f
 end
@@ -150,17 +151,17 @@ do
     end)
 end
 local CreateFrame = function(kind, name, parent, tmpl, ...)
-    return PerfFrame(_G.CreateFrame(kind, name, parent, tmpl, ...), tmpl)
+    return PERF.Frame(_G.CreateFrame(kind, name, parent, tmpl, ...), tmpl)
 end
 local C_Timer = _G.C_Timer and {
-    After = function(sec, fn) return _G.C_Timer.After(sec, PerfWrap(PerfLabel("timer"), fn)) end,
+    After = function(sec, fn) return _G.C_Timer.After(sec, PerfWrap(PERF.Label("timer"), fn)) end,
 } or nil
 local hooksecurefunc = _G.hooksecurefunc and function(a, b, c)
-    if c ~= nil then return _G.hooksecurefunc(a, b, PerfWrap(PerfLabel("hook " .. tostring(b)), c)) end
-    return _G.hooksecurefunc(a, PerfWrap(PerfLabel("hook " .. tostring(a)), b))
+    if c ~= nil then return _G.hooksecurefunc(a, b, PerfWrap(PERF.Label("hook " .. tostring(b)), c)) end
+    return _G.hooksecurefunc(a, PerfWrap(PERF.Label("hook " .. tostring(a)), b))
 end or nil
 local ChatFrame_AddMessageEventFilter = _G.ChatFrame_AddMessageEventFilter and function(ev, fn)
-    return _G.ChatFrame_AddMessageEventFilter(ev, PerfWrap(PerfLabel("filter " .. tostring(ev)), fn))
+    return _G.ChatFrame_AddMessageEventFilter(ev, PerfWrap(PERF.Label("filter " .. tostring(ev)), fn))
 end or nil
 
 function PERF.Report(top)
@@ -797,6 +798,7 @@ AddPart("filters", function()
     end
 end)
 
+do   -- kept out of the main chunk: Lua 5.1 allows 200 locals there
 local whisperFrame = CreateFrame("Frame")
 whisperFrame:RegisterEvent("CHAT_MSG_WHISPER")
 whisperFrame:SetScript("OnEvent", function(_, _, msg)
@@ -806,6 +808,7 @@ whisperFrame:SetScript("OnEvent", function(_, _, msg)
     end
     if IsAssignMsg(msg) then ParseAssignLine(msg) end
 end)
+end
 
 
 ------------------------------------------------------------------------------------------------------------- window
@@ -859,11 +862,13 @@ local function MakeSecureOrderButton(parent, text, width, order, height)
     return b
 end
 
+do   -- kept out of the main chunk: Lua 5.1 allows 200 locals there
 local orderMacroFrame = CreateFrame("Frame")
 for _, ev in ipairs({ "GROUP_ROSTER_UPDATE", "PARTY_MEMBERS_CHANGED", "RAID_ROSTER_UPDATE", "PLAYER_REGEN_ENABLED", "PLAYER_ENTERING_WORLD" }) do
     pcall(orderMacroFrame.RegisterEvent, orderMacroFrame, ev)
 end
 orderMacroFrame:SetScript("OnEvent", function() RefreshOrderMacros() end)
+end
 
 ------------------------------------------------------------------------------------------------------------- key bindings
 -- Esc > Options > Key Bindings > AddOns > "WoW Forever Bots" (Bindings.xml; unbound until the player picks keys). Order keys
@@ -906,6 +911,10 @@ for _, k in ipairs(KEY_ORDERS) do
             if ForeverBotsDB then ForeverBotsDB.stance = key end
             RefreshStance()
         end)
+    end
+    if k[2] == "follow" or k[2] == "stay" or k[2] == "come" then
+        -- The server pauses a running Tank leads on these (BotCommandParser::PauseLeadForOwnerOrder); the Lead button shows it.
+        b:HookScript("OnClick", function() UI.LeadPausedByOrder() end)
     end
     secureOrders[#secureOrders + 1] = b
     _G["BINDING_NAME_CLICK " .. name .. ":LeftButton"] = k[3]
@@ -983,6 +992,7 @@ local function RemoveDuplicateMacros()
     Step("")
 end
 
+do   -- kept out of the main chunk: Lua 5.1 allows 200 locals there
 local macroFrame = CreateFrame("Frame")
 macroFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 macroFrame:SetScript("OnEvent", function(self, _, isLogin, isReload)
@@ -991,6 +1001,7 @@ macroFrame:SetScript("OnEvent", function(self, _, isLogin, isReload)
     -- the client fills the macro list during the login; a second later it is complete
     if C_Timer and C_Timer.After then C_Timer.After(1, RemoveDuplicateMacros) else RemoveDuplicateMacros() end
 end)
+end
 
 ------------------------------------------------------------------------------------------------------------- skin
 -- Own artwork in Textures\ (32-bit .tga, power-of-two sizes): wood body, bronze bead border, medallion, tabs. The buttons are the
@@ -1088,6 +1099,8 @@ end
 -- instance holds in a bigger one (10 in Upper Blackrock Spire, 20 or 40 in a raid). The members already in the group count, so it
 -- never adds past that size: a sixth member made an open-world party a raid, and a raid gets no credit for normal quests
 -- (Discord report, 2026-10-27), while in Upper Blackrock Spire it stopped at six of ten.
+local QuickParty
+do   -- kept out of the main chunk: Lua 5.1 allows 200 locals there
 local QUICK_DPS = { "mage", "rogue", "hunter", "warlock" }
 local QUICK_HEALERS = { "priest", "druid" }
 local PARTY_SIZE = 5
@@ -1123,7 +1136,7 @@ local function QuickPartyRoster(size, count)
     return roster
 end
 
-local function QuickParty()
+function QuickParty()
     local members = 1
     if GetNumGroupMembers then members = math.max(GetNumGroupMembers(), 1)
     elseif GetNumPartyMembers then members = GetNumPartyMembers() + 1 end
@@ -1146,6 +1159,7 @@ local function QuickParty()
     else
         for i = 2, #roster do AddBotWithGear(roster[i][1], roster[i][2], true) end
     end
+end
 end
 
 -- Dungeon finder (".bot dungeon"): pick a dungeon, or any for your level; the server fills the missing roles with your bots at your level
@@ -1443,6 +1457,63 @@ function UI.Hint(pane, y, text)
     return fs
 end
 
+-- Tank leads (server: "lead on|pause|off", BotCommandParser::ApplyLeadOrder): in a 5-man dungeon or a raid group the tank bot leads,
+-- the player follows (in a raid it stops before each boss for the player's pull or "go"). A click turns it on or off, a right-click
+-- pauses it or goes on. The button shows what was last sent: green on,
+-- blue paused. The server ends the lead when the group leaves the dungeon, and so does the button (UI.LeadZone).
+UI.leadState, UI.leadInside = "off", false
+function UI.RefreshLead()
+    local b = UI.leadBtn
+    if not b then return end
+    if UI.leadState == "on" then
+        b:SetText(L["short:Tank leads"]); b:FBSetRow(7)
+    elseif UI.leadState == "paused" then
+        b:SetText(L["short:Lead paused"]); b:FBSetRow(ROW_BLUE)
+    else
+        b:SetText(L["short:Tank leads"]); b:FBSetRow(ROW_NORMAL)
+    end
+end
+function UI.LeadClick(button)
+    local inGroup = (IsInRaid and IsInRaid()) or (IsInGroup and IsInGroup()) or (GetNumPartyMembers and GetNumPartyMembers() > 0)
+    if not inGroup then
+        Print(L["you have no group yet: add a bot first."])
+        return
+    end
+    local state = UI.leadState
+    if button == "RightButton" then
+        if state == "on" then GroupOrder("lead pause"); state = "paused"
+        elseif state == "paused" then GroupOrder("lead on"); state = "on"
+        else Print(L["the tank does not lead now: click the button first."]) end
+    elseif state == "off" then
+        GroupOrder("lead on"); state = "on"
+    else
+        GroupOrder("lead off"); state = "off"
+    end
+    UI.leadState = state
+    UI.RefreshLead()
+end
+-- Follow, Stay and Come pause a running lead on the server (Karrz, 2026-11-13); "go" or a right-click goes on.
+function UI.LeadPausedByOrder()
+    if UI.leadState == "on" then
+        UI.leadState = "paused"
+        UI.RefreshLead()
+    end
+end
+-- Loading screens: inside a 5-man or a raid the lead is in force; leaving it again ends it (as on the server).
+function UI.LeadZone()
+    local inside, kind = false, nil
+    if IsInInstance then inside, kind = IsInInstance() end
+    if inside and (kind == "party" or kind == "raid") then
+        UI.leadInside = true
+    elseif UI.leadInside then
+        UI.leadInside = false
+        if UI.leadState ~= "off" then
+            UI.leadState = "off"
+            UI.RefreshLead()
+        end
+    end
+end
+
 function UI.BuildOrders()
     local Btn, Section, Hint, NewPane = UI.Btn, UI.Section, UI.Hint, UI.NewPane
     ---------------------------------------------------------------------------------------------- orders
@@ -1465,6 +1536,9 @@ function UI.BuildOrders()
     for i, d in ipairs(OG) do
         local b = Btn(ordersGrid, ((i - 1) % 3) * 81, 18 + math.floor((i - 1) / 3) * 32, 76, 26, d[1], { order = d[2], size = 11 })
         Tip(b, d[3], d[4])
+        if d[2] == "follow" or d[2] == "stay" or d[2] == "come" then
+            b:HookScript("OnClick", function() UI.LeadPausedByOrder() end)
+        end
     end
     local rally = Btn(ordersGrid, 0, 18 + 3 * 32, 76, 26, L["short:Set rally"], { order = "rally here", size = 11 })
     Tip(rally, L["Set rally"], L["Sets the rally point to where you stand (used by Fall back and Pull back)."])
@@ -1477,10 +1551,16 @@ function UI.BuildOrders()
     RefreshStance()
     -- Ignore target: your target goes on the list of mobs your bots never attack, even when it attacks you (a beast you tame); the
     -- same button on it again takes it off. Clear empties the list. Secure order buttons, so they work in combat.
-    local ign = Btn(ordersGrid, 0, 18 + 4 * 32, 157, 26, L["Ignore target"], { order = "ignore target", size = 11 })
+    local ign = Btn(ordersGrid, 0, 18 + 4 * 32, 76, 26, L["short:Ignore"], { order = "ignore target", size = 11 })
     Tip(ign, L["Ignore target"], L["Your bots will not attack the mob you have targeted, even if it attacks you or them, until you press this again on it (or Clear). They fight every other mob as usual. Area spells wait while it is near. Forgotten after 30 minutes."])
-    local ignClear = Btn(ordersGrid, 162, 18 + 4 * 32, 76, 26, L["short:Clear ignored"], { order = "ignore clear", size = 11 })
+    local ignClear = Btn(ordersGrid, 81, 18 + 4 * 32, 76, 26, L["short:Clear ignored"], { order = "ignore clear", size = 11 })
     Tip(ignClear, L["Clear ignored"], L["Your bots may attack every mob again."])
+    -- Tank leads: a plain button (an add-on message, allowed in a fight too), so it can show its state.
+    UI.leadBtn = Btn(ordersGrid, 162, 18 + 4 * 32, 76, 26, L["short:Tank leads"], { size = 11 })
+    UI.leadBtn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    UI.leadBtn:SetScript("OnClick", function(_, button) UI.LeadClick(button) end)
+    Tip(UI.leadBtn, L["Tank leads"], L["In a dungeon or a raid your tank bot leads: it walks on, pulls pack by pack, waits for mana and for you, and goes boss to boss. You follow. In a raid it stops before each boss: pull it yourself, or say go.\nClick: on or off. Right-click: pause (it holds where it stands) or go on.\nGreen: on. Blue: paused. It ends when you leave the dungeon or raid. Follow, Stay and Come pause it: say go (or right-click) and it leads on."])
+    UI.RefreshLead()
 
     -- Two on/off check boxes at the bottom (the client's own check box). Area spells: on (the server's start setting) the bots use
     -- them as their rotations call for; off, nothing that hits more than one enemy (server: "aoe_all on|off", whispered to one of
@@ -2019,6 +2099,7 @@ end
 distFrame:SetScript("OnEvent", function(self, event)
     if event == "PLAYER_ENTERING_WORLD" or event == "ZONE_CHANGED_NEW_AREA" then
         if GroupSize() > 0 then self.stanceAt = Now() + 2.5 end
+        UI.LeadZone()
         return
     end
     OnGroupChanged()
@@ -2033,19 +2114,25 @@ function UI.StopDrag(self)
 end
 
 -- Opens or closes the window, or says it will once combat ends. The window is built out of combat only: it creates the secure
--- order buttons and sets their macros.
+-- order buttons and sets their macros. The wait is said once per fight and wish (hf-01372: a key pressed again and again in a fight
+-- printed "opens when combat ends" eight times); UI.windowWaitSaid is cleared when combat ends.
+local function SayWindowWait(show)
+    if UI.windowWaitSaid == show then return end
+    UI.windowWaitSaid = show
+    Print(show and L["the bot window opens when combat ends."] or L["the bot window closes when combat ends."])
+end
 function UI.SetWindowShown(show)
     if not frame then
         if not show then UI.buildAfterCombat = nil; return end
         if InCombatLockdown and InCombatLockdown() then
             UI.buildAfterCombat = true
-            Print(L["the bot window opens when combat ends."])
+            SayWindowWait(true)
             return
         end
         BuildFrame()
     end
     if not UI.SetShown(frame, show) and UI.afterCombat[frame] ~= nil then
-        Print(show and L["the bot window opens when combat ends."] or L["the bot window closes when combat ends."])
+        SayWindowWait(show)
     end
 end
 
@@ -2060,6 +2147,7 @@ local function Toggle()
     UI.SetWindowShown(not open)
 end
 
+do   -- kept out of the main chunk: Lua 5.1 allows 200 locals there
 local combatFrame = CreateFrame("Frame")
 combatFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
 combatFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
@@ -2084,11 +2172,13 @@ combatFrame:SetScript("OnEvent", function(_, event)
     end
     if UI.pendingTab then ShowTab(UI.pendingTab) end
     tabWaitSaid = nil
+    UI.windowWaitSaid = nil
     for f, show in pairs(UI.afterCombat) do
         UI.afterCombat[f] = nil
         if show then f:Show() else f:Hide() end
     end
 end)
+end
 
 function ForeverBots_ToggleWindow() Toggle() end
 
@@ -2114,11 +2204,44 @@ local function MinimapDrag()
     MinimapPlace()
 end
 
+-- SIN's Forever Combat Nameplates (/fcn): enemy bars only on mobs fighting you or your pet. His add-on is on while Enemy Unit
+-- Nameplates are on and Always Show Nameplates is off, and follows those two settings itself; /fcn only reports. The menu entry
+-- switches Always Show: off gives every enemy a bar again, as without the add-on. The client does not change nameplate settings
+-- in combat.
+-- One table, not six main-chunk locals: this chunk is near Lua's 200-local limit.
+local CombatPlates = { enemies = "nameplateShowEnemies", always = "nameplateShowAll" }
+function CombatPlates.Loaded()
+    local loaded = (C_AddOns and C_AddOns.IsAddOnLoaded) or IsAddOnLoaded
+    return loaded ~= nil and loaded("ForeverCombatNameplates") and C_CVar ~= nil
+end
+function CombatPlates.On()
+    return C_CVar.GetCVarBool(CombatPlates.enemies) and not C_CVar.GetCVarBool(CombatPlates.always)
+end
+function CombatPlates.Label()
+    if not CombatPlates.Loaded() then return L["Combat nameplates (add-on off)"] end
+    return CombatPlates.On() and L["Combat nameplates: on"] or L["Combat nameplates: off"]
+end
+function CombatPlates.Toggle()
+    if not CombatPlates.Loaded() then return end
+    if InCombatLockdown and InCombatLockdown() then
+        Print(L["combat nameplates can't be switched in combat."])
+        return
+    end
+    if CombatPlates.On() then
+        C_CVar.SetCVar(CombatPlates.always, "1")
+        Print(L["combat nameplates off: every enemy gets a bar."])
+    else
+        C_CVar.SetCVar(CombatPlates.always, "0")
+        if not C_CVar.GetCVarBool(CombatPlates.enemies) then C_CVar.SetCVar(CombatPlates.enemies, "1") end
+        Print(L["combat nameplates on: bars only on mobs fighting you or your pet."])
+    end
+end
+
 local function ToggleMinimapMenu()
     if not mmMenu then
         local m = CreateFrame("Frame", "ForeverBotsMinimapMenu", UIParent, BackdropTemplateMixin and "BackdropTemplate" or nil)
         mmMenu = m
-        m:SetSize(150, 4 * 28 + 12)
+        m:SetSize(170, 5 * 28 + 12)   -- five items below
         m:SetFrameStrata("DIALOG")
         m:EnableMouse(true)
         if m.SetBackdrop then
@@ -2132,6 +2255,7 @@ local function ToggleMinimapMenu()
             { L["Raid ready"], RaidReady },
             { L["Call saved bots"], function() ServerCommand(".bot summon saved") end },
             { L["Dismiss all bots"], function() ServerCommand(".bot dismiss all") end },
+            { CombatPlates.Label(), CombatPlates.Toggle, "plates" },
             { L["Hide this button"], function()
                 ForeverBotsDB.minimap.hidden = true
                 mmButton:Hide()
@@ -2139,9 +2263,10 @@ local function ToggleMinimapMenu()
             end },
         }
         for i, it in ipairs(items) do
-            local b = MakeSkinButton(m, it[1], 138, 24, { size = 12 })
+            local b = MakeSkinButton(m, it[1], 158, 24, { size = 12 })
             b:SetPoint("TOPLEFT", 6, -6 - (i - 1) * 28)
             b:SetScript("OnClick", function() m:Hide(); it[2]() end)
+            if it[3] == "plates" then m.plates = b end
         end
         m:SetScript("OnUpdate", function(self, elapsed)
             -- (the global MouseIsOver no longer exists on this client: "attempt to call a nil value" every frame)
@@ -2158,6 +2283,8 @@ local function ToggleMinimapMenu()
     else
         mmMenu:SetPoint("TOPLEFT", mmButton, "BOTTOMLEFT", 0, -2)
     end
+    mmMenu.plates:SetText(CombatPlates.Label())
+    mmMenu.plates:SetEnabled(CombatPlates.Loaded())
     mmMenu.away = 0
     mmMenu:Show()
 end
@@ -2443,6 +2570,7 @@ local function BuildBotPanel()
     p:Hide()
 end
 
+do   -- kept out of the main chunk: Lua 5.1 allows 200 locals there
 local botFrame = CreateFrame("Frame")
 botFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
 botFrame:RegisterEvent("CHAT_MSG_WHISPER")
@@ -2467,6 +2595,7 @@ botFrame:SetScript("OnEvent", function(_, event, msg, author)
     if not botPanel then BuildBotPanel() end
     UpdateBotPanel()
 end)
+end
 
 -- Unit right-click menu entry "ForeverBots": only through the client's own Menu.ModifyMenu API (a supported, taint-free
 -- extension point on the 11.x-style UI). The old UnitPopupMenus / UnitPopup_ShowMenu tables are NOT touched: editing
@@ -3359,6 +3488,7 @@ do
             (#callers > 0 and table.concat(callers, " < ") or "?")
     end
 
+    local otherBlocked = {}
     local guard = CreateFrame("Frame")
     guard:RegisterEvent("ADDON_ACTION_FORBIDDEN")
     pcall(guard.RegisterEvent, guard, "ADDON_ACTION_BLOCKED")
@@ -3367,8 +3497,13 @@ do
         func = (type(func) == "string" and not IsSecret(func)) and func:gsub("%(%)$", "") or "?"
         -- "Interface action failed because of an AddOn" in the chat frame right after login: say which add-on and which call, for
         -- ours and for any other add-on, so the line can be read instead of guessed at (the pop-up names them only for a moment).
+        -- Another add-on is named once per session: ExtraProfessionTabs moving the action bars in a fight got one line per
+        -- refused call, a chat full of them on every fight (Discord, arrathem, 2026-11-15), which read as our add-on breaking.
         if addon ~= ADDON then
-            if type(addon) == "string" and not IsSecret(addon) then Print("the client blocked " .. func .. "() for the add-on " .. addon .. " (" .. (event == "ADDON_ACTION_BLOCKED" and "blocked" or "forbidden") .. ")") end
+            if type(addon) == "string" and not IsSecret(addon) and not otherBlocked[addon] then
+                otherBlocked[addon] = true
+                Print("the client blocked " .. func .. "() for the add-on " .. addon .. " (" .. (event == "ADDON_ACTION_BLOCKED" and "blocked" or "forbidden") .. "). Further blocked calls of " .. addon .. " are not shown; that add-on causes them, not ForeverBots.")
+            end
             return
         end
         if event == "ADDON_ACTION_BLOCKED" then

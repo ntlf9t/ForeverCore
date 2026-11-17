@@ -122,3 +122,43 @@ TEST_CASE("A heal claim written through one call site is read through another an
     size_t const left = WithHealClaims(now, [](std::unordered_map<uint64, HealClaim> const& c) { return c.count(42); });
     CHECK(left == 0);
 }
+
+// Naxx Patchwerk 1115b, off tank 2573: 63 % of 10759 (3980 missing), no swing on him (Hateful Strike is no swing), 4058 of heals in
+// flight landing in 2.4 s. Hateful Strike every 1.2 s at about 4000 after armour put his measured rate near 3300 a second: about 7900
+// comes before the heal lands, so it covers nothing and the next healers start theirs.
+TEST_CASE("The damage a measured rate brings before the first heal lands counts in the deficit", "[ClassicHealCover]")
+{
+    int64_t const max_hp = 10759, hp = max_hp - 3980;
+    CHECK(CoveredByHealsInFlight(max_hp, hp, 0, 4058, 63, 1.0f));   // the old check: one heal covers him
+    int64_t const until_land = DamageUntilLand(3300.0f, 2400);
+    CHECK(until_land == 7920);
+    CHECK(HealDeficitOf(max_hp, hp, 0, until_land) == 3980 + 7920);
+    CHECK_FALSE(CoveredByHealsInFlight(max_hp, hp, 0, 4058, 63, 1.0f, true, until_land));
+    CHECK(CoveredByHealsInFlight(max_hp, hp, 0, 12000, 63, 1.0f, true, until_land));
+}
+
+TEST_CASE("Swings and the measured rate are the same damage: the larger counts, not both", "[ClassicHealCover]")
+{
+    CHECK(HealDeficitOf(5000, 4000, 2000, 600) == 1000 + 1000);    // half the swings is more
+    CHECK(HealDeficitOf(5000, 4000, 2000, 1500) == 1000 + 1500);   // the rate is more
+    CHECK(DamageUntilLand(0.0f, 2000) == 0);
+    CHECK(DamageUntilLand(1000.0f, -50) == 0);                    // a heal already landing brings nothing more
+}
+
+TEST_CASE("The damage rate follows the hits and decays when they stop", "[ClassicHealCover]")
+{
+    DamageRate r;
+    CHECK(DamageRateAt(r, 1000) == 0.0f);
+    // 1000 every 500 ms for 30 s: 2000 a second.
+    uint32_t t = 1000;
+    for (int i = 0; i < 60; ++i, t += 500)
+        DamageRateAdd(r, 1000, t);
+    float const steady = DamageRateAt(r, t - 250);   // between two hits
+    CHECK(steady > 1800.0f);
+    CHECK(steady < 2200.0f);
+    // Three time constants with no hit: under a twentieth is left.
+    CHECK(DamageRateAt(r, t + 9000) < steady / 20.0f);
+    DamageRateAdd(r, 0, t);    // nothing landed: no change
+    DamageRateAdd(r, -5, t);
+    CHECK(DamageRateAt(r, t + 9000) < steady / 20.0f);
+}

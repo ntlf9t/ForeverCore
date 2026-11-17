@@ -1,3 +1,4 @@
+#include "Session/AddonControl.h"
 // Playerbot V2 - script registration
 // The module hangs off ScriptMgr: every core event it reacts to arrives through a WorldScript / PlayerScript /
 // UnitScript / GroupScript / GuildScript hook and is forwarded to the matching Module handler. AddSC_playerbot_v2 is
@@ -21,6 +22,8 @@
 #include "Player.h"
 #include "PlayerbotMovement.h"
 #include "ScriptMgr.h"
+#include "Services.h"
+#include "Util/ConfigReader.h"   // Services::Config().refresh() on `.reload config`
 #include "SharedDefines.h"
 #include "Spell.h"
 #include "SpellAuras.h"
@@ -90,6 +93,15 @@ public:
     void OnShutdown() override
     {
         Module::instance().Shutdown();
+    }
+
+    // `.reload config` has just read every config file again (playerbot.conf included): the module takes the new values too,
+    // so one reload is enough for a bot setting in worldserver.conf.d.
+    void OnConfigLoad(bool reload) override
+    {
+        if (!reload || !Playerbot::Services::Initialized())
+            return;
+        Playerbot::Services::Config().refresh();
     }
 
     // A real player is about to take a place in a running battleground (a bot is leaving for them): no second instance
@@ -231,6 +243,21 @@ public:
 
     void OnChatSent(Player* player, uint32 /*type*/, uint32 /*lang*/, std::string const& msg, Player* receiver) override
     {
+        if (player == receiver && msg.starts_with("FBTrade ") && msg.size() < 140)
+        {
+            auto split = msg.find(' ', 8);
+            if (split == std::string::npos)
+                return;
+            std::string seq = msg.substr(8, split - 8);
+            if (seq.empty() || seq.size() > 8 || seq.find_first_not_of("0123456789abcdef") != std::string::npos)
+                return;
+            std::string token = msg.substr(split + 1);
+            if (token != "view" && (token.empty() || token.find_first_not_of("0123456789:") != std::string::npos))
+                return;
+            Playerbot::V2::AddonControl::OnAddonWhisper(player, receiver, "PBC", "1|" + seq +
+                (token == "view" ? "|1|1|BOT_TRADE_VIEW|" : "|1|1|BOT_TRADE_ACCEPT|" + token));
+            return;
+        }
         Module::instance().OnWhisperReceived(player, receiver, msg);
     }
 

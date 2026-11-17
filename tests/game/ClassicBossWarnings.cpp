@@ -21,6 +21,7 @@
 #include "../../src/modules/PlayerbotV2/Bot/Raid/RaidCallouts.h"
 #include "../../src/modules/PlayerbotV2/Bot/Raid/BossTactics.h"
 #include "../../src/modules/PlayerbotV2/Bot/Raid/RaidBanter.h"
+#include "../../src/modules/PlayerbotV2/Bot/Raid/RaidVoice.h"
 
 using namespace Playerbot::Raid;
 namespace CcDeny = Playerbot::CcDeny;
@@ -429,4 +430,104 @@ TEST_CASE("Raid banter: config and rate limits", "[ClassicBossWarnings]")
 
     h.Prune(t + 500000);
     CHECK(h.Tracked() == 0);
+}
+
+TEST_CASE("Raid callout: breath, stacks and tranq lines", "[ClassicBossWarnings]")
+{
+    CalloutFacts breath;
+    breath.move_reason = "break sight";
+    CHECK(PickCallout(breath).kind == CalloutKind::BreathHide);
+    CHECK(PickCallout(breath).text == "breath coming, get out of its sight");
+    CHECK(PickCallout(breath).group_wide);
+
+    CalloutFacts stacks = breath;
+    stacks.sight_aura = "Flame Buffet";
+    CHECK(PickCallout(stacks).kind == CalloutKind::DropStacks);
+    CHECK(PickCallout(stacks).text == "dropping Flame Buffet stacks out of its sight");
+    CHECK(PickCallout(stacks).group_wide);   // one bot says it for the raid, not all forty
+
+    CalloutFacts tranq;
+    tranq.purge = true;
+    tranq.spell = "Tranquilizing Shot";
+    tranq.target = "Flamegor";
+    CHECK(PickCallout(tranq).text == "casting Tranquilizing Shot on Flamegor");
+    tranq.target.clear();
+    CHECK(PickCallout(tranq).kind == CalloutKind::None);
+}
+
+TEST_CASE("Raid callout: the same sheep is called once for the raid", "[ClassicBossWarnings]")
+{
+    // BWL Nefarius 2026-11-13: four mages each said "Polymorph on Carmina, don't break it" within 11 s.
+    CalloutGate g;
+    uint32_t const t = 1000;
+    CHECK(g.Allow(1, 10, CalloutKind::CrowdControl, false, t, "Carmina"));
+    CHECK_FALSE(g.Allow(1, 11, CalloutKind::CrowdControl, false, t + 2000, "Carmina"));
+    CHECK_FALSE(g.Allow(1, 12, CalloutKind::CrowdControl, false, t + 6000, "Carmina"));
+    CHECK(g.Allow(1, 13, CalloutKind::CrowdControl, false, t + 8000, "Darra"));                     // another target
+    CHECK(g.Allow(2, 14, CalloutKind::CrowdControl, false, t + 2000, "Carmina"));                   // another raid
+    CHECK(g.Allow(1, 15, CalloutKind::Tranq, false, t + 10000, "Carmina"));                         // another kind of line
+    CHECK(g.Allow(1, 16, CalloutKind::CrowdControl, false, t + CalloutGate::kSameKindMs, "Carmina")); // later, again
+}
+
+TEST_CASE("Raid voice: config, tuning and the chatter gate", "[ClassicBossWarnings]")
+{
+    CHECK(RaidTalkFromConfig(0) == RaidTalk::Off);
+    CHECK(RaidTalkFromConfig(-1) == RaidTalk::Off);
+    CHECK(RaidTalkFromConfig(1) == RaidTalk::Normal);
+    CHECK(RaidTalkFromConfig(2) == RaidTalk::Chatty);
+    CHECK(RaidTalkFromConfig(7) == RaidTalk::Chatty);
+
+    RaidVoiceTuning const off = VoiceTuning(RaidTalk::Off);
+    RaidVoiceTuning const normal = VoiceTuning(RaidTalk::Normal);
+    RaidVoiceTuning const chatty = VoiceTuning(RaidTalk::Chatty);
+    CHECK(off.chatterGapMs == 0);
+    CHECK(chatty.chatterGapMs < normal.chatterGapMs);
+    CHECK(chatty.idleGapMs < normal.idleGapMs);
+    CHECK(chatty.killCrowd > normal.killCrowd);
+    CHECK(normal.killCrowd >= 1);
+    CHECK(normal.runBackCrowd >= 1);
+
+    RaidVoiceGate g;
+    uint32_t const t = 5000;
+    CHECK_FALSE(g.Allow(1, 10, off, t));                                     // off: nobody
+    CHECK(g.Allow(1, 10, normal, t));
+    CHECK_FALSE(g.Allow(1, 11, normal, t + 1000));                           // the raid just heard a line
+    CHECK(g.Allow(2, 11, normal, t + 1000));                                 // another raid
+    CHECK(g.Allow(1, 12, normal, t + normal.chatterGapMs));                  // another bot, after the gap
+    CHECK_FALSE(g.Allow(1, 10, normal, t + normal.chatterGapMs * 2));        // the first bot again, too soon for it
+    CHECK(g.Allow(1, 10, normal, t + normal.chatterBotMs));
+    g.Prune(t + 10000000, normal.chatterBotMs);
+    CHECK(g.Allow(1, 12, normal, t + 10000000));
+}
+
+TEST_CASE("Raid voice: the lines and the boss briefs", "[ClassicBossWarnings]")
+{
+    for (uint32_t pick = 0; pick < 64; ++pick)
+    {
+        CHECK_FALSE(KillLine(pick).empty());
+        CHECK_FALSE(RunBackLine(pick).empty());
+        CHECK_FALSE(LeaderRebuffLine(pick).empty());
+        CHECK_FALSE(IdleLine(pick).empty());
+        CHECK_FALSE(LeaderIdleLine(pick).empty());
+    }
+    // Every boss of Molten Core, Onyxia and Blackwing Lair has its brief, and Lord Victor Nefarius for Nefarian's first phase.
+    for (uint32_t e : { 12118u, 11982u, 12259u, 12057u, 12264u, 12056u, 12098u, 11988u, 12018u, 11502u, 10184u,
+                        12435u, 13020u, 12017u, 11983u, 14601u, 11981u, 14020u, 11583u, 10162u })
+    {
+        INFO(e);
+        CHECK_FALSE(BossBrief(e).empty());
+    }
+    CHECK(BossBrief(1).empty());
+
+    BossBriefGate b;
+    RaidVoiceTuning const normal = VoiceTuning(RaidTalk::Normal);
+    uint32_t const t = 1000;
+    CHECK(b.Allow(1, 11983, normal, t));
+    CHECK_FALSE(b.Allow(1, 11983, normal, t + 60000));                       // said, not again soon
+    CHECK(b.Allow(2, 11983, normal, t + 60000));                             // another raid
+    CHECK_FALSE(b.Allow(1, 1, normal, t));                                   // no brief for it
+    CHECK_FALSE(b.Allow(1, 11983, VoiceTuning(RaidTalk::Off), t + 9000000)); // off
+    b.Wiped(1, 11983);
+    CHECK(b.Allow(1, 11983, normal, t + 61000));                             // a wipe on it: explained again
+    CHECK(b.Allow(1, 11983, normal, t + 61000 + normal.explainAgainMs));
 }

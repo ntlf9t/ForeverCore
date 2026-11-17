@@ -54,6 +54,16 @@ TEST_CASE("GroupOrder: mount, dismount and come here are orders, not chatter for
     CHECK_FALSE(ClassifyGroupOrder("nice mount", false).has_value());
 }
 
+TEST_CASE("GroupOrder: the tank lead words are orders", "[grouporder]")
+{
+    CHECK(ClassifyGroupOrder("lead", false) == "lead");
+    CHECK(ClassifyGroupOrder("Lead On", false) == "lead on");
+    CHECK(ClassifyGroupOrder("lead pause", false) == "lead pause");
+    CHECK(ClassifyGroupOrder(" lead off ", false) == "lead off");
+    CHECK_FALSE(ClassifyGroupOrder("lead the way", false).has_value());
+    CHECK_FALSE(ClassifyGroupOrder("who leads?", false).has_value());
+}
+
 TEST_CASE("GroupOrder: panel argument orders are recognized", "[grouporder]")
 {
     CHECK(ClassifyGroupOrder("distance 8", false) == "distance 8");

@@ -21,6 +21,8 @@
 
 #include "../../src/modules/PlayerbotV2/Util/BotLocaleText.h"
 #include "../../src/modules/PlayerbotV2/Bot/Raid/RaidBanter.h"
+#include "../../src/modules/PlayerbotV2/Bot/Raid/RaidCallouts.h"
+#include "../../src/modules/PlayerbotV2/Bot/Raid/RaidVoice.h"
 #include "../../src/modules/PlayerbotV2/Bot/Quest/QuestRefusal.h"
 #include <cctype>
 #include <set>
@@ -141,6 +143,30 @@ TEST_CASE("BotLocale: per-bot confirmations keep the bot's name", "[BotLocale]")
     CHECK(Translate(Lang::Ru, "Zelah: mount ok") == "Zelah: mount — ок");
 }
 
+TEST_CASE("BotLocale: the tank lead lines keep the tank's name", "[BotLocale]")
+{
+    CHECK(Translate(Lang::Ru, "Raveni leads the dungeon now: it pulls pack by pack and waits for mana and for you. Say 'lead pause' to hold, 'lead off' to lead yourself.") ==
+          "Raveni ведет группу по подземелью: пулит по одной группе мобов и ждет ману и вас. Скажите 'lead pause', чтобы он ждал, 'lead off', чтобы вести самому.");
+    CHECK(Translate(Lang::Ru, "Raveni holds here and pulls nothing until you say 'go'.") == "Raveni ждет здесь и никого не пулит, пока вы не скажете 'go'.");
+    CHECK(Translate(Lang::Ru, "waiting for mana") == "жду ману");
+    CHECK(Translate(Lang::Ru, "You lead again: your bots follow you.") == "Снова ведете вы: ваши боты следуют за вами.");
+    // Stay / Follow pause the lead, "go" picks it up.
+    CHECK(Translate(Lang::Ru, "Raveni leads on.") == "Raveni ведет дальше.");
+    CHECK(Translate(Lang::Ru, "Raveni pauses the lead: say 'go' when it should lead on.") ==
+          "Raveni ждет: скажите 'go' (или 'вперед'), когда ему вести дальше.");
+    // The raid lead: the main tank stops before each boss.
+    CHECK(Translate(Lang::Ru, "Raveni leads the raid now: it pulls pack by pack, waits for mana and for you, and stops before each boss for you to pull "
+                              "(or say 'go'). Say 'lead pause' to hold, 'lead off' to lead yourself.") ==
+          "Raveni ведет рейд: пулит по одной группе мобов, ждет ману и вас и останавливается перед каждым боссом, чтобы его пульнули вы (или скажите 'go'). "
+          "Скажите 'lead pause', чтобы он ждал, 'lead off', чтобы вести самому.");
+    CHECK(Translate(Lang::Ru, "Raveni pulls the boss.") == "Raveni пулит босса.");
+    CHECK(Translate(Lang::Ru, "Raveni leads once you are inside a dungeon or a raid. Say 'lead off' to lead yourself.") ==
+          "Raveni поведет группу, когда вы войдете в подземелье или рейд. Скажите 'lead off', чтобы вести самому.");
+    CHECK(Translate(Lang::Ru, "the boss is next: pull it when you are ready, or say go") == "дальше босс: пульте его, когда будете готовы, или скажите go");
+    CHECK(Translate(Lang::Ru, "In a raid the tank leads a raid group: convert your party to a raid first, then say 'lead on'.") ==
+          "В рейде танк ведет рейдовую группу: сначала преобразуйте группу в рейд, затем скажите 'lead on'.");
+}
+
 TEST_CASE("BotLocale: captured words are translated, names and numbers are not", "[BotLocale]")
 {
     CHECK(Translate(Lang::Ru, "Pull back: pulling Hogger to the rally point.") == "Пул назад: тяну Hogger к точке сбора.");
@@ -221,6 +247,37 @@ TEST_CASE("BotLocale: raid leader banter", "[BotLocale]")
                     CHECK_FALSE(s.empty());
                     CHECK(ru.Knows(s));
                 }
+}
+
+TEST_CASE("BotLocale: the raid's voice", "[BotLocale]")
+{
+    using namespace Playerbot::Raid;
+    Catalog const& ru = Russian();
+    // Every fixed line of the raid's voice and every boss brief has its Russian form.
+    for (uint32_t pick = 0; pick < 64; ++pick)
+        for (std::string_view s : { KillLine(pick), RunBackLine(pick), LeaderRebuffLine(pick), IdleLine(pick), LeaderIdleLine(pick) })
+        {
+            INFO(s);
+            CHECK(ru.Knows(s));
+        }
+    for (uint32_t e : { 12118u, 11982u, 12259u, 12057u, 12264u, 12056u, 12098u, 11988u, 12018u, 11502u, 10184u,
+                        12435u, 13020u, 12017u, 11983u, 14601u, 11981u, 14020u, 11583u, 10162u })
+    {
+        INFO(BossBrief(e));
+        CHECK(ru.Knows(BossBrief(e)));
+    }
+    // The newer callouts.
+    CalloutFacts breath;
+    breath.move_reason = "break sight";
+    CHECK(Translate(Lang::Ru, PickCallout(breath).text) == "сейчас дыхание, уйдите из его видимости");
+    breath.sight_aura = "Flame Buffet";
+    CHECK(Translate(Lang::Ru, PickCallout(breath).text) == "сбрасываю стаки Flame Buffet вне его видимости");
+    CalloutFacts tranq;
+    tranq.purge = true;
+    tranq.spell = "Tranquilizing Shot";
+    tranq.target = "Flamegor";
+    CHECK(Translate(Lang::Ru, PickCallout(tranq).text) == "кастую Tranquilizing Shot на Flamegor");
+    CHECK(Translate(Lang::Ru, "Polymorph on Flamewaker Healer, don't break it") == "Polymorph на Flamewaker Healer, не сбивайте");
 }
 
 TEST_CASE("BotLocale: boss tactics answers", "[BotLocale]")

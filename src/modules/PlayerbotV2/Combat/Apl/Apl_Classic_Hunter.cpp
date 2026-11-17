@@ -146,7 +146,7 @@ void DoTrueshotAura(ApPredicateContext const&, BotIntentEmitter& e) { e.cast(TRU
 bool ShouldCallPet(ApPredicateContext const& ctx)
 {
     if (ctx.bot.in_combat() || !ctx.bot.pet_guid().IsEmpty() || ctx.bot.owner_pet_off() || Classic::LoneWolfKeepsPetAway(ctx.bot)) return false;
-    if (!Ready(ctx, CALL_PET)) return false;
+    if (ctx.bot.raw().pet.has_dead_active_pet || !Ready(ctx, CALL_PET)) return false;
     for (auto const& sp : ctx.bot.stable_pets())
         if (sp.slot_kind == 0 && sp.creature_id != 0)
             return true;
@@ -156,8 +156,9 @@ void DoCallPet(ApPredicateContext const&, BotIntentEmitter& e) { e.cast(CALL_PET
 
 bool ShouldRevivePet(ApPredicateContext const& ctx)
 {
-    // Only when a pet existed and died; an empty guid means never tamed. Not while the owner keeps the pet away ("pet off").
-    return !ctx.bot.owner_pet_off() && !Classic::LoneWolfKeepsPetAway(ctx.bot) && !ctx.bot.pet_guid().IsEmpty() && !ctx.bot.has_pet()
+    // A saved dead pet can outlive its in-world GUID.
+    return !ctx.bot.owner_pet_off() && !Classic::LoneWolfKeepsPetAway(ctx.bot) && !ctx.bot.has_pet()
+        && (!ctx.bot.pet_guid().IsEmpty() || ctx.bot.raw().pet.has_dead_active_pet)
         && Ready(ctx, REVIVE_PET);
 }
 void DoRevivePet(ApPredicateContext const&, BotIntentEmitter& e) { e.cast(REVIVE_PET); }

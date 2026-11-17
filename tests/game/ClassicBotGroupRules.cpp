@@ -17,6 +17,7 @@
 #include "tc_catch2.h"
 
 #include "../../src/server/game/Groups/BotGroupRules.h"
+#include "../../src/modules/PlayerbotV2/Bot/IdleRuleErrands.h"
 
 using namespace BotGroupRules;
 
@@ -112,4 +113,18 @@ TEST_CASE("A raid of a player and bots that fits a party goes back to one", "[Cl
     REQUIRE_FALSE(RevertBotRaidToParty(true, false, 3, 5, true, false, false));
     // already a party
     REQUIRE_FALSE(RevertBotRaidToParty(false, false, 3, 5, true, true, false));
+}
+
+TEST_CASE("A companion following its player still answers the player's guild invite", "[ClassicBotGroupRules]")
+{
+    // Karrz 2026-11-16: Chaelanna (grouped with her player) had the invite pending and never accepted: "idle:guild_" errands
+    // are skipped for a bot led by a player, and the accept rule matched that prefix.
+    CHECK_FALSE(Playerbot::IsWorldErrand("idle:guild_invite_accept"));
+    // the guild errands that do take a bot about the world stay errands
+    CHECK(Playerbot::IsWorldErrand("idle:guild_recruit_nearby"));
+    CHECK(Playerbot::IsWorldErrand("idle:guild_bank_deposit"));
+    // and so do the other accept-free prefixes it sits next to
+    CHECK_FALSE(Playerbot::IsWorldErrand("idle:quest_start_item"));
+    CHECK(Playerbot::IsWorldErrand("idle:quest_turnin"));
+    CHECK_FALSE(Playerbot::IsWorldErrand("idle:group_invite_accept"));
 }
