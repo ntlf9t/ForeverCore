@@ -7,8 +7,6 @@
 
 #include "Chat.h"
 #include "ChatCommand.h"
-#include "DB2Stores.h"
-#include "Log.h"
 #include "Player.h"
 #include "PlayerMode.h"
 #include "RBAC.h"
@@ -190,12 +188,6 @@ public:
 
 void AddSC_player_modes()
 {
-    PlayerDataElementCharacterEntry const* pde = sPlayerDataElementCharacterStore.LookupEntry(9001);
-    TraitCurrencyEntry const* cur = sTraitCurrencyStore.LookupEntry(3820);
-    TC_LOG_INFO("server.loading", ">> PlayerMode: PDE9001={} type={} storage={} | currency3820={} type={} elem={} cap={}",
-        pde ? 1 : 0, pde ? pde->Type : -1, pde ? pde->StorageIndex : -1,
-        cur ? 1 : 0, cur ? cur->Type : -1, cur ? cur->CurrencyTypesID : -1, cur ? cur->SourcedMax : -1);
-
     new player_modes_playerscript();
     new player_modes_commandscript();
 }
