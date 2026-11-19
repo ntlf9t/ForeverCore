@@ -1,7 +1,9 @@
 # Forever modes SQL
 
 These are manual, one-time setup scripts; the database updater does not apply
-this package automatically. Back up the affected databases before importing.
+the complete package automatically. It does apply the current `character_modes`
+schema repair from `sql/custom/characters` before the world starts. Back up the
+affected databases before importing.
 
 Run them in this order with `world` selected as the default database. They
 write to `world`, `hotfixes`, `auth`, and `characters`; `item_score_ench_name.sql`

@@ -17,6 +17,21 @@ CREATE TABLE IF NOT EXISTS characters.character_modes (
   PRIMARY KEY (guid)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+SET @character_modes_add_legacy = IF(
+  EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'characters'
+      AND table_name = 'character_modes'
+      AND column_name = 'legacy_given'
+  ),
+  'DO 0',
+  'ALTER TABLE characters.character_modes ADD COLUMN legacy_given TINYINT UNSIGNED NOT NULL DEFAULT 0 AFTER rebirth_active'
+);
+PREPARE character_modes_stmt FROM @character_modes_add_legacy;
+EXECUTE character_modes_stmt;
+DEALLOCATE PREPARE character_modes_stmt;
+
 -- RBAC：.mode 命令，所有玩家可用
 INSERT INTO auth.rbac_permissions (Id, Name) VALUES (1001, 'Command: mode')
   ON DUPLICATE KEY UPDATE Name = VALUES(Name);

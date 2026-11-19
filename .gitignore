@@ -72,3 +72,4 @@ phase7a-compile-log.txt
 
 # rendered per machine from config/my.ini.template by scripts/install.ps1
 /config/my.ini
+/sql.rar
