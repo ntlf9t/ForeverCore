@@ -16,6 +16,7 @@
  */
 
 #include "Item.h"
+#include "ItemScoreAffix.h"
 #include "ArtifactPackets.h"
 #include "AzeriteEmpoweredItem.h"
 #include "AzeriteItem.h"
@@ -1113,6 +1114,7 @@ bool Item::LoadFromDB(ObjectGuid::LowType guid, ObjectGuid ownerGuid, Field* fie
 
     // Enchants must be loaded after all other bonus/scaling data
     std::vector<std::string_view> enchantmentTokens = Trinity::Tokenize(fields[8].GetStringView(), ' ', false);
+
     if (enchantmentTokens.size() == MAX_ENCHANTMENT_SLOT * MAX_ENCHANTMENT_OFFSET)
     {
         for (uint32 i = 0; i < MAX_ENCHANTMENT_SLOT; ++i)
@@ -1123,6 +1125,7 @@ bool Item::LoadFromDB(ObjectGuid::LowType guid, ObjectGuid ownerGuid, Field* fie
             SetUpdateFieldValue(enchantmentField.ModifyValue(&UF::ItemEnchantment::Charges), Trinity::StringTo<int16>(enchantmentTokens[i * MAX_ENCHANTMENT_OFFSET + 2]).value_or(0));
         }
     }
+
     m_randomBonusListId = fields[9].GetUInt32();
 
     // Remove bind flag for items vs BIND_NONE set
@@ -1561,6 +1564,17 @@ bool Item::IsFitToSpellRequirements(SpellInfo const* spellInfo) const
     }
 
     return true;
+}
+
+void Item::SetEnchantmentRaw(EnchantmentSlot slot, uint32 id)
+{
+    if (slot >= MAX_ENCHANTMENT_SLOT)
+        return;
+
+    auto enchantmentField = m_values.ModifyValue(&Item::m_itemData).ModifyValue(&UF::ItemData::Enchantment, slot);
+    SetUpdateFieldValue(enchantmentField.ModifyValue(&UF::ItemEnchantment::ID), int32(id));
+    SetUpdateFieldValue(enchantmentField.ModifyValue(&UF::ItemEnchantment::Duration), 0);
+    SetUpdateFieldValue(enchantmentField.ModifyValue(&UF::ItemEnchantment::Charges), int16(0));
 }
 
 void Item::SetEnchantment(EnchantmentSlot slot, uint32 id, uint32 duration, uint32 charges, ObjectGuid caster /*= ObjectGuid::Empty*/)

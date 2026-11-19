@@ -66,6 +66,8 @@
 #include "IPLocation.h"
 #include "InstanceLockMgr.h"
 #include "ItemBonusMgr.h"
+#include "ItemScoreAffix.h"
+#include "CreatureRandomBuff.h"
 #include "LFGMgr.h"
 #include "Language.h"
 #include "LanguageMgr.h"
@@ -1415,6 +1417,7 @@ bool World::SetInitialWorldSettings()
         return false;
     }
 
+
     TC_LOG_INFO("server.loading", "Loading hotfix blobs...");
     sDB2Manager.LoadHotfixBlob(m_availableDbcLocaleMask);
     TC_LOG_INFO("server.loading", "Loading hotfix info...");
@@ -1606,6 +1609,12 @@ bool World::SetInitialWorldSettings()
 
     TC_LOG_INFO("server.loading", "Loading Items...");                         // must be after LoadRandomEnchantmentsTable and LoadPageTexts
     sObjectMgr->LoadItemTemplates();
+
+    TC_LOG_INFO("server.loading", "Loading item score affixes...");
+    ItemScoreAffix::Load();
+
+    TC_LOG_INFO("server.loading", "Loading creature random buffs...");
+    CreatureRandomBuff::Load();
 
     TC_LOG_INFO("server.loading", "Loading Item set names...");                // must be after LoadItemPrototypes
     sObjectMgr->LoadItemTemplateAddon();

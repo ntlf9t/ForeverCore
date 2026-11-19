@@ -26,6 +26,7 @@
 #include "MapUtils.h"
 #include "ObjectMgr.h"
 #include "Player.h"
+#include "PlayerMode.h"
 #include "Random.h"
 #include "SpellInfo.h"
 #include "SpellMgr.h"
@@ -115,7 +116,7 @@ class LootTemplate::LootGroup                               // A set of loot def
         bool HasQuestDropForPlayer(Player const* player) const;
                                                             // The same for active quests of the player
         void Process(Loot& loot, uint16 lootMode,
-            Player const* personalLooter = nullptr) const;  // Rolls an item from the group (if any) and adds the item to the loot
+            Player const* personalLooter = nullptr, float dropMultiplier = 1.0f) const;  // Rolls an item from the group (if any) and adds the item to the loot
         float RawTotalChance() const;                       // Overall chance for the group (without equal chanced items)
         float TotalChance() const;                          // Overall chance for the group
 
@@ -128,7 +129,7 @@ class LootTemplate::LootGroup                               // A set of loot def
         LootStoreItemList EqualChanced;                     // Zero chances - every entry takes the same chance
 
         // Rolls an item from the group, returns NULL if all miss their chances
-        LootStoreItem const* Roll(uint16 lootMode, Player const* personalLooter = nullptr) const;
+        LootStoreItem const* Roll(uint16 lootMode, Player const* personalLooter = nullptr, float dropMultiplier = 1.0f) const;
 };
 
 LootStore::LootStore(char const* name, char const* entryName, bool ratesAllowed)
@@ -299,9 +300,11 @@ void SetClassicScarceMaterialChanceMod(float mod)
     ClassicScarceMaterialChanceMod = mod;
 }
 
-bool LootStoreItem::Roll(bool rate) const
+bool LootStoreItem::Roll(bool rate, float dropMultiplier) const
 {
-    if (chance >= 100.0f)
+    float effectiveChance = chance * dropMultiplier;
+
+    if (effectiveChance >= 100.0f)
         return true;
 
     switch (type)
@@ -314,20 +317,20 @@ bool LootStoreItem::Roll(bool rate) const
 
             float scarceModifier = ClassicScarceMaterialChanceMod != 1.0f && IsClassicScarceMaterial(itemid) ? ClassicScarceMaterialChanceMod : 1.0f;
 
-            return roll_chance(chance * qualityModifier * scarceModifier);
+            return roll_chance(effectiveChance * qualityModifier * scarceModifier);
         }
         case Type::Reference:
-            return roll_chance(chance * (rate ? sWorld->getRate(RATE_DROP_ITEM_REFERENCED) : 1.0f));
+            return roll_chance(effectiveChance * (rate ? sWorld->getRate(RATE_DROP_ITEM_REFERENCED) : 1.0f));
         case Type::Currency:
         {
             CurrencyTypesEntry const* currency = sCurrencyTypesStore.AssertEntry(itemid);
 
             float qualityModifier = currency && rate && QualityToRate[currency->Quality] != MAX_RATES ? sWorld->getRate(QualityToRate[currency->Quality]) : 1.0f;
 
-            return roll_chance(chance * qualityModifier);
+            return roll_chance(effectiveChance * qualityModifier);
         }
         case Type::TrackingQuest:
-            return roll_chance(chance);
+            return roll_chance(effectiveChance);
         default:
             break;
     }
@@ -483,7 +486,7 @@ void LootTemplate::LootGroup::AddEntry(LootStoreItem* item)
 }
 
 // Rolls an item from the group, returns NULL if all miss their chances
-LootStoreItem const* LootTemplate::LootGroup::Roll(uint16 lootMode, Player const* personalLooter /*= nullptr*/) const
+LootStoreItem const* LootTemplate::LootGroup::Roll(uint16 lootMode, Player const* personalLooter /*= nullptr*/, float dropMultiplier /*= 1.0f*/) const
 {
     auto getValidLoot = [](LootStoreItemList const& items, uint16 lootMode, Player const* personalLooter)
     {
@@ -502,10 +505,11 @@ LootStoreItem const* LootTemplate::LootGroup::Roll(uint16 lootMode, Player const
 
         for (LootStoreItem const* item : possibleLoot)      // check each explicitly chanced entry in the template and modify its chance based on quality.
         {
-            if (item->chance >= 100.0f)
+            float itemChance = item->chance * dropMultiplier;
+            if (itemChance >= 100.0f)
                 return item;
 
-            roll -= item->chance;
+            roll -= itemChance;
             if (roll < 0)
                 return item;
         }
@@ -570,9 +574,9 @@ bool LootTemplate::LootGroup::HasQuestDropForPlayer(Player const* player) const
 }
 
 // Rolls an item from the group (if any takes its chance) and adds the item to the loot
-void LootTemplate::LootGroup::Process(Loot& loot, uint16 lootMode, Player const* personalLooter /*= nullptr*/) const
+void LootTemplate::LootGroup::Process(Loot& loot, uint16 lootMode, Player const* personalLooter /*= nullptr*/, float dropMultiplier /*= 1.0f*/) const
 {
-    if (LootStoreItem const* item = Roll(lootMode, personalLooter))
+    if (LootStoreItem const* item = Roll(lootMode, personalLooter, dropMultiplier))
         loot.AddItem(*item);
 }
 
@@ -694,6 +698,8 @@ void LootTemplate::CopyConditions(LootItem* li) const
 // Rolls for every item in the template and adds the rolled items the the loot
 void LootTemplate::Process(Loot& loot, bool rate, uint16 lootMode, uint8 groupId, Player const* personalLooter /*= nullptr*/) const
 {
+    float dropMultiplier = loot.GetDropMultiplier();
+
     if (groupId)                                            // Group reference uses own processing of the group
     {
         if (groupId > Groups.size())
@@ -702,7 +708,7 @@ void LootTemplate::Process(Loot& loot, bool rate, uint16 lootMode, uint8 groupId
         if (!Groups[groupId - 1])
             return;
 
-        Groups[groupId - 1]->Process(loot, lootMode, personalLooter);
+        Groups[groupId - 1]->Process(loot, lootMode, personalLooter, dropMultiplier);
         return;
     }
 
@@ -712,7 +718,7 @@ void LootTemplate::Process(Loot& loot, bool rate, uint16 lootMode, uint8 groupId
         if (!(item->lootmode & lootMode))                       // Do not add if mode mismatch
             continue;
 
-        if (!item->Roll(rate))
+        if (!item->Roll(rate, dropMultiplier))
             continue;                                           // Bad luck for the entry
 
         switch (item->type)
@@ -746,10 +752,10 @@ void LootTemplate::Process(Loot& loot, bool rate, uint16 lootMode, uint8 groupId
     // Now processing groups
     for (std::unique_ptr<LootGroup> const& group : Groups)
         if (group)
-            group->Process(loot, lootMode, personalLooter);
+            group->Process(loot, lootMode, personalLooter, dropMultiplier);
 }
 
-void LootTemplate::ProcessPersonalLoot(std::unordered_map<Player*, std::unique_ptr<Loot>>& personalLoot, bool rate, uint16 lootMode) const
+void LootTemplate::ProcessPersonalLoot(std::unordered_map<Player*, std::unique_ptr<Loot>>& personalLoot, bool rate, uint16 lootMode, float dropMultiplier /*= 1.0f*/) const
 {
     auto getLootersForItem = [&personalLoot](auto&& predicate) -> std::vector<Player*>
     {
@@ -767,7 +773,7 @@ void LootTemplate::ProcessPersonalLoot(std::unordered_map<Player*, std::unique_p
         if (!(item->lootmode & lootMode))                       // Do not add if mode mismatch
             continue;
 
-        if (!item->Roll(rate))
+        if (!item->Roll(rate, dropMultiplier))
             continue;                                           // Bad luck for the entry
 
         switch (item->type)
@@ -860,7 +866,7 @@ void LootTemplate::ProcessPersonalLoot(std::unordered_map<Player*, std::unique_p
             if (!lootersForGroup.empty())
             {
                 Player* chosenLooter = Trinity::Containers::SelectRandomContainerElement(lootersForGroup);
-                group->Process(*personalLoot[chosenLooter], lootMode);
+                group->Process(*personalLoot[chosenLooter], lootMode, nullptr, dropMultiplier);
             }
         }
     }
@@ -1089,9 +1095,13 @@ bool LootTemplate::LinkConditions(ConditionId const& id, ConditionsReference ref
 
 std::unordered_map<ObjectGuid, std::unique_ptr<Loot>> GenerateDungeonEncounterPersonalLoot(uint32 dungeonEncounterId, uint32 lootId, LootStore const& store,
     LootType type, WorldObject const* lootOwner, uint32 minMoney, uint32 maxMoney, uint16 lootMode, MapDifficultyEntry const* mapDifficulty,
-    std::vector<Player*> const& tappers)
+    std::vector<Player*> const& tappers, float dropMultiplier /*= 1.0f*/)
 {
     std::unordered_map<Player*, std::unique_ptr<Loot>> tempLoot;
+
+    // 孤勇：单人击杀时 Boss 个人拾取也 ×3
+    if (!tappers.empty() && std::ranges::all_of(tappers, [](Player* tapper) { return PlayerMode::IsLone(tapper); }))
+        dropMultiplier *= 3.0f;
 
     for (Player* tapper : tappers)
     {
@@ -1102,11 +1112,12 @@ std::unordered_map<ObjectGuid, std::unique_ptr<Loot>> GenerateDungeonEncounterPe
         loot.reset(new Loot(lootOwner->GetMap(), lootOwner->GetGUID(), type, nullptr));
         loot->SetItemContext(ItemBonusMgr::GetContextForPlayer(mapDifficulty, tapper));
         loot->SetDungeonEncounterId(dungeonEncounterId);
+        loot->SetDropMultiplier(dropMultiplier);
         loot->generateMoneyLoot(minMoney, maxMoney);
     }
 
     if (LootTemplate const* tab = store.GetLootFor(lootId))
-        tab->ProcessPersonalLoot(tempLoot, store.IsRatesAllowed(), lootMode);
+        tab->ProcessPersonalLoot(tempLoot, store.IsRatesAllowed(), lootMode, dropMultiplier);
 
     std::unordered_map<ObjectGuid, std::unique_ptr<Loot>> personalLoot;
     for (auto&& [looter, loot] : tempLoot)

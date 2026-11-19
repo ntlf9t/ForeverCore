@@ -40,6 +40,7 @@
 #include "Containers.h"
 #include "Creature.h"
 #include "CreatureAI.h"
+#include "CreatureRandomBuff.h"
 #include "CreatureAIImpl.h"
 #include "CreatureAIFactory.h"
 #include "CreatureGroups.h"
@@ -56,6 +57,7 @@
 #include "ListUtils.h"
 #include "Log.h"
 #include "Loot.h"
+#include "RuneDrop.h"
 #include "LootMgr.h"
 #include "LootPackets.h"
 #include "MapUtils.h"
@@ -75,6 +77,7 @@
 #include "PetPackets.h"
 #include "PhasingHandler.h"
 #include "Player.h"
+#include "PlayerMode.h"
 #include "PlayerAI.h"
 #include "QuestDef.h"
 #include "RecentAllies.h"
@@ -11890,6 +11893,8 @@ void Unit::SetMeleeAnimKitId(uint16 animKitId)
         // Generate loot before updating looter
         if (creature)
         {
+            float const dropMultiplier = CreatureRandomBuff::GetLootMultiplier(creature->GetGUID());
+
             DungeonEncounterEntry const* dungeonEncounter = nullptr;
             if (InstanceScript const* instance = creature->GetInstanceScript())
                 dungeonEncounter = instance->GetBossDungeonEncounter(creature);
@@ -11920,7 +11925,10 @@ void Unit::SetMeleeAnimKitId(uint16 animKitId)
                     if (Player* groupLooter = ObjectAccessor::GetPlayer(*creature, group->GetLooterGuid()))
                         looter = groupLooter;
 
+                float const lootMultiplier = dropMultiplier * PlayerMode::GetLootRate(looter);
+
                 Loot* loot = new Loot(creature->GetMap(), creature->GetGUID(), LOOT_CORPSE, group);
+                loot->SetDropMultiplier(lootMultiplier);
                 if (dungeonEncounter)
                     loot->SetDungeonEncounterId(dungeonEncounter->ID);
 
@@ -11946,7 +11954,7 @@ void Unit::SetMeleeAnimKitId(uint16 animKitId)
                 {
                     creature->m_personalLoot = GenerateDungeonEncounterPersonalLoot(dungeonEncounter->ID, creature->GetLootId(),
                         LootTemplates_Creature, LOOT_CORPSE, creature, creature->GetCreatureDifficulty()->GoldMin, creature->GetCreatureDifficulty()->GoldMax,
-                        creature->GetLootMode(), creature->GetMap()->GetMapDifficulty(), tappers);
+                        creature->GetLootMode(), creature->GetMap()->GetMapDifficulty(), tappers, dropMultiplier);
                 }
                 else if (!tappers.empty())
                 {
@@ -11957,6 +11965,7 @@ void Unit::SetMeleeAnimKitId(uint16 animKitId)
                             looter = groupLooter;
 
                     Loot* loot = new Loot(creature->GetMap(), creature->GetGUID(), LOOT_CORPSE, dungeonEncounter ? group : nullptr);
+                    loot->SetDropMultiplier(dropMultiplier * PlayerMode::GetLootRate(looter));
 
                     if (uint32 lootid = creature->GetLootId())
                         loot->FillLoot(lootid, LootTemplates_Creature, looter, dungeonEncounter != nullptr, false, creature->GetLootMode(), ItemBonusMgr::GetContextForPlayer(creature->GetMap()->GetMapDifficulty(), looter));
@@ -11980,6 +11989,7 @@ void Unit::SetMeleeAnimKitId(uint16 animKitId)
                 for (Player* tapper : tappers)
                 {
                     Loot* loot = new Loot(creature->GetMap(), creature->GetGUID(), LOOT_CORPSE, nullptr);
+                    loot->SetDropMultiplier(dropMultiplier * PlayerMode::GetLootRate(tapper));
 
                     if (dungeonEncounter)
                         loot->SetDungeonEncounterId(dungeonEncounter->ID);

@@ -63,6 +63,14 @@ target_sources(casc
 
 target_compile_definitions(casc PUBLIC CASC_USE_SYSTEM_ZLIB CASCLIB_NO_AUTO_LINK_LIBRARY CASCLIB_NODEBUG)
 
+# CascLib vendors OpenSSL's legacy aes.c, whose AES_* symbols collide at link time
+# with the modern libcrypto the extractors also link (LNK2005). Rename them inside
+# CascLib only; its own code is the only caller.
+target_compile_definitions(casc PRIVATE
+  AES_set_encrypt_key=casc_AES_set_encrypt_key
+  AES_set_decrypt_key=casc_AES_set_decrypt_key
+  AES_cbc_decrypt=casc_AES_cbc_decrypt)
+
 target_link_libraries(casc
   PRIVATE
     trinity-dependency-interface

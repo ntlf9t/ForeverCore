@@ -64,7 +64,7 @@ struct TC_GAME_API LootStoreItem
         needs_quest(_needs_quest), groupid(_groupid), mincount(_mincount), maxcount(_maxcount)
          { }
 
-    bool Roll(bool rate) const;                             // Checks if the entry takes it's chance (at loot generation)
+    bool Roll(bool rate, float dropMultiplier = 1.0f) const;                             // Checks if the entry takes it's chance (at loot generation)
     bool IsValid(LootStore const& store, uint32 entry) const; // Checks correctness of values
 };
 
@@ -131,7 +131,7 @@ class TC_GAME_API LootTemplate
         void AddEntry(LootStoreItem* item);
         // Rolls for every item in the template and adds the rolled items the the loot
         void Process(Loot& loot, bool rate, uint16 lootMode, uint8 groupId, Player const* personalLooter = nullptr) const;
-        void ProcessPersonalLoot(std::unordered_map<Player*, std::unique_ptr<Loot>>& personalLoot, bool rate, uint16 lootMode) const;
+        void ProcessPersonalLoot(std::unordered_map<Player*, std::unique_ptr<Loot>>& personalLoot, bool rate, uint16 lootMode, float dropMultiplier = 1.0f) const;
         void CopyConditions(LootItem* li) const;
 
         // True if template includes at least 1 drop for the player
@@ -155,7 +155,7 @@ std::unordered_map<ObjectGuid, std::unique_ptr<Loot>> GenerateDungeonEncounterPe
     uint32 lootId, LootStore const& store, LootType type, WorldObject const* lootOwner,
     uint32 minMoney, uint32 maxMoney,
     uint16 lootMode, MapDifficultyEntry const* mapDifficulty,
-    std::vector<Player*> const& tappers);
+    std::vector<Player*> const& tappers, float dropMultiplier = 1.0f);
 
 //=====================================================
 

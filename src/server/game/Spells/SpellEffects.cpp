@@ -30,6 +30,7 @@
 #include "Common.h"
 #include "Conversation.h"
 #include "Creature.h"
+#include "CreatureRandomBuff.h"
 #include "CreatureAI.h"
 #include "CreatureTextMgr.h"
 #include "DatabaseEnv.h"
@@ -64,6 +65,7 @@
 #include "PetFollowPosition.h"
 #include "PhasingHandler.h"
 #include "Player.h"
+#include "PlayerMode.h"
 #include "QuestMgr.h"
 #include "ReputationMgr.h"
 #include "RestMgr.h"
@@ -2359,13 +2361,15 @@ void Spell::EffectPickPocket()
         creature->StartPickPocketRefillTimer();
 
         creature->m_loot.reset(new Loot(creature->GetMap(), creature->GetGUID(), LOOT_PICKPOCKETING, nullptr));
+        float dropMultiplier = CreatureRandomBuff::GetLootMultiplier(creature->GetGUID()) * PlayerMode::GetLootRate(player);
+        creature->m_loot->SetDropMultiplier(dropMultiplier);
         if (uint32 lootid = creature->GetCreatureDifficulty()->PickPocketLootID)
             creature->m_loot->FillLoot(lootid, LootTemplates_Pickpocketing, player, true);
 
         // Generate extra money for pick pocket loot
         const uint32 a = urand(0, creature->GetLevel() / 2);
         const uint32 b = urand(0, player->GetLevel() / 2);
-        creature->m_loot->gold = uint32(10 * (a + b) * sWorld->getRate(RATE_DROP_MONEY));
+        creature->m_loot->gold = uint32(10 * (a + b) * sWorld->getRate(RATE_DROP_MONEY) * dropMultiplier);
 
         // Empty pockets (no item rolled and no money: often at low level, where both money rolls can be 0 and the Tirisfal Scarlets'
         // item chances add up to about 28%): an empty loot opens no window on the client, so the rogue saw nothing happen and the next
@@ -4033,6 +4037,7 @@ void Spell::EffectSkinning()
     creature->SetUnitFlag3(UNIT_FLAG3_ALREADY_SKINNED);
     creature->SetDynamicFlag(UNIT_DYNFLAG_LOOTABLE);
     Loot* loot = new Loot(creature->GetMap(), creature->GetGUID(), LOOT_SKINNING, nullptr);
+    loot->SetDropMultiplier(CreatureRandomBuff::GetLootMultiplier(creature->GetGUID()) * PlayerMode::GetLootRate(player));
     creature->m_personalLoot[player->GetGUID()].reset(loot);
     loot->FillLoot(creature->GetCreatureDifficulty()->SkinLootID, LootTemplates_Skinning, player, true);
     player->SendLoot(*loot);

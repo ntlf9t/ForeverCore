@@ -309,6 +309,7 @@ class TC_GAME_API Item : public Object
         ItemRandomBonusListId GetItemRandomBonusListId() const { return m_randomBonusListId; }
         void SetItemRandomBonusList(ItemRandomBonusListId bonusListId);
         void SetEnchantment(EnchantmentSlot slot, uint32 id, uint32 duration, uint32 charges, ObjectGuid caster = ObjectGuid::Empty);
+        void SetEnchantmentRaw(EnchantmentSlot slot, uint32 id);
         void SetEnchantmentDuration(EnchantmentSlot slot, uint32 duration, Player* owner);
         void SetEnchantmentCharges(EnchantmentSlot slot, uint32 charges);
         void ClearEnchantment(EnchantmentSlot slot);
