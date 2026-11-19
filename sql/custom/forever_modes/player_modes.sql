@@ -17,29 +17,16 @@ CREATE TABLE IF NOT EXISTS characters.character_modes (
   PRIMARY KEY (guid)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-SET @character_modes_add_legacy = IF(
-  EXISTS (
-    SELECT 1
-    FROM information_schema.columns
-    WHERE table_schema = 'characters'
-      AND table_name = 'character_modes'
-      AND column_name = 'legacy_given'
-  ),
-  'DO 0',
-  'ALTER TABLE characters.character_modes ADD COLUMN legacy_given TINYINT UNSIGNED NOT NULL DEFAULT 0 AFTER rebirth_active'
-);
-PREPARE character_modes_stmt FROM @character_modes_add_legacy;
-EXECUTE character_modes_stmt;
-DEALLOCATE PREPARE character_modes_stmt;
-
--- RBAC：.mode 命令，所有玩家可用
-INSERT INTO auth.rbac_permissions (Id, Name) VALUES (1001, 'Command: mode')
+-- RBAC：上游 0.1.38 已占用 1001 = .bug，我们顺延
+-- time=1000, bug=1001, mode=1002, dungeon=1003
+INSERT INTO auth.rbac_permissions (Id, Name) VALUES (1001, 'Command: bug')
   ON DUPLICATE KEY UPDATE Name = VALUES(Name);
-INSERT IGNORE INTO auth.rbac_linked_permissions (id, linkedId) VALUES (199, 1001), (199, 1002);
-
--- Dungeon difficulty is registered separately and granted to the player role.
-INSERT INTO auth.rbac_permissions (Id, Name) VALUES (1002, 'Command: dungeon')
+INSERT INTO auth.rbac_permissions (Id, Name) VALUES (1002, 'Command: mode')
   ON DUPLICATE KEY UPDATE Name = VALUES(Name);
+INSERT INTO auth.rbac_permissions (Id, Name) VALUES (1003, 'Command: dungeon')
+  ON DUPLICATE KEY UPDATE Name = VALUES(Name);
+INSERT IGNORE INTO auth.rbac_linked_permissions (id, linkedId) VALUES
+  (199, 1000), (199, 1001), (199, 1002), (199, 1003);
 
 INSERT INTO world.command (name, help) VALUES
 ('mode', 'Syntax: .mode [lone|rebirth|info]\n查看/选择角色模式：lone=孤勇，rebirth=重生。')
