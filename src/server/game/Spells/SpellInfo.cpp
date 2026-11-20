@@ -4329,7 +4329,8 @@ uint32 SpellInfo::CalcCastTime(Spell* spell /*= nullptr*/) const
         {
             SKILL_ALCHEMY, SKILL_BLACKSMITHING, SKILL_ENCHANTING, SKILL_ENGINEERING,
             SKILL_LEATHERWORKING, SKILL_TAILORING, SKILL_HERBALISM, SKILL_MINING,
-            SKILL_SKINNING, SKILL_FISHING, SKILL_COOKING, 129 /* First Aid */
+            SKILL_SKINNING, SKILL_FISHING, SKILL_COOKING, 129 /* First Aid */,
+            SKILL_LOCKPICKING
         };
 
         for (uint32 skill : professionSkills)
