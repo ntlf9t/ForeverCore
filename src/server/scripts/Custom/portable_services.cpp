@@ -203,17 +203,19 @@ namespace
 
         player->ModifyMoney(-int64(stake));
 
-        // 1-50 输；51-70 返 1 倍；71-85 5 倍；86-100 10 倍
+        // 1-50 输；51-84 返 1 倍；85-94 5 倍；95-99 10 倍；100 100 倍
         uint32 roll = urand(1, 100);
         uint32 multiplier = 0;
         if (roll <= 50)
             multiplier = 0;
-        else if (roll <= 70)
+        else if (roll <= 84)
             multiplier = 1;
-        else if (roll <= 85)
+        else if (roll <= 94)
             multiplier = 5;
-        else
+        else if (roll <= 99)
             multiplier = 10;
+        else
+            multiplier = 100;
 
         uint64 payout = stake * multiplier;
         if (payout)
