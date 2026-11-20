@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS characters.character_modes (
   rebirths        INT UNSIGNED NOT NULL DEFAULT 0,       -- 重生次数
   rebirth_active  TINYINT UNSIGNED NOT NULL DEFAULT 0,   -- 当前是否在重生流程中
   legacy_given    TINYINT UNSIGNED NOT NULL DEFAULT 0,   -- 孤勇永久死亡遗产是否已发放
+  lone_reward_given TINYINT UNSIGNED NOT NULL DEFAULT 0, -- 孤勇 60 级奖励是否已发放
   updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (guid)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

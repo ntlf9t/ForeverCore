@@ -29,6 +29,7 @@ namespace PlayerMode
         uint32 rebirths = 0;        // 重生次数
         bool rebirthActive = false; // 当前重生流程中
         bool legacyGiven = false;   // 孤勇永久死亡遗产是否已发放
+        bool loneRewardGiven = false; // 孤勇 60 级奖励是否已发放
     };
 
     // 登录时读取，登出/变更时保存
@@ -49,6 +50,9 @@ namespace PlayerMode
 
     // 孤勇 60 级前永久死亡：全服公告 + 随机遗产
     void HandleLoneDeath(Player* player);
+
+    // 等级变化：孤勇首次到 60 级发奖励（36 格包 + 1 万金）
+    void HandleLevelUp(Player* player, uint8 newLevel);
 
     // 孤勇掉落倍率（物品/金币 ×3，经验不变）
     float GetLootRate(Player* player);

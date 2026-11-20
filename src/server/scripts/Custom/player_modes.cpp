@@ -139,6 +139,7 @@ public:
     void OnLogin(Player* player, bool /*firstLogin*/) override
     {
         PlayerMode::Load(player);
+        PlayerMode::HandleLevelUp(player, player->GetLevel());
         SendModeBuffData(player);
     }
 
@@ -147,6 +148,7 @@ public:
         // 60 级时移除玻璃大炮；重生降级时重新挂上
         PlayerMode::ApplyAuras(player);
         PlayerMode::SyncTalentPoints(player);
+        PlayerMode::HandleLevelUp(player, player->GetLevel());
 
         // 重生流程到 60 级自动解除
         if (player->GetLevel() >= 60 && PlayerMode::IsRebirthActive(player))

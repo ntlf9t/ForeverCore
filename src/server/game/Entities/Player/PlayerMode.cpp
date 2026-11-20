@@ -5,6 +5,7 @@
 #include "DatabaseEnv.h"
 #include "Item.h"
 #include "Log.h"
+#include "Mail.h"
 #include "Player.h"
 #include "Random.h"
 #include "SpellAuraEffects.h"
@@ -252,6 +253,48 @@ namespace PlayerMode
         }
     }
 
+    void HandleLevelUp(Player* player, uint8 newLevel)
+    {
+        if (!player || newLevel < 60 || !IsLone(player))
+            return;
+
+        {
+            std::lock_guard<std::mutex> lock(_modeMutex);
+            auto it = _modes.find(player->GetGUID());
+            if (it == _modes.end() || it->second.loneRewardGiven)
+                return;
+            it->second.loneRewardGiven = true;
+        }
+        Save(player);
+
+        constexpr uint32 LONE_REWARD_BAG = 242710; // 孤勇者的背包（36 格）
+        constexpr uint32 LONE_REWARD_GOLD = 10000 * GOLD;
+
+        player->ModifyMoney(LONE_REWARD_GOLD);
+
+        if (!player->AddItem(LONE_REWARD_BAG, 1))
+        {
+            // 背包满：邮寄
+            CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
+            if (Item* bag = Item::CreateItem(LONE_REWARD_BAG, 1, ItemContext::NONE, player))
+            {
+                bag->SaveToDB(trans);
+                MailDraft("孤勇奖励", "恭喜你以孤勇模式达到 60 级，这是你的 36 格背包。")
+                    .AddItem(bag)
+                    .SendMailTo(trans, player, MailSender(MAIL_NORMAL, 0, MAIL_STATIONERY_GM), MAIL_CHECK_MASK_NOT_RETURNABLE);
+            }
+            CharacterDatabase.CommitTransaction(trans);
+            ChatHandler(player->GetSession()).SendSysMessage("背包已满，36 格背包已邮寄给你。");
+        }
+        else
+        {
+            ChatHandler(player->GetSession()).SendSysMessage("孤勇奖励：36 格背包 + 10000 金已发放。");
+        }
+
+        std::string announcement = "【孤勇奖励】" + player->GetName() + " 以孤勇模式达到 60 级，获得 36 格背包和 10000 金！";
+        sWorld->SendGlobalText(announcement.c_str(), nullptr);
+    }
+
     void Load(Player* player)
     {
         if (!player)
@@ -259,7 +302,7 @@ namespace PlayerMode
 
         Data data;
 
-        std::string sql = "SELECT chosen, lone, lone_damage, lone_health, lone_taken, rebirths, rebirth_active, legacy_given "
+        std::string sql = "SELECT chosen, lone, lone_damage, lone_health, lone_taken, rebirths, rebirth_active, legacy_given, lone_reward_given "
             "FROM character_modes WHERE guid = " + std::to_string(player->GetGUID().GetCounter());
 
         if (QueryResult result = CharacterDatabase.Query(sql.c_str()))
@@ -273,6 +316,7 @@ namespace PlayerMode
             data.rebirths = fields[5].GetUInt32();
             data.rebirthActive = fields[6].GetUInt8() != 0;
             data.legacyGiven = fields[7].GetUInt8() != 0;
+            data.loneRewardGiven = fields[8].GetUInt8() != 0;
         }
 
         {
@@ -299,7 +343,7 @@ namespace PlayerMode
         }
 
         std::string sql = "REPLACE INTO character_modes "
-            "(guid, chosen, lone, lone_damage, lone_health, lone_taken, rebirths, rebirth_active, legacy_given) VALUES ("
+            "(guid, chosen, lone, lone_damage, lone_health, lone_taken, rebirths, rebirth_active, legacy_given, lone_reward_given) VALUES ("
             + std::to_string(player->GetGUID().GetCounter()) + ","
             + (data.chosen ? "1" : "0") + ","
             + (data.lone ? "1" : "0") + ","
@@ -308,7 +352,8 @@ namespace PlayerMode
             + std::to_string(data.loneTaken) + ","
             + std::to_string(data.rebirths) + ","
             + (data.rebirthActive ? "1" : "0") + ","
-            + (data.legacyGiven ? "1" : "0") + ")";
+            + (data.legacyGiven ? "1" : "0") + ","
+            + (data.loneRewardGiven ? "1" : "0") + ")";
 
         CharacterDatabase.Execute(sql.c_str());
     }
