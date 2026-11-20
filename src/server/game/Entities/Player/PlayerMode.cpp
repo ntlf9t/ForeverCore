@@ -5,7 +5,6 @@
 #include "DatabaseEnv.h"
 #include "Item.h"
 #include "Log.h"
-#include "Mail.h"
 #include "Player.h"
 #include "Random.h"
 #include "SpellAuraEffects.h"
@@ -267,31 +266,12 @@ namespace PlayerMode
         }
         Save(player);
 
-        constexpr uint32 LONE_REWARD_BAG = 242710; // 孤勇者的背包（36 格）
         constexpr uint32 LONE_REWARD_GOLD = 10000 * GOLD;
-
         player->ModifyMoney(LONE_REWARD_GOLD);
 
-        if (!player->AddItem(LONE_REWARD_BAG, 1))
-        {
-            // 背包满：邮寄
-            CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
-            if (Item* bag = Item::CreateItem(LONE_REWARD_BAG, 1, ItemContext::NONE, player))
-            {
-                bag->SaveToDB(trans);
-                MailDraft("孤勇奖励", "恭喜你以孤勇模式达到 60 级，这是你的 36 格背包。")
-                    .AddItem(bag)
-                    .SendMailTo(trans, player, MailSender(MAIL_NORMAL, 0, MAIL_STATIONERY_GM), MAIL_CHECK_MASK_NOT_RETURNABLE);
-            }
-            CharacterDatabase.CommitTransaction(trans);
-            ChatHandler(player->GetSession()).SendSysMessage("背包已满，36 格背包已邮寄给你。");
-        }
-        else
-        {
-            ChatHandler(player->GetSession()).SendSysMessage("孤勇奖励：36 格背包 + 10000 金已发放。");
-        }
+        ChatHandler(player->GetSession()).SendSysMessage("孤勇奖励：10000 金已发放。");
 
-        std::string announcement = "【孤勇奖励】" + player->GetName() + " 以孤勇模式达到 60 级，获得 36 格背包和 10000 金！";
+        std::string announcement = "【孤勇奖励】" + player->GetName() + " 以孤勇模式达到 60 级，获得 10000 金！";
         sWorld->SendGlobalText(announcement.c_str(), nullptr);
     }
 
