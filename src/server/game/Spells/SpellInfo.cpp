@@ -4322,6 +4322,26 @@ uint32 SpellInfo::CalcCastTime(Spell* spell /*= nullptr*/) const
     if (HasAttribute(SPELL_ATTR0_USES_RANGED_SLOT) && !IsAutoRepeatRangedSpell() && !HasAttribute(SPELL_ATTR9_COOLDOWN_IGNORES_RANGED_WEAPON))
         castTime += 500;
 
+    // 采集 / 制造专业：读条统一压到 0.5 秒
+    if (castTime > 500)
+    {
+        static constexpr uint32 professionSkills[] =
+        {
+            SKILL_ALCHEMY, SKILL_BLACKSMITHING, SKILL_ENCHANTING, SKILL_ENGINEERING,
+            SKILL_LEATHERWORKING, SKILL_TAILORING, SKILL_HERBALISM, SKILL_MINING,
+            SKILL_SKINNING, SKILL_FISHING, SKILL_COOKING, 129 /* First Aid */
+        };
+
+        for (uint32 skill : professionSkills)
+        {
+            if (IsAbilityOfSkillType(skill))
+            {
+                castTime = 500;
+                break;
+            }
+        }
+    }
+
     return (castTime > 0) ? uint32(castTime) : 0;
 }
 
