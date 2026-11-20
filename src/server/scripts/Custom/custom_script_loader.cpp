@@ -24,6 +24,7 @@ void AddSC_reroll_addon();
 void AddSC_creature_random_buff();
 void AddSC_player_modes();
 void AddSC_congrats_on_level();
+void AddSC_portable_services();
 
 // The name of this function should match:
 // void Add${NameOfDirectory}Scripts()
@@ -37,4 +38,5 @@ void AddCustomScripts()
     AddSC_creature_random_buff();
     AddSC_player_modes();
     AddSC_congrats_on_level();
+    AddSC_portable_services();
 }
