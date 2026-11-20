@@ -203,16 +203,14 @@ namespace
 
         player->ModifyMoney(-int64(stake));
 
-        // 1-50 输；51-84 返 1 倍；85-94 5 倍；95-99 10 倍；100 100 倍
-        uint32 roll = urand(1, 100);
+        // 1-605 输（60.5%）；606-985 返 1 倍（38%）；986-995 10 倍（1%）；996-1000 100 倍（0.5%）
+        uint32 roll = urand(1, 1000);
         uint32 multiplier = 0;
-        if (roll <= 50)
+        if (roll <= 605)
             multiplier = 0;
-        else if (roll <= 84)
+        else if (roll <= 985)
             multiplier = 1;
-        else if (roll <= 94)
-            multiplier = 5;
-        else if (roll <= 99)
+        else if (roll <= 995)
             multiplier = 10;
         else
             multiplier = 100;
