@@ -8,6 +8,7 @@
  */
 
 #include "Creature.h"
+#include "Chat.h"
 #include "Player.h"
 #include "ScriptMgr.h"
 #include "TemporarySummon.h"
@@ -124,6 +125,39 @@ namespace
         TeleportPoint const& point = it->second;
         return player->TeleportTo(point.Map, point.X, point.Y, point.Z, point.O);
     }
+
+    void BuyBuffPack(Player* player)
+    {
+        if (!player || !player->IsInWorld())
+            return;
+
+        constexpr uint32 BUFF_PACK_COST = 50 * GOLD;
+
+        if (player->GetMoney() < BUFF_PACK_COST)
+        {
+            player->GetSession()->SendNotification("金币不足，需要 50 金。");
+            return;
+        }
+
+        // 屠龙者的咆哮 / 大酋长的祝福 / 摩尔达的勇气
+        static constexpr uint32 buffs[] = { 22888, 16609, 22818 };
+
+        uint32 applied = 0;
+        for (uint32 spellId : buffs)
+        {
+            if (player->AddAura(spellId, player))
+                ++applied;
+        }
+
+        if (!applied)
+        {
+            player->GetSession()->SendNotification("Buff 施加失败，请稍后再试。");
+            return;
+        }
+
+        player->ModifyMoney(-int64(BUFF_PACK_COST));
+        ChatHandler(player->GetSession()).PSendSysMessage("已获得世界 Buff 套餐，消耗 50 金。");
+    }
 }
 
 class portable_services_playerscript : public PlayerScript
@@ -146,6 +180,12 @@ public:
         if (text == "BANK")
         {
             ShowPortableBank(player);
+            return;
+        }
+
+        if (text == "BUFF50")
+        {
+            BuyBuffPack(player);
             return;
         }
 
