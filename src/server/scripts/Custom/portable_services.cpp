@@ -10,6 +10,7 @@
 #include "Creature.h"
 #include "Chat.h"
 #include "Player.h"
+#include "Random.h"
 #include "ScriptMgr.h"
 #include "TemporarySummon.h"
 #include "Unit.h"
@@ -168,6 +169,69 @@ namespace
         player->ModifyMoney(-int64(BUFF_PACK_COST));
         ChatHandler(player->GetSession()).PSendSysMessage("已获得世界 Buff 套餐，消耗 50 金。");
     }
+
+    std::string FormatMoney(uint64 copper)
+    {
+        uint64 gold = copper / GOLD;
+        uint64 silver = (copper % GOLD) / SILVER;
+        uint64 rest = copper % SILVER;
+        return std::to_string(gold) + "金" + std::to_string(silver) + "银" + std::to_string(rest) + "铜";
+    }
+
+    void HandleGamble(Player* player, uint64 stake)
+    {
+        if (!player || !player->IsInWorld())
+            return;
+
+        // 只允许 1 / 10 / 100 / 1000 金
+        static constexpr uint64 allowedStakes[] = { 1 * GOLD, 10 * GOLD, 100 * GOLD, 1000 * GOLD };
+        bool allowed = false;
+        for (uint64 value : allowedStakes)
+        {
+            if (stake == value)
+            {
+                allowed = true;
+                break;
+            }
+        }
+
+        if (!allowed || player->GetMoney() < stake)
+        {
+            player->GetSession()->SendNotification("金币不足，或押注金额无效。");
+            return;
+        }
+
+        player->ModifyMoney(-int64(stake));
+
+        // 1-50 输；51-70 返 1 倍；71-85 5 倍；86-95 10 倍；96-100 100 倍
+        uint32 roll = urand(1, 100);
+        uint32 multiplier = 0;
+        if (roll <= 50)
+            multiplier = 0;
+        else if (roll <= 70)
+            multiplier = 1;
+        else if (roll <= 85)
+            multiplier = 5;
+        else if (roll <= 95)
+            multiplier = 10;
+        else
+            multiplier = 100;
+
+        uint64 payout = stake * multiplier;
+        if (payout)
+            player->ModifyMoney(int64(payout));
+
+        if (multiplier == 0)
+        {
+            ChatHandler(player->GetSession()).PSendSysMessage("赌博结果：血本无归，损失 %s。",
+                FormatMoney(stake).c_str());
+        }
+        else
+        {
+            ChatHandler(player->GetSession()).PSendSysMessage("赌博结果：中奖 %u 倍，获得 %s。",
+                multiplier, FormatMoney(payout).c_str());
+        }
+    }
 }
 
 class portable_services_playerscript : public PlayerScript
@@ -196,6 +260,21 @@ public:
         if (text == "BUFF50")
         {
             BuyBuffPack(player);
+            return;
+        }
+
+        if (text.rfind("GAMBLE|", 0) == 0)
+        {
+            uint64 stake = 0;
+            try
+            {
+                stake = std::stoull(text.substr(7));
+            }
+            catch (...)
+            {
+                return;
+            }
+            HandleGamble(player, stake);
             return;
         }
 
