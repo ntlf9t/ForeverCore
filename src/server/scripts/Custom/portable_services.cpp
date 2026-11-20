@@ -113,6 +113,10 @@ namespace
         if (!player || !player->IsInWorld())
             return false;
 
+        // 回家：直接去炉石绑定点，不消耗炉石 CD
+        if (key == "home")
+            return player->TeleportTo(player->m_homebind);
+
         auto it = _teleports.find(key);
         if (it == _teleports.end())
             return false;
