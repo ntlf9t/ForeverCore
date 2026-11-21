@@ -1,16 +1,18 @@
 -- ============================================================
 -- 随身商店：基础箭矢 / 弹药
--- 商人模板 3625，召唤后临时设为全阵营友好
+-- 部落 3625 兽人商人；联盟 1459 人类商人
 -- ============================================================
 SET NAMES utf8mb4;
 
 -- 商品
-DELETE FROM world.npc_vendor WHERE entry = 3625 AND item IN (274387, 274388);
+DELETE FROM world.npc_vendor WHERE entry IN (3625, 1459) AND item IN (274387, 274388);
 INSERT INTO world.npc_vendor
   (entry, slot, item, maxcount, incrtime, ExtendedCost, type, BonusListIDs, PlayerConditionID, IgnoreFiltering, VerifiedBuild)
 VALUES
   (3625, 100, 274387, 0, 0, 0, 1, NULL, 0, 0, 70959),
-  (3625, 101, 274388, 0, 0, 0, 1, NULL, 0, 0, 70959);
+  (3625, 101, 274388, 0, 0, 0, 1, NULL, 0, 0, 70959),
+  (1459, 100, 274387, 0, 0, 0, 1, NULL, 0, 0, 70959),
+  (1459, 101, 274388, 0, 0, 0, 1, NULL, 0, 0, 70959);
 
 -- 改成 1 级可用的基础箭矢 / 弹药，价格 10 铜
 UPDATE hotfixes.item_sparse

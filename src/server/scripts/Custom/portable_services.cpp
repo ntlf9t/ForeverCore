@@ -48,7 +48,8 @@ namespace
         { "bootybay",    { 0, -14297.20f, 530.993f, 8.77916f, 3.98863f } }    // 藏宝海湾
     };
 
-    constexpr uint32 PORTABLE_VENDOR_ENTRY = 3625; // 通用商人模板（Rarck）
+    constexpr uint32 PORTABLE_VENDOR_HORDE = 3625;   // 兽人商人
+    constexpr uint32 PORTABLE_VENDOR_ALLIANCE = 1459; // 人类商人
     constexpr uint32 PORTABLE_BANKER_ENTRY = 5060; // World Banker，全阵营友好
 
     void ShowPortableShop(Player* player)
@@ -56,12 +57,15 @@ namespace
         if (!player || !player->IsInWorld())
             return;
 
+        bool alliance = player->GetTeam() == ALLIANCE;
+        uint32 entry = alliance ? PORTABLE_VENDOR_ALLIANCE : PORTABLE_VENDOR_HORDE;
+
         float x = player->GetPositionX() + 2.0f;
         float y = player->GetPositionY();
         float z = player->GetPositionZ();
         float o = player->GetOrientation();
 
-        TempSummon* summon = player->SummonCreature(PORTABLE_VENDOR_ENTRY, x, y, z, o,
+        TempSummon* summon = player->SummonCreature(entry, x, y, z, o,
             TEMPSUMMON_TIMED_DESPAWN, 60s);
         if (!summon)
         {
@@ -73,8 +77,8 @@ namespace
         if (!vendor)
             return;
 
-        // 临时商人：对所有阵营友好，且不能被攻击
-        vendor->SetFaction(35);
+        // 联盟用人类商人，部落用兽人商人；只禁止攻击，不改阵营
+        vendor->SetFaction(alliance ? 12 : 1215);
         vendor->SetUnitFlag(UNIT_FLAG_NON_ATTACKABLE);
         vendor->SetReactState(REACT_PASSIVE);
 
