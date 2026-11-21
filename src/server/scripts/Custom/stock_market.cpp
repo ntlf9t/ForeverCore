@@ -144,13 +144,34 @@ namespace
         CharacterDatabase.Execute("UPDATE character_stock SET available=shares");
     }
 
-    void TickCompanies(uint32 day)
+    void WriteCandle(StockCompany const& company, double before, double after, uint32 day, uint64 ts)
+    {
+        double high = std::max(before, after);
+        double low = std::min(before, after);
+
+        std::ostringstream candle;
+        candle << "INSERT INTO stock_candle (company_id,ts,open,high,low,close,volume) VALUES ("
+            << company.Id << "," << ts << "," << std::fixed << std::setprecision(4)
+            << before << "," << high << "," << low << "," << after << ",0) "
+            << "ON DUPLICATE KEY UPDATE open=VALUES(open),high=VALUES(high),low=VALUES(low),close=VALUES(close)";
+        WorldDatabase.Execute(candle.str().c_str());
+
+        std::ostringstream daily;
+        daily << "INSERT INTO stock_daily (company_id,day,open,high,low,close,volume) VALUES ("
+            << company.Id << "," << day << "," << std::fixed << std::setprecision(4)
+            << before << "," << high << "," << low << "," << after << ",0) "
+            << "ON DUPLICATE KEY UPDATE high=GREATEST(high,VALUES(high)), low=LEAST(low,VALUES(low)), close=VALUES(close)";
+        WorldDatabase.Execute(daily.str().c_str());
+    }
+
+    void TickCompanies(uint32 day, uint64 ts)
     {
         for (StockCompany& company : _companies)
         {
             if (company.LastDay != day)
                 ResetDay(company, day);
 
+            double before = company.Price;
             double impact = 0.0;
             auto impactIt = _pendingImpact.find(company.Id);
             if (impactIt != _pendingImpact.end())
@@ -172,6 +193,7 @@ namespace
             company.HighPrice = std::max(company.HighPrice, company.Price);
             company.LowPrice = company.LowPrice > 0.0 ? std::min(company.LowPrice, company.Price) : company.Price;
 
+            WriteCandle(company, before, company.Price, day, ts);
             SaveCompany(company);
         }
 
@@ -237,6 +259,65 @@ namespace
         }
 
         ChatHandler(player->GetSession()).SendSysMessage(oss.str());
+    }
+
+    void SendChart(Player* player, uint32 companyId, std::string period)
+    {
+        if (!player)
+            return;
+
+        StockCompany* company = FindCompany(companyId);
+        if (!company || (period != "d" && period != "m"))
+            return;
+
+        std::string sql;
+        if (period == "d")
+        {
+            sql = "SELECT day,open,high,low,close FROM stock_daily WHERE company_id="
+                + std::to_string(companyId) + " ORDER BY day DESC LIMIT 30";
+        }
+        else
+        {
+            sql = "SELECT ts,open,high,low,close FROM stock_candle WHERE company_id="
+                + std::to_string(companyId) + " ORDER BY ts DESC LIMIT 54";
+        }
+
+        struct Candle
+        {
+            uint64 Ts;
+            double Open;
+            double High;
+            double Low;
+            double Close;
+        };
+
+        std::vector<Candle> candles;
+        if (QueryResult result = WorldDatabase.Query(sql.c_str()))
+        {
+            do
+            {
+                Field* fields = result->Fetch();
+                candles.push_back({ fields[0].GetUInt64(), fields[1].GetDouble(), fields[2].GetDouble(),
+                    fields[3].GetDouble(), fields[4].GetDouble() });
+            } while (result->NextRow());
+        }
+
+        std::reverse(candles.begin(), candles.end());
+
+        // 聊天消息长度有限，分批发送，每批 4 根 K 线
+        uint32 total = uint32(candles.size());
+        for (uint32 start = 0; start < total; start += 4)
+        {
+            std::ostringstream oss;
+            oss << "STOCK;K;" << companyId << ';' << period << ';' << total << ';' << start << ';';
+            for (uint32 i = start; i < total && i < start + 4; ++i)
+            {
+                Candle const& candle = candles[i];
+                oss << candle.Ts << ',' << std::fixed << std::setprecision(4)
+                    << candle.Open << ',' << candle.High << ',' << candle.Low << ',' << candle.Close << '|';
+            }
+            ChatHandler(player->GetSession()).SendSysMessage(oss.str());
+        }
     }
 
     bool Buy(Player* player, uint32 companyId, uint32 quantity, std::string& message)
@@ -410,7 +491,7 @@ public:
 
         _lastTickMinute = minute;
         uint32 day = uint32((tm.tm_year + 1900) * 10000 + (tm.tm_mon + 1) * 100 + tm.tm_mday);
-        TickCompanies(day);
+        TickCompanies(day, uint64(now / 60));
     }
 };
 
@@ -429,6 +510,18 @@ public:
         if (parts.size() >= 2 && parts[1] == "LIST")
         {
             SendMarket(player);
+            return;
+        }
+
+        if (parts.size() >= 4 && parts[1] == "CHART")
+        {
+            try
+            {
+                SendChart(player, uint32(std::stoul(parts[2])), parts[3]);
+            }
+            catch (...)
+            {
+            }
             return;
         }
 

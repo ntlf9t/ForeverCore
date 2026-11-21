@@ -42,4 +42,26 @@ CREATE TABLE IF NOT EXISTS characters.character_stock (
   PRIMARY KEY (guid, company_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS world.stock_daily (
+  company_id  INT UNSIGNED NOT NULL,
+  day         INT UNSIGNED NOT NULL,
+  open        DOUBLE NOT NULL DEFAULT 0,
+  high        DOUBLE NOT NULL DEFAULT 0,
+  low         DOUBLE NOT NULL DEFAULT 0,
+  close       DOUBLE NOT NULL DEFAULT 0,
+  volume      BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  PRIMARY KEY (company_id, day)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS world.stock_candle (
+  company_id  INT UNSIGNED NOT NULL,
+  ts          BIGINT NOT NULL,
+  open        DOUBLE NOT NULL DEFAULT 0,
+  high        DOUBLE NOT NULL DEFAULT 0,
+  low         DOUBLE NOT NULL DEFAULT 0,
+  close       DOUBLE NOT NULL DEFAULT 0,
+  volume      BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  PRIMARY KEY (company_id, ts)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 SELECT id, name, ticker, price, volatility FROM world.stock_company ORDER BY id;
