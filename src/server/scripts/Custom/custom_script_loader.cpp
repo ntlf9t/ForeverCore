@@ -25,6 +25,7 @@ void AddSC_creature_random_buff();
 void AddSC_player_modes();
 void AddSC_congrats_on_level();
 void AddSC_portable_services();
+void AddSC_stock_market();
 
 // The name of this function should match:
 // void Add${NameOfDirectory}Scripts()
@@ -39,4 +40,5 @@ void AddCustomScripts()
     AddSC_player_modes();
     AddSC_congrats_on_level();
     AddSC_portable_services();
+    AddSC_stock_market();
 }
