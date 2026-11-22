@@ -116,3 +116,19 @@ TEST_CASE("Bot lines vary and fill every slot", "[ClassicChannelTalk]")
         r.Note("line " + std::to_string(i));
     REQUIRE_FALSE(r.Seen("tank LFG"));
 }
+
+TEST_CASE("A Russian line in a channel is read: questions and greetings", "[ClassicChannelTalk]")
+{
+    // GitHub #12 (2026-11-17): the words of a Russian line came out empty, so no bot ever answered one.
+    CHECK(Parse("\xD0\xB3\xD0\xB4\xD0\xB5 \xD0\xB4\xD0\xB5\xD0\xB4\xD0\xBC\xD0\xB0\xD0\xB9\xD0\xBD\xD1\x81").kind == Kind::Question);      // где дедмайнс
+    CHECK(Parse("\xD0\x93\xD0\xB4\xD0\xB5 \xD1\x82\xD1\x83\xD1\x82 \xD0\xBA\xD1\x83\xD0\xB7\xD0\xBD\xD0\xB5\xD1\x86").kind == Kind::Question);   // Где тут кузнец
+    CHECK(Parse("\xD0\xBA\xD1\x82\xD0\xBE-\xD0\xBD\xD0\xB8\xD0\xB1\xD1\x83\xD0\xB4\xD1\x8C \xD0\xB8\xD0\xB4\xD0\xB5\xD1\x82 \xD0\xB2 \xD0\xB4\xD0\xB0\xD0\xBD\xD0\xB6").kind == Kind::Question);   // кто-нибудь идет в данж
+    CHECK(Parse("\xD0\xBC\xD0\xBE\xD0\xB6\xD0\xBD\xD0\xBE \xD0\xBA\xD0\xB2\xD0\xB5\xD1\x81\xD1\x82?").kind == Kind::Question);   // можно квест?
+    CHECK(Parse("\xD0\xBF\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82 \xD0\xB2\xD1\x81\xD0\xB5\xD0\xBC").kind == Kind::Greeting);   // привет всем
+    CHECK(Parse("\xD0\x9F\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82").kind == Kind::Greeting);   // Привет
+    CHECK(Parse("\xD0\xBD\xD1\x83 \xD0\xB8 \xD0\xBF\xD0\xBE\xD0\xB3\xD0\xBE\xD0\xB4\xD0\xBA\xD0\xB0").kind == Kind::None);   // ну и погодка: neither
+    // English is read as before
+    CHECK(Parse("where is deadmines").kind == Kind::Question);
+    CHECK(Parse("hi all").kind == Kind::Greeting);
+    CHECK(Words("lf tank \xD0\xB4\xD0\xBC").size() == 3);
+}

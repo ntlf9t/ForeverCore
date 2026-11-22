@@ -511,3 +511,22 @@ TEST_CASE("Hakkar: the raid kills a Son and gathers on it before each Blood Siph
     // Hakkar's own fight script is the boss alone: the Sons are not hit outside the window.
     CHECK(RankOf(Zg(kHakkar), kSonOfHakkar) == 99);
 }
+
+TEST_CASE("Fankriss: a Spawn of Fankriss dies first, then the Hatchlings, then Fankriss", "[ClassicRaidFightScript]")
+{
+    constexpr uint32_t kAq40 = 531, kFankriss = 15510, kSpawn = 15630, kHatchling = 15962;
+    Fight const* f = FightFor(kAq40, kFankriss);
+    REQUIRE(f != nullptr);
+    CHECK(FightFor(kAq40, kSpawn) == f);
+    CHECK(FightFor(kAq40, kHatchling) == f);
+    CHECK(FightFor(kMc, kFankriss) == nullptr);
+    // A fresh Spawn comes in while the raid is on a half-dead Hatchling and on Fankriss: everybody turns to the Spawn.
+    Enemy const fight[] = { E(1, kFankriss, 49.f), E(2, kHatchling, 16.f), E(3, kSpawn, 100.f) };
+    CHECK(PickFocus(*f, fight, 3, 0, 2) == 3);
+    // No Spawn up: the most hurt Hatchling before Fankriss.
+    Enemy const hatchlings[] = { E(1, kFankriss, 49.f), E(2, kHatchling, 70.f), E(4, kHatchling, 30.f) };
+    CHECK(PickFocus(*f, hatchlings, 3, 0, 0) == 4);
+    // Only Fankriss left.
+    Enemy const boss[] = { E(1, kFankriss, 49.f), E(2, kHatchling, 0.f, false) };
+    CHECK(PickFocus(*f, boss, 2, 0, 0) == 1);
+}

@@ -759,8 +759,11 @@ enum RBACPermissions
     // custom permissions 1000+
     RBAC_PERM_COMMAND_TIME                                   = 1000, // .time day / night / auto (players too)
     RBAC_PERM_COMMAND_BUG                                    = 1001, // .bug <text>: a bug report with the player's spot (players too)
-    RBAC_PERM_COMMAND_MODE                                    = 1002,
-    RBAC_PERM_COMMAND_DUNGEON_DIFFICULTY                     = 1003,
+    RBAC_PERM_COMMAND_BATTLETAG                              = 1002, // .battletag [name]: show or pick the account's BattleTag (players too)
+    RBAC_PERM_COMMAND_GM_COMBATLOG                           = 1003, // .gm combatlog: a unit's or group's combat log from any distance (admins)
+    RBAC_PERM_COMMAND_DEATHRECAP                             = 1004, // .deathrecap [name]: text dump of a player's last recorded death
+    RBAC_PERM_COMMAND_MODE                                    = 1005,
+    RBAC_PERM_COMMAND_DUNGEON_DIFFICULTY                     = 1006,
     RBAC_PERM_MAX
 };
 

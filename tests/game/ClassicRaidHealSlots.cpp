@@ -79,3 +79,35 @@ TEST_CASE("a melee-soak boss gives the soakers three each and the main tank one,
     CHECK(short_budget[3] == 4);
     CHECK(SoakHealSlotOrder(0, 0, {}, 5).empty());
 }
+
+TEST_CASE("held tanks first: the tanks a mob hits take the healer slots before the waiting ones", "[classic][heal]")
+{
+    // naxx_horsemen af52-1: main 1 holds Mograine, off tank 2 waits, 3/5/8 hold the other three, 4/6/7 wait; 8 slots
+    auto const holds = [](uint64_t t) { return t == 1 || t == 3 || t == 5 || t == 8; };
+    auto const [off, spares] = HeldTanksFirst(2, { 3, 4, 5, 6, 7, 8 }, holds);
+    CHECK(off == 0);
+    REQUIRE(spares.size() == 7);
+    CHECK(spares[0] == 3);
+    CHECK(spares[1] == 5);
+    CHECK(spares[2] == 8);
+    CHECK(spares[3] == 2);
+    auto const s = HealSlotOrder(1, off, spares, 8);
+    REQUIRE(s.size() == 8);
+    CHECK(std::count(s.begin(), s.end(), 1) == 2);
+    for (uint64_t t : { 3, 5, 8 })
+        CHECK(std::count(s.begin(), s.end(), t) == 1);
+    CHECK(std::count(s.begin(), s.end(), 2) == 1);
+    CHECK(std::count(s.begin(), s.end(), 7) == 0);
+}
+
+TEST_CASE("held tanks first: nothing changes while no spare holds a mob or the off tank holds one", "[classic][heal]")
+{
+    auto const none = [](uint64_t) { return false; };
+    auto const [off1, spares1] = HeldTanksFirst(2, { 3, 4 }, none);
+    CHECK(off1 == 2);
+    CHECK(spares1 == std::vector<uint64_t>{ 3, 4 });
+    auto const offHolds = [](uint64_t t) { return t == 2 || t == 4; };
+    auto const [off2, spares2] = HeldTanksFirst(2, { 3, 4 }, offHolds);
+    CHECK(off2 == 2);
+    CHECK(spares2 == std::vector<uint64_t>{ 4, 3 });
+}
