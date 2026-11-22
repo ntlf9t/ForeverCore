@@ -13,6 +13,8 @@
 #include "Random.h"
 
 #include <algorithm>
+#include <iterator>
+#include <limits>
 #include <map>
 #include <vector>
 
@@ -162,6 +164,190 @@ void ItemScoreAffix::Load()
     TC_LOG_INFO("server.loading", ">> Loaded {} item score affixes", uint32(_pool.size()));
 }
 
+namespace
+{
+    // 15 流派：与 3.3.5 洗练表对应
+    uint32 StyleOfKind(uint32 kind)
+    {
+        switch (kind)
+        {
+            case 1: case 7: case 46: case 209:                 return 1;
+            case 4: case 207:                                  return 2;
+            case 3: case 208:                                  return 3;
+            case 0: case 5: case 210:                          return 4;
+            case 6: case 211:                                  return 5;
+            case 38: case 212:                                 return 6;
+            case 39: case 213:                                 return 7;
+            case 201: case 214: case 216: case 219: case 221:  return 8;
+            case 42: case 45: case 202: case 215:              return 9;
+            case 43: case 217:                                 return 10;
+            case 41: case 203:                                 return 11;
+            case 12: case 48: case 100: case 204:              return 12;
+            case 101: case 102: case 103: case 104: case 105:
+            case 106: case 205: case 222:                      return 13;
+            case 206: case 218: case 220:                      return 15;
+            default:                                           return 0;
+        }
+    }
+
+    ScoreAffixEntry const* FindEntry(uint32 ench)
+    {
+        for (ScoreAffixEntry const& entry : _pool)
+            if (entry.Ench == ench)
+                return &entry;
+        return nullptr;
+    }
+
+    ScoreAffixEntry const* PickAffix(uint32 mask, uint32 style, uint32 budget, bool allowOverBudget)
+    {
+        std::vector<ScoreAffixEntry const*> candidates;
+        uint32 bestLevel = 0;
+
+        for (ScoreAffixEntry const& entry : _pool)
+        {
+            if (!(entry.Mask & mask) || StyleOfKind(entry.Kind) != style)
+                continue;
+
+            if (entry.Level <= budget)
+            {
+                if (entry.Level > bestLevel)
+                {
+                    bestLevel = entry.Level;
+                    candidates.clear();
+                }
+                if (entry.Level == bestLevel)
+                    candidates.push_back(&entry);
+            }
+        }
+
+        if (candidates.empty() && allowOverBudget)
+        {
+            uint32 lowest = std::numeric_limits<uint32>::max();
+            for (ScoreAffixEntry const& entry : _pool)
+            {
+                if (!(entry.Mask & mask) || StyleOfKind(entry.Kind) != style)
+                    continue;
+                if (entry.Level < lowest)
+                {
+                    lowest = entry.Level;
+                    candidates.clear();
+                }
+                if (entry.Level == lowest)
+                    candidates.push_back(&entry);
+            }
+        }
+
+        if (candidates.empty())
+            return nullptr;
+
+        return candidates[urand(0, int(candidates.size()) - 1)];
+    }
+
+    uint32 GetLineBudget(Item const* item, uint32 index, uint32 score)
+    {
+        uint32 duration = item->GetEnchantmentDuration(AFFIX_SLOTS[index]);
+        return duration ? duration : score;
+    }
+
+    std::vector<uint32> SplitBudget(uint32 total, uint32 count)
+    {
+        std::vector<uint32> budgets(count, 1);
+        uint32 remaining = total > count ? total - count : 0;
+
+        for (uint32 i = 0; i + 1 < count; ++i)
+        {
+            uint32 maxPick = remaining - (count - 1 - i);
+            uint32 pick = maxPick > 0 ? urand(1, maxPick) : 0;
+            budgets[i] += pick;
+            remaining -= pick;
+        }
+        budgets[count - 1] += remaining;
+        return budgets;
+    }
+}
+
+bool ItemScoreAffix::RerollChaos(Player* owner, Item* item)
+{
+    if (!owner || !item)
+        return false;
+
+    ItemTemplate const* proto = item->GetTemplate();
+    if (!proto || (proto->GetClass() != ITEM_CLASS_WEAPON && proto->GetClass() != ITEM_CLASS_ARMOR))
+        return false;
+
+    uint32 const score = GetScore(item);
+    uint32 const count = CountForQuality(proto->GetQuality());
+    if (!score || !count)
+        return false;
+
+    uint32 const total = score * count;
+    std::vector<uint32> budgets = SplitBudget(total, count);
+    uint32 const mask = MaskForItem(proto);
+
+    for (uint32 i = 0; i < AffixSlotCount; ++i)
+        item->SetEnchantment(AFFIX_SLOTS[i], 0, 0, 0);
+
+    static constexpr uint32 styles[] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15 };
+    for (uint32 index = 0; index < count && index < AffixSlotCount; ++index)
+    {
+        ScoreAffixEntry const* chosen = nullptr;
+        uint32 start = urand(0, uint32(std::size(styles)) - 1);
+        for (uint32 n = 0; n < std::size(styles) && !chosen; ++n)
+        {
+            uint32 style = styles[(start + n) % std::size(styles)];
+            chosen = PickAffix(mask, style, budgets[index], false);
+            if (!chosen)
+                chosen = PickAffix(mask, style, budgets[index], true);
+        }
+
+        if (!chosen)
+            break;
+
+        item->SetEnchantment(AFFIX_SLOTS[index], chosen->Ench, budgets[index], 0);
+    }
+
+    item->SetState(ITEM_CHANGED, owner);
+    return true;
+}
+
+bool ItemScoreAffix::RerollStyle(Player* owner, Item* item)
+{
+    if (!owner || !item)
+        return false;
+
+    ItemTemplate const* proto = item->GetTemplate();
+    if (!proto || (proto->GetClass() != ITEM_CLASS_WEAPON && proto->GetClass() != ITEM_CLASS_ARMOR))
+        return false;
+
+    uint32 const score = GetScore(item);
+    uint32 const count = CountForQuality(proto->GetQuality());
+    if (!score || !count)
+        return false;
+
+    uint32 const mask = MaskForItem(proto);
+    bool changed = false;
+
+    for (uint32 index = 0; index < count && index < AffixSlotCount; ++index)
+    {
+        ScoreAffixEntry const* current = FindEntry(item->GetEnchantmentId(AFFIX_SLOTS[index]));
+        if (!current)
+            continue;
+
+        uint32 const style = StyleOfKind(current->Kind);
+        uint32 const budget = GetLineBudget(item, index, score);
+        ScoreAffixEntry const* chosen = PickAffix(mask, style, budget, true);
+        if (!chosen)
+            continue;
+
+        item->SetEnchantment(AFFIX_SLOTS[index], chosen->Ench, budget, 0);
+        if (chosen->Ench != current->Ench)
+            changed = true;
+    }
+
+    item->SetState(ITEM_CHANGED, owner);
+    return changed;
+}
+
 void ItemScoreAffix::Apply(Player* owner, Item* item)
 {
     if (!owner || !item)
@@ -277,7 +463,7 @@ void ItemScoreAffix::Apply(Player* owner, Item* item)
         if (index >= AffixSlotCount)
             break;
 
-        item->SetEnchantment(AFFIX_SLOTS[index], chosen->Ench, 0, 0);
+        item->SetEnchantment(AFFIX_SLOTS[index], chosen->Ench, shown, 0);
     }
 }
 
@@ -470,7 +656,7 @@ void ItemScoreAffix::Reroll(Player* owner, Item* item, bool maxScore)
             break;
 
         usedKinds.push_back(chosen->Kind);
-        item->SetEnchantment(AFFIX_SLOTS[index], chosen->Ench, 0, 0);
+        item->SetEnchantment(AFFIX_SLOTS[index], chosen->Ench, shown, 0);
     }
 
     item->SetState(ITEM_CHANGED, owner);
@@ -525,12 +711,13 @@ void ItemScoreAffix::RerollLine(Player* owner, Item* item, uint32 index)
     if (!shown)
         return;
 
+    uint32 const budget = GetLineBudget(item, index, shown);
     uint32 const mask = MaskForItem(proto);
 
     std::vector<ScoreAffixEntry const*> candidates;
     candidates.reserve(_pool.size());
     for (ScoreAffixEntry const& entry : _pool)
-        if ((entry.Mask & mask) && entry.Level <= shown)
+        if ((entry.Mask & mask) && entry.Level <= budget)
             candidates.push_back(&entry);
 
     // 同一属性只保留「评分买得起的最高档」：数值 = 评分 / 单价
@@ -597,6 +784,6 @@ void ItemScoreAffix::RerollLine(Player* owner, Item* item, uint32 index)
     if (!chosen)
         return;
 
-    item->SetEnchantment(AFFIX_SLOTS[index], chosen->Ench, 0, 0);
+    item->SetEnchantment(AFFIX_SLOTS[index], chosen->Ench, budget, 0);
     item->SetState(ITEM_CHANGED, owner);
 }

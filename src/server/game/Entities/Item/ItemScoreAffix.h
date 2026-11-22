@@ -35,6 +35,12 @@ namespace ItemScoreAffix
     // 单条洗练：index = 0..3，对应四个词条槽
     void RerollLine(Player* owner, Item* item, uint32 index);
 
+    // 乱穿洗：总分重新随机分配，可跨流派
+    bool RerollChaos(Player* owner, Item* item);
+
+    // 风格洗：锁定每条预算和流派，只换属性
+    bool RerollStyle(Player* owner, Item* item);
+
     // 当前评分（0 = 没有评分行）
     uint32 GetScore(Item const* item);
 

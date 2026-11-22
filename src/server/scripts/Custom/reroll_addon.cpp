@@ -174,7 +174,7 @@ namespace
             }
 
             for (uint32 s = 0; s < 5; ++s)
-                item->SetEnchantment(slots[s], bestIds[s], 0, 0);
+                item->SetEnchantment(slots[s], bestIds[s], s == 0 ? 0 : bestScore, 0);
         }
 
         item->SetState(ITEM_CHANGED, player);
@@ -214,6 +214,38 @@ namespace
 
         std::ostringstream oss;
         oss << "done;" << item->GetEntry() << ';' << score << ';' << budget << ';' << cost;
+        AppendAffixes(item, oss);
+        Reply(player, oss.str());
+    }
+
+    void DoSpecial(Player* player, Item* item, bool chaos)
+    {
+        constexpr uint32 SPECIAL_COST = 5 * GOLD;
+
+        if (player->GetMoney() < SPECIAL_COST)
+        {
+            Reply(player, "err;nomoney");
+            return;
+        }
+
+        bool changed = chaos
+            ? ItemScoreAffix::RerollChaos(player, item)
+            : ItemScoreAffix::RerollStyle(player, item);
+
+        if (!changed)
+        {
+            Reply(player, "err;nochange");
+            return;
+        }
+
+        player->ModifyMoney(-int64(SPECIAL_COST));
+        item->SetState(ITEM_CHANGED, player);
+
+        uint32 const score = ItemScoreAffix::GetScore(item);
+        uint32 const budget = ItemScoreAffix::GetBudget(player, item);
+
+        std::ostringstream oss;
+        oss << "done;" << item->GetEntry() << ';' << score << ';' << budget << ';' << SPECIAL_COST;
         AppendAffixes(item, oss);
         Reply(player, oss.str());
     }
@@ -386,6 +418,10 @@ namespace
             uint32 const index = parts.size() > 4 ? uint32(atoi(parts[4].c_str())) : 0;
             DoLine(player, item, index);
         }
+        else if (cmd == "chaos")
+            DoSpecial(player, item, true);
+        else if (cmd == "style")
+            DoSpecial(player, item, false);
     }
 }
 
