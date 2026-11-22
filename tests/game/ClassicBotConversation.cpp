@@ -89,7 +89,8 @@ TEST_CASE("BotConversation: ordinary words are not mistaken for intents", "[botc
     // "how do you do that" is not a wellbeing question, "the quest is called" is not a name question, "levelling" is not "level".
     CHECK(Cls("how do you pull that off") == ConvIntent::Unknown);
     CHECK(Cls("whats the quest called") != ConvIntent::Name);
-    CHECK(Cls("wanna trade") == ConvIntent::Unknown);
+    CHECK(Cls("wanna trade") == ConvIntent::WantTrade);   // a question now (GitHub #12), answered with "what are you after?"
+    CHECK(Cls("trade chat is quiet today") == ConvIntent::Unknown);
     CHECK(Cls("pull now") == ConvIntent::Unknown);
 }
 
@@ -152,6 +153,47 @@ TEST_CASE("BotConversation: group answer follows whether the bot is grouped", "[
         for (auto const& b : busy_set)
             CHECK(f != b);
     CHECK(free_set.size() > 1);   // several phrasings, not one canned line
+}
+
+TEST_CASE("BotConversation: group answer says what the bot will do with the invite", "[botconversation]")
+{
+    ConversationContext c = Ctx();
+    auto answers = [&](GroupAnswer g, bool ru)
+    {
+        c.group = g;
+        c.russian = ru;
+        std::set<std::string> out;
+        for (uint32_t sel = 0; sel < 64; ++sel)
+            out.insert(Lower(Say(c, ru ? "\xD1\x85\xD0\xBE\xD1\x87\xD0\xB5\xD1\x88\xD1\x8C \xD0\xB2 \xD0\xB3\xD1\x80\xD1\x83\xD0\xBF\xD0\xBF\xD1\x83?"   // хочешь в группу?
+                                       : "want to group?", sel)));
+        return out;
+    };
+    for (bool ru : { false, true })
+    {
+        INFO("russian " << ru);
+        std::set<std::string> const yes = answers(GroupAnswer::Yes, ru);
+        std::set<std::string> const high = answers(GroupAnswer::TooHigh, ru);
+        std::set<std::string> const later = answers(GroupAnswer::NotNow, ru);
+        CHECK(yes.size() > 1);
+        for (std::string const& s : high)
+            CHECK(yes.count(s) == 0);
+        for (std::string const& s : later)
+            CHECK(yes.count(s) == 0);
+        if (!ru)
+        {
+            for (std::string const& s : high)
+                CHECK((s.find("level") != std::string::npos || s.find("lvl") != std::string::npos || s.find("low") != std::string::npos
+                       || s.find("ahead") != std::string::npos || s.find("higher") != std::string::npos));
+            for (std::string const& s : later)
+                CHECK(s.find("invite") == std::string::npos);
+        }
+        // Grouped: the "in a group" answer, whatever the rest says.
+        c.in_group = true;
+        std::set<std::string> const busy = answers(GroupAnswer::Yes, ru);
+        c.in_group = false;
+        for (std::string const& s : busy)
+            CHECK(yes.count(s) == 0);
+    }
 }
 
 TEST_CASE("BotConversation: quest, profession and guild answers use the data when there is some", "[botconversation]")
@@ -271,9 +313,11 @@ TEST_CASE("BotConversation: only unknown lines reach a provider, and only when a
     CHECK(out.find("model says") == std::string::npos);
     CHECK(p->calls == 1);
 
-    // No provider: unknown lines fall through to the caller's existing fallback.
+    // No provider: an unknown question is asked back (no more "dunno"), an unknown statement falls through to the caller.
     ConvSetProvider(nullptr);
-    CHECK_FALSE(ConvReply(Ctx(), ConvNormalize("what do you think of the weather"), "what do you think of the weather", 0, true, out));
+    CHECK(ConvReply(Ctx(), ConvNormalize("what do you think of the weather"), "what do you think of the weather", 0, true, out));
+    CHECK(out.find("model says") == std::string::npos);
+    CHECK_FALSE(ConvReply(Ctx(), ConvNormalize("the weather is nice"), "the weather is nice", 0, true, out));
 }
 
 TEST_CASE("BotConversation: a repeated line gets a different answer, never silence", "[botconversation]")
@@ -325,4 +369,107 @@ TEST_CASE("BotConversation: a hello is answered here only for someone the bot kn
         seen.insert(r);
     }
     CHECK(seen.size() > 1);
+}
+
+TEST_CASE("BotConversation: duel, trade, thanks, bot, like and help questions", "[botconversation]")
+{
+    // GitHub #12 (2026-11-17): "duel?", "do you wanna trade", "do you like wow forever" got "i dont know" / "how should i know".
+    CHECK(Cls("duel?") == ConvIntent::Duel);
+    CHECK(Cls("wanna duel") == ConvIntent::Duel);
+    CHECK(Cls("do you wanna trade") == ConvIntent::WantTrade);
+    CHECK(Cls("trade?") == ConvIntent::WantTrade);
+    CHECK(Cls("thanks!") == ConvIntent::Thanks);
+    CHECK(Cls("ty") == ConvIntent::Thanks);
+    CHECK(Cls("are you a bot?") == ConvIntent::AreYouBot);
+    CHECK(Cls("r u a real person") == ConvIntent::AreYouBot);
+    CHECK(Cls("do you like wow forever") == ConvIntent::LikeIt);
+    CHECK(Cls("can you help me") == ConvIntent::Help);
+    CHECK(Cls("help me with this quest") == ConvIntent::QuestHelp);
+    // An offer to do a quest together is an offer to group up (cyborgx5, GitHub #12: "hi do you wanna do [quest] quest?").
+    CHECK(Cls("hi do you wanna do |cffffff00|Hquest:54:5|h[The Fargodeep Mine]|h|r quest?") == ConvIntent::GroupInvite);
+    CHECK(Cls("want to do this quest together?") == ConvIntent::GroupInvite);
+    CHECK(Cls("wanna help me with this quest?") == ConvIntent::QuestHelp);
+    CHECK(Cls("where is the quest giver") != ConvIntent::GroupInvite);
+    CHECK(Cls("\xD0\xB3\xD0\xBE \xD0\xB2\xD0\xBC\xD0\xB5\xD1\x81\xD1\x82\xD0\xB5 \xD0\xBA\xD0\xB2\xD0\xB5\xD1\x81\xD1\x82?") == ConvIntent::GroupInvite);   // го вместе квест?
+    CHECK(Cls("\xD0\xBF\xD0\xBE\xD0\xBC\xD0\xBE\xD0\xB3\xD0\xB8 \xD1\x81 \xD0\xBA\xD0\xB2\xD0\xB5\xD1\x81\xD1\x82\xD0\xBE\xD0\xBC") == ConvIntent::QuestHelp);   // помоги с квестом
+    CHECK(Cls("do you wanna group") == ConvIntent::GroupInvite);
+    CHECK(Cls("you are a stupid bot") == ConvIntent::Insult);
+
+    ConversationContext c = Ctx();
+    for (uint32_t sel = 0; sel < 40; ++sel)
+    {
+        std::string const bot = Lower(Say(c, "are you a bot?", sel));
+        CHECK(bot.find("yes") == std::string::npos);
+        CHECK(bot.find("i am a bot") == std::string::npos);
+        CHECK(bot.find("im a bot") == std::string::npos);
+    }
+}
+
+TEST_CASE("BotConversation: the duel answer is what the bot will do", "[botconversation]")
+{
+    ConversationContext c = Ctx();
+    c.tone = ConvTone::Neutral;
+    std::set<std::string> yes, far;
+    for (uint32_t sel = 0; sel < 64; ++sel)
+    {
+        c.duel = DuelAnswer::Yes;
+        yes.insert(Lower(Say(c, "duel?", sel)));
+        c.duel = DuelAnswer::TooFar;
+        far.insert(Lower(Say(c, "duel?", sel)));
+    }
+    for (std::string const& s : yes)
+        CHECK((s.find("sure") != std::string::npos || s.find("send") != std::string::npos || s.find("on") != std::string::npos));
+    for (std::string const& s : far)
+        CHECK((s.find("level") != std::string::npos || s.find("fair") != std::string::npos));
+}
+
+TEST_CASE("BotConversation: a Russian player gets Russian answers", "[botconversation]")
+{
+    // \xD0..\xD1 bytes: the answer is Cyrillic
+    auto cyrillic = [](std::string const& s) { return s.find('\xD0') != std::string::npos || s.find('\xD1') != std::string::npos; };
+    ConversationContext c = Ctx();
+    c.russian = true;
+    c.duel = DuelAnswer::Yes;
+    char const* lines[] = {
+        "\xD0\xBA\xD0\xB0\xD0\xBA \xD0\xB4\xD0\xB5\xD0\xBB\xD0\xB0?",                                   // как дела?
+        "\xD1\x87\xD1\x82\xD0\xBE \xD0\xB4\xD0\xB5\xD0\xBB\xD0\xB0\xD0\xB5\xD1\x88\xD1\x8C?",           // что делаешь?
+        "\xD0\xBA\xD0\xB0\xD0\xBA\xD0\xBE\xD0\xB9 \xD1\x83 \xD1\x82\xD0\xB5\xD0\xB1\xD1\x8F \xD1\x83\xD1\x80\xD0\xBE\xD0\xB2\xD0\xB5\xD0\xBD\xD1\x8C?",   // какой у тебя уровень?
+        "\xD1\x85\xD0\xBE\xD1\x87\xD0\xB5\xD1\x88\xD1\x8C \xD0\xB2 \xD0\xB3\xD1\x80\xD1\x83\xD0\xBF\xD0\xBF\xD1\x83?",                                     // хочешь в группу?
+        "\xD0\xB4\xD1\x83\xD1\x8D\xD0\xBB\xD1\x8C?",                                                      // дуэль?
+        "\xD1\x81\xD0\xBF\xD0\xB0\xD1\x81\xD0\xB8\xD0\xB1\xD0\xBE",                                      // спасибо
+        "\xD1\x82\xD1\x8B \xD0\xB1\xD0\xBE\xD1\x82?",                                                     // ты бот?
+        "\xD0\x93\xD0\xB4\xD0\xB5 \xD0\x9C\xD0\xB5\xD1\x80\xD1\x82\xD0\xB2\xD1\x8B\xD0\xB5 \xD0\xBA\xD0\xBE\xD0\xBF\xD0\xB8?",                           // Где Мертвые копи?
+        "\xD1\x82\xD0\xB5\xD0\xB1\xD0\xB5 \xD0\xBD\xD1\x80\xD0\xB0\xD0\xB2\xD0\xB8\xD1\x82\xD1\x81\xD1\x8F wow forever?",                                  // тебе нравится wow forever?
+    };
+    ConvIntent const want[] = { ConvIntent::HowAreYou, ConvIntent::WhatDoing, ConvIntent::Level, ConvIntent::GroupInvite, ConvIntent::Duel,
+                                ConvIntent::Thanks, ConvIntent::AreYouBot, ConvIntent::Directions, ConvIntent::LikeIt };
+    for (size_t i = 0; i < std::size(lines); ++i)
+    {
+        INFO(lines[i]);
+        CHECK(Cls(lines[i]) == want[i]);
+        for (uint32_t sel = 0; sel < 8; ++sel)
+        {
+            std::string const s = Say(c, lines[i], sel);
+            CHECK(cyrillic(s));
+            CHECK(s.find('{') == std::string::npos);
+        }
+    }
+    // the class and the activity come in Russian, not "mage" / "out questing"
+    for (uint32_t sel = 0; sel < 16; ++sel)
+    {
+        CHECK(Say(c, "\xD0\xBA\xD0\xB0\xD0\xBA\xD0\xBE\xD0\xB9 \xD1\x83 \xD1\x82\xD0\xB5\xD0\xB1\xD1\x8F \xD1\x83\xD1\x80\xD0\xBE\xD0\xB2\xD0\xB5\xD0\xBD\xD1\x8C?", sel).find("mage") == std::string::npos);
+        CHECK(Say(c, "\xD1\x87\xD1\x82\xD0\xBE \xD0\xB4\xD0\xB5\xD0\xBB\xD0\xB0\xD0\xB5\xD1\x88\xD1\x8C?", sel).find("questing") == std::string::npos);
+    }
+}
+
+TEST_CASE("BotConversation: an unknown question asks back instead of \"dunno\"", "[botconversation]")
+{
+    ConversationContext c = Ctx();
+    std::string out;
+    CHECK(ConvReply(c, ConvNormalize("what about the blue thing?"), "what about the blue thing?", 3, true, out));
+    CHECK_FALSE(out.empty());
+    CHECK(Lower(out).find("dunno") == std::string::npos);
+    // a statement is left to the caller's own lines, and an unaddressed line too
+    CHECK_FALSE(ConvReply(c, ConvNormalize("the blue thing is nice"), "the blue thing is nice", 3, true, out));
+    CHECK_FALSE(ConvReply(c, ConvNormalize("what about the blue thing?"), "what about the blue thing?", 3, false, out));
 }

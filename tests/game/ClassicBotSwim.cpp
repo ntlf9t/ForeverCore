@@ -100,3 +100,41 @@ TEST_CASE("BotSwim: a follower settles only where it stays in follow range, so t
     // No range left after the margin: never.
     REQUIRE_FALSE(SettleKeepsFollowRange(0.0f, 0.0f, 0.0f, 0.4f));
 }
+
+TEST_CASE("BotSwim: a route point on the water's surface goes down to the swim z, one at or under it keeps its depth", "[botswim]")
+{
+    float const level = 10.0f;
+    float const swim = SwimZ(level, kHuman);
+    // the navmesh's water polygon lies on the surface, a little over it with the mesh's height error, or just under it: all too high
+    REQUIRE(RoutePointNeedsLowering(level, swim));
+    REQUIRE(RoutePointNeedsLowering(level + 0.4f, swim));
+    REQUIRE(RoutePointNeedsLowering(swim + 0.5f, swim));
+    // already at the swim z (a goal MoveTo put there, a point lowered before): a second pass changes nothing
+    REQUIRE_FALSE(RoutePointNeedsLowering(swim, swim));
+    REQUIRE_FALSE(RoutePointNeedsLowering(swim + kRouteLowerSlack, swim));
+    // a dive to something on the floor, and the lake bed itself, are never lifted
+    REQUIRE_FALSE(RoutePointNeedsLowering(swim - 3.0f, swim));
+    REQUIRE_FALSE(RoutePointNeedsLowering(4.0f, swim));
+}
+
+TEST_CASE("BotSwim: a lowered route leg that cuts into a bank is under the ground, one over the bed is not", "[botswim]")
+{
+    REQUIRE(UnderGround(8.0f, 9.0f));                            // a yard into the bank
+    REQUIRE_FALSE(UnderGround(9.0f - kRouteGroundSlack, 9.0f));  // touching it, within the mesh's error
+    REQUIRE_FALSE(UnderGround(SwimZ(10.0f, kHuman), 4.0f));      // swimming over the lake bed
+}
+
+TEST_CASE("BotSwim: a follower at the end of a lowered route stays in follow range of a leader on the surface", "[botswim]")
+{
+    // The follow generator's end point lies its range off the leader (reaches 1.5 + 1.5 and a 2 y follow distance, 5 y); a route that
+    // ends at the swim z under it is checked in 3D against that range plus the generator's tolerance. Every body size stays inside:
+    // the follower is not pathed straight back up to the surface.
+    float const reach = 1.5f + 1.5f;
+    float const follow = 2.0f;
+    for (float height : { 1.1f, kHuman, 2.9f })
+    {
+        float const dz = SwimDepth(height);
+        float const d = std::sqrt((reach + follow) * (reach + follow) + dz * dz);
+        REQUIRE(d < reach + follow + 1.0f);
+    }
+}

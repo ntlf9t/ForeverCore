@@ -255,3 +255,22 @@ TEST_CASE("GroupFight: idle in the fight is a fault after 3 s, not for healers o
     CHECK_FALSE(IdleFault(Mode::Off, false, false, 1000, 10000));
     CHECK_FALSE(IdleFault(Mode::Fight, false, false, 0, 10000));
 }
+
+TEST_CASE("GroupFight: a healer between heals aims at the leader's target, else the tank's", "[groupfight]")
+{
+    using Playerbot::GroupFight::HealerFillerTarget;
+    using Playerbot::GroupFight::HealerTarget;
+
+    // VempirE, #bot-feedback 2026-11-20: questing with its player (no tank), the healer hit nothing, even on Attack.
+    REQUIRE(HealerFillerTarget(false, true, false, true, false) == HealerTarget::Leader);
+    // The group's fight: the leader's target (the one Attack names) before the tank's.
+    REQUIRE(HealerFillerTarget(false, true, true, true, true) == HealerTarget::Leader);
+    REQUIRE(HealerFillerTarget(false, true, false, false, true) == HealerTarget::Tank);
+    // Its own fight with no group fight (a raid boss, a hold): the tank's victim first, as in the dungeon seeding before.
+    REQUIRE(HealerFillerTarget(false, false, true, true, true) == HealerTarget::Tank);
+    REQUIRE(HealerFillerTarget(false, false, true, true, false) == HealerTarget::Leader);
+    // Out of every fight, nothing; and never in a battleground.
+    REQUIRE(HealerFillerTarget(false, false, false, true, true) == HealerTarget::None);
+    REQUIRE(HealerFillerTarget(true, true, true, true, true) == HealerTarget::None);
+    REQUIRE(HealerFillerTarget(false, true, true, false, false) == HealerTarget::None);
+}

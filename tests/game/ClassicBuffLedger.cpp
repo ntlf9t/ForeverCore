@@ -65,3 +65,17 @@ TEST_CASE("A caster-centred class buff is trusted only for the snapshot's lag", 
     CHECK(BuffCastTrusted(areaKey, 1000, 1000 + kAreaBuffTrustMs - 1));
     CHECK_FALSE(BuffCastTrusted(areaKey, 1000, 1000 + kAreaBuffTrustMs));
 }
+
+TEST_CASE("A cast the core refused right after the bot sent it is not trusted", "[ClassicBuffLedger]")
+{
+    // Naxx Razuvious r2 af54: Blessing of Wisdom on one member refused NOT_READY 2 s after it was sent; trusted for 3 minutes, the raid
+    // waited 83 s on it.
+    CHECK(CastRefusedAfter(100000, 100000));
+    CHECK(CastRefusedAfter(100000, 102000));
+    CHECK(CastRefusedAfter(100000, 109999));
+    CHECK_FALSE(CastRefusedAfter(100000, 110000));    // a refusal 10 s later belongs to a later cast
+    CHECK_FALSE(CastRefusedAfter(100000, 99000));     // a refusal before the cast was sent is an older cast's
+    CHECK_FALSE(CastRefusedAfter(0, 100000));         // never cast
+    CHECK_FALSE(CastRefusedAfter(100000, 0));         // never refused
+    CHECK(CastRefusedAfter(0xFFFFF000u, 0x00000400u)); // across the game clock's wrap
+}

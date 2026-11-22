@@ -187,6 +187,35 @@ TEST_CASE("BotTrade: items and gold from him at once is not a deal the bot can p
     CHECK(Decide(mixed).say == Say::OneWay);
 }
 
+TEST_CASE("BotTrade: everything the owner hands over is a gift, the bot pays nothing", "[bottrade]")
+{
+    View v;
+    v.gift_partner = true;
+    v.from_owner = true;
+    v.bot_gold = 0;                                     // a bot with no gold took nothing before: "not enough money"
+    v.his = { L(2, 5, 4000), L(3, 1, 1000) };           // no upgrades, no reagents, no supplies
+    CHECK(Decide(v).act == Act::Wait);                  // he has not accepted: no money is offered
+    v.his_accepted = true;
+    CHECK(Decide(v).act == Act::Accept);
+
+    v.his_money = 500;                                  // items and gold at once
+    CHECK(Decide(v).act == Act::Accept);
+
+    v.bot_has_room = false;
+    Action const full = Decide(v);
+    CHECK(full.act == Act::Cancel);
+    CHECK(full.say == Say::NoRoom);
+
+    View mate = v;                                      // a group mate who is not the owner still sells at the fair price
+    mate.from_owner = false;
+    mate.bot_has_room = true;
+    mate.his_money = 0;
+    mate.bot_gold = 100000;
+    Action const buy = Decide(mate);
+    CHECK(buy.act == Act::SetMoney);
+    CHECK(buy.money == 5000);
+}
+
 TEST_CASE("BotTrade: an order is filled when he puts in the price", "[bottrade]")
 {
     View v;

@@ -108,3 +108,45 @@ TEST_CASE("WorldFactionMix: a capital holds only its own faction, whoever the pl
         own += BotIsAllianceInZone(33, false, roll, 70) == false;
     CHECK(own == 70);
 }
+
+TEST_CASE("WorldFactionMix: a faction's zone holds the share of its own faction, whoever the player is", "[worldfactionmix]")
+{
+    // A Horde player in Elwynn, Westfall or Duskwood meets the share in Alliance bots, as an Alliance player does; Durotar, Silverpine and
+    // the Barrens the same the other way round.
+    for (uint32_t zone : { ELWYNN, 40u, 1u, 141u, 38u, 10u, 11u, 44u, 148u })
+    {
+        uint32_t ally_for_horde = 0, ally_for_ally = 0;
+        for (uint32_t roll = 0; roll < 100; ++roll)
+        {
+            ally_for_horde += BotIsAllianceInZone(zone, false, roll, 90);
+            ally_for_ally += BotIsAllianceInZone(zone, true, roll, 90);
+        }
+        CHECK(ally_for_horde == 90);
+        CHECK(ally_for_ally == 90);
+    }
+    for (uint32_t zone : { DUROTAR, 215u, 85u, 130u, BARRENS, 8u })
+    {
+        uint32_t horde_for_ally = 0;
+        for (uint32_t roll = 0; roll < 100; ++roll)
+            horde_for_ally += !BotIsAllianceInZone(zone, true, roll, 100);
+        CHECK(horde_for_ally == 100);
+    }
+    // Every home zone has an owner, contested zones and capitals (CapitalFactionOfZone) none; Ashenvale, Stonetalon and Desolace none.
+    for (ZoneTierEntry const& e : kZoneTiers)
+    {
+        if (e.tier == ZoneTier::Home)
+            CHECK(OwnerFactionOfZone(e.zone) != 0);
+        if (e.tier == ZoneTier::Contested || e.tier == ZoneTier::Capital)
+            CHECK(OwnerFactionOfZone(e.zone) == 0);
+        if (e.tier != ZoneTier::Home && e.tier != ZoneTier::Border)
+            CHECK(OwnerFactionOfZone(e.zone) == 0);
+    }
+    for (uint32_t zone : { 331u, 406u, 405u })
+    {
+        CHECK(OwnerFactionOfZone(zone) == 0);
+        uint32_t own = 0;
+        for (uint32_t roll = 0; roll < 100; ++roll)
+            own += !BotIsAllianceInZone(zone, false, roll, 75);
+        CHECK(own == 75);
+    }
+}

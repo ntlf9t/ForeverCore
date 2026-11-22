@@ -761,6 +761,9 @@ enum RBACPermissions
     RBAC_PERM_COMMAND_BUG                                    = 1001, // .bug <text>: a bug report with the player's spot (players too)
     RBAC_PERM_COMMAND_MODE                                    = 1002,
     RBAC_PERM_COMMAND_DUNGEON_DIFFICULTY                     = 1003,
+    RBAC_PERM_COMMAND_BATTLETAG                              = 1004, // .battletag [name]: show or pick the account's BattleTag (players too)
+    RBAC_PERM_COMMAND_GM_COMBATLOG                           = 1005, // .gm combatlog: a unit's or group's combat log from any distance (admins)
+    RBAC_PERM_COMMAND_DEATHRECAP                             = 1006, // .deathrecap [name]: text dump of a player's last recorded death
     RBAC_PERM_MAX
 };
 

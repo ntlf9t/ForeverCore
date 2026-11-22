@@ -183,4 +183,19 @@ TEST_CASE("Playerbot.Interact.AcceptInvitesFrom: whose invite a bot takes", "[Cl
         CHECK(IP::Accepts(f, bot));
     }
     CHECK_FALSE(IP::Accepts(IP::From::None, pal));
+
+    // A bot that belongs to a player takes a player's invite from its owner and a GM only, under every setting.
+    IP::Inviter const strangerToOwned{ true, false, false, false, false, true };
+    IP::Inviter const palOfOwned{ true, false, false, true, true, true };
+    IP::Inviter const ownerOfOwned{ true, true, false, false, false, true };
+    IP::Inviter const gmToOwned{ true, false, true, false, false, true };
+    IP::Inviter const botToOwned{ false, false, false, false, false, true };
+    for (IP::From f : { IP::From::Anyone, IP::From::Guild, IP::From::Friends, IP::From::None })
+    {
+        CHECK_FALSE(IP::Accepts(f, strangerToOwned));
+        CHECK_FALSE(IP::Accepts(f, palOfOwned));
+        CHECK(IP::Accepts(f, ownerOfOwned));
+        CHECK(IP::Accepts(f, gmToOwned));
+        CHECK(IP::Accepts(f, botToOwned));
+    }
 }
