@@ -1653,6 +1653,26 @@ class classic_spell_pal_sacred_shield : public AuraScript
     TimePoint _nextShield = TimePoint::min();
 };
 
+// 1311015 - Templar's Bulwark: the client stores 100 as a percentage, so the generic absorb handler must not keep it as 100 health.
+class classic_spell_pal_templars_bulwark : public AuraScript
+{
+    bool Validate(SpellInfo const* spellInfo) override
+    {
+        return ValidateSpellEffect({ { spellInfo->Id, EFFECT_0 } });
+    }
+
+    void CalculateAmount(AuraEffect const* /*aurEff*/, SpellEffectValue& amount, bool& canBeRecalculated)
+    {
+        amount = CalculatePct(GetUnitOwner()->GetMaxHealth(), amount);
+        canBeRecalculated = false;
+    }
+
+    void Register() override
+    {
+        DoEffectCalcAmount += AuraEffectCalcAmountFn(classic_spell_pal_templars_bulwark::CalculateAmount, EFFECT_0, SPELL_AURA_SCHOOL_ABSORB);
+    }
+};
+
 // Divine Shield (642, 1020), Blessing of Protection (1022, 5599, 10278), Lay on Hands (633, 2800, 10310): vanilla puts Forbearance (1 minute) on the
 // target and refuses these spells on a target that has it. The retail Forbearance scripts check the retail marker spell in the spell data and
 // are bound to rank 1 only, so a Classic cast either never applied it or, on the higher ranks, never did. Applying it again on rank 1 only
@@ -1830,6 +1850,7 @@ void AddSC_classic_talents_priest_paladin()
     RegisterSpellScript(classic_spell_pal_vindication);
     RegisterSpellScript(classic_spell_pal_oath_of_light_heal);
     RegisterSpellScript(classic_spell_pal_sacred_shield);
+    RegisterSpellScript(classic_spell_pal_templars_bulwark);
     RegisterSpellScript(classic_spell_pal_forbearance);
     RegisterSpellScript(classic_spell_pal_illumination);
 }
