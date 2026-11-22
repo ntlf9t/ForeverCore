@@ -165,6 +165,7 @@
 #include <boost/dynamic_bitset.hpp>
 #include <G3D/g3dmath.h>
 #include <sstream>
+#include <unordered_set>
 
 // corpse reclaim times
 #define DEATH_EXPIRE_STEP (5*MINUTE)
@@ -3257,56 +3258,6 @@ bool Player::AddSpell(uint32 spellId, bool active, bool learning, bool dependent
             if (traitDefinition->OverridesSpellID)
                 AddOverrideSpell(traitDefinition->OverridesSpellID, spellId);
 
-    // update free primary prof.points (if any, can be none in case GM .learn prof. learning)
-    if (uint32 freeProfs = GetFreePrimaryProfessionPoints())
-    {
-        if (spellInfo->IsPrimaryProfessionFirstRank())
-        {
-            // A primary-profession slot must be consumed ONCE PER PROFESSION,
-            // not once per spell. Modern (12.0) profession data ships MULTIPLE
-            // first-rank spells that all teach the SAME profession skill — e.g.
-            // classic "Apprentice Skinning" (8613) and modern "Skinning"
-            // (205243) both grant skill 393 (Skinning) — and the skill-reward
-            // cascade auto-learns the modern one when the character has the
-            // profession. The old "decrement per first-rank spell" logic then
-            // counted one profession twice, exhausting the 2-slot cap (bots
-            // with only Skinning ended up with freeProf=0 and could never learn
-            // a real 2nd profession like Leatherworking). Only decrement when no
-            // OTHER known spell already teaches this same profession skill.
-            uint32 profSkill = 0;
-            for (SpellEffectInfo const& eff : spellInfo->GetEffects())
-                if (eff.IsEffect(SPELL_EFFECT_SKILL) && IsPrimaryProfessionSkill(uint32(eff.MiscValue)))
-                {
-                    profSkill = uint32(eff.MiscValue);
-                    break;
-                }
-
-            bool alreadyCounted = false;
-            if (profSkill)
-            {
-                for (auto const& [knownSpellId, knownSpell] : m_spells)
-                {
-                    if (knownSpellId == spellId || knownSpell.state == PLAYERSPELL_REMOVED)
-                        continue;
-                    SpellInfo const* knownInfo = sSpellMgr->GetSpellInfo(knownSpellId, DIFFICULTY_NONE);
-                    if (!knownInfo || !knownInfo->IsPrimaryProfessionFirstRank())
-                        continue;
-                    for (SpellEffectInfo const& e2 : knownInfo->GetEffects())
-                        if (e2.IsEffect(SPELL_EFFECT_SKILL) && uint32(e2.MiscValue) == profSkill)
-                        {
-                            alreadyCounted = true;
-                            break;
-                        }
-                    if (alreadyCounted)
-                        break;
-                }
-            }
-
-            if (!alreadyCounted)
-                SetFreePrimaryProfessions(freeProfs - 1);
-        }
-    }
-
     SkillLineAbilityMapBounds skill_bounds = sSpellMgr->GetSkillLineAbilityMapBounds(spellId);
 
     if (SpellLearnSkillNode const* spellLearnSkill = sSpellMgr->GetSpellLearnSkill(spellId))
@@ -3628,14 +3579,6 @@ void Player::RemoveSpell(uint32 spell_id, bool disabled /*= false*/, bool learn_
     for (uint8 i = 0; i < spellInfo->GetEffects().size(); ++i)
         if (PetAura const* petSpell = sSpellMgr->GetPetAura(spell_id, i))
             RemovePetAura(petSpell);
-
-    // update free primary prof.points (if not overflow setting, can be in case GM use before .learn prof. learning)
-    if (spellInfo->IsPrimaryProfessionFirstRank())
-    {
-        uint32 freeProfs = GetFreePrimaryProfessionPoints()+1;
-        if (freeProfs <= sWorld->getIntConfig(CONFIG_MAX_PRIMARY_TRADE_SKILL))
-            SetFreePrimaryProfessions(freeProfs);
-    }
 
     // remove dependent skill
     SpellLearnSkillNode const* spellLearnSkill = sSpellMgr->GetSpellLearnSkill(spell_id);
@@ -6324,7 +6267,6 @@ void Player::InitializeSkillFields()
 // To "remove" a skill line, set it's values to zero
 void Player::SetSkill(uint32 id, uint16 step, uint16 newVal, uint16 maxVal)
 {
-
     SkillLineEntry const* skillEntry = sSkillLineStore.LookupEntry(id);
     if (!skillEntry)
     {
@@ -6348,11 +6290,14 @@ void Player::SetSkill(uint32 id, uint16 step, uint16 newVal, uint16 maxVal)
         }
     }
 
-    // after the profession itself changed, its child lines are updated to match (see the end of this function)
-    auto syncChildren = Trinity::make_unique_ptr_with_deleter(this, [id, classicProfessionChild](Player* player)
+    // after the profession itself changed, its child lines and available profession points are updated
+    auto syncProfessionState = Trinity::make_unique_ptr_with_deleter(this, [id, classicProfessionChild](Player* player)
     {
         if (!classicProfessionChild)
             player->SyncClassicProfessionChildSkills(id);
+
+        if (IsPrimaryProfessionSkill(id))
+            player->SetFreePrimaryProfessions(player->GetFreePrimaryProfessionPoints());
 
         // Classic 1.60: a certified profession shows its title from 300 skill on (.setskill, learning a higher rank)
         if (IsClassicCertificationSkill(id) && player->GetPureSkillValue(id) >= 300 && !player->GetSession()->PlayerLoading())
@@ -26483,6 +26428,40 @@ void Player::UpdateVisibilityForPlayer()
 void Player::InitPrimaryProfessions()
 {
     SetFreePrimaryProfessions(sWorld->getIntConfig(CONFIG_MAX_PRIMARY_TRADE_SKILL));
+}
+
+uint32 Player::GetFreePrimaryProfessionPoints() const
+{
+    int32 const maximum = sWorld->getIntConfig(CONFIG_MAX_PRIMARY_TRADE_SKILL);
+    if (maximum <= 0)
+        return 0;
+
+    uint32 learned = 0;
+    for (auto const& [skill, status] : mSkillStatus)
+        if (status.uState != SKILL_DELETED && GetSkillRankByPos(status.pos) && IsPrimaryProfessionSkill(skill))
+            ++learned;
+
+    return learned < uint32(maximum) ? uint32(maximum) - learned : 0;
+}
+
+bool Player::CanLearnPrimaryProfession(uint32 skill) const
+{
+    return !IsPrimaryProfessionSkill(skill) || HasSkill(skill) || GetFreePrimaryProfessionPoints() > 0;
+}
+
+bool Player::CanLearnPrimaryProfession(SpellInfo const* spellInfo) const
+{
+    if (!spellInfo || !spellInfo->IsPrimaryProfession())
+        return true;
+
+    uint32 missingProfessions = 0;
+    std::unordered_set<uint32> skills;
+    for (SpellEffectInfo const& effect : spellInfo->GetEffects())
+        if (effect.IsEffect(SPELL_EFFECT_SKILL) && IsPrimaryProfessionSkill(uint32(effect.MiscValue)) && skills.insert(uint32(effect.MiscValue)).second
+            && !HasSkill(uint32(effect.MiscValue)))
+            ++missingProfessions;
+
+    return missingProfessions <= GetFreePrimaryProfessionPoints();
 }
 
 bool Player::ModifyMoney(int64 amount, bool sendError /*= true*/)

@@ -2481,6 +2481,9 @@ void Spell::EffectLearnSkill()
     SkillRaceClassInfoEntry const* rcEntry = sDB2Manager.GetSkillRaceClassInfo(skillid, playerTarget->GetRace(), playerTarget->GetClass());
     if (!rcEntry)
     {
+        if (!playerTarget->CanLearnPrimaryProfession(skillid))
+            return;
+
         // Modern 12.0+ client DB2 dropped SkillRaceClassInfo entries for the
         // classic primary-profession skill lines (165 Leatherworking, 164
         // Blacksmithing, 186 Mining, 182 Herbalism, 393 Skinning, ...) while
@@ -2503,6 +2506,9 @@ void Spell::EffectLearnSkill()
         }
         return;
     }
+
+    if (!playerTarget->CanLearnPrimaryProfession(skillid))
+        return;
 
     SkillTiersEntry const* tier = sObjectMgr->GetSkillTier(rcEntry->SkillTierID);
     if (!tier)

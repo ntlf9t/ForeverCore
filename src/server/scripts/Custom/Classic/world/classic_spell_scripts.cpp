@@ -256,7 +256,7 @@ class classic_spell_profession_book : public SpellScript
         if (player->HasSkill(book->SkillId))
             return player->GetPureSkillValue(book->SkillId) < GetCap() ? SPELL_CAST_OK : SPELL_FAILED_CANT_DO_THAT_RIGHT_NOW;
 
-        return player->GetFreePrimaryProfessionPoints() > 0 ? SPELL_CAST_OK : SPELL_FAILED_CANT_DO_THAT_RIGHT_NOW;
+        return player->CanLearnPrimaryProfession(book->SkillId) ? SPELL_CAST_OK : SPELL_FAILED_CANT_DO_THAT_RIGHT_NOW;
     }
 
     void HandleDummy(SpellEffIndex /*effIndex*/)

@@ -117,7 +117,7 @@ void WorldSession::HandleConfirmRespecWipeOpcode(WorldPackets::Talent::ConfirmRe
 void WorldSession::HandleUnlearnSkillOpcode(WorldPackets::Spells::UnlearnSkill& packet)
 {
     SkillRaceClassInfoEntry const* rcEntry = sDB2Manager.GetSkillRaceClassInfo(packet.SkillLine, GetPlayer()->GetRace(), GetPlayer()->GetClass());
-    if (!rcEntry || !(rcEntry->Flags & SKILL_FLAG_UNLEARNABLE))
+    if (!IsPrimaryProfessionSkill(packet.SkillLine) && (!rcEntry || !(rcEntry->Flags & SKILL_FLAG_UNLEARNABLE)))
         return;
 
     GetPlayer()->SetSkill(packet.SkillLine, 0, 0, 0);

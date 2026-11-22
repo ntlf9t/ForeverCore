@@ -2129,7 +2129,9 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
         void SetTraitConfigUseSharedActionBars(int32 traitConfigId, bool usesSharedActionBars, bool isLastSelectedSavedConfig);
         Optional<PlayerSpellTrait> GetTraitInfoForSpell(uint32 spellId) const;
 
-        uint32 GetFreePrimaryProfessionPoints() const { return m_activePlayerData->CharacterPoints; }
+        uint32 GetFreePrimaryProfessionPoints() const;
+        bool CanLearnPrimaryProfession(uint32 skill) const;
+        bool CanLearnPrimaryProfession(SpellInfo const* spellInfo) const;
         void SetFreePrimaryProfessions(uint16 profs) { SetUpdateFieldValue(m_values.ModifyValue(&Player::m_activePlayerData).ModifyValue(&UF::ActivePlayerData::CharacterPoints), profs); }
         void InitPrimaryProfessions();
 

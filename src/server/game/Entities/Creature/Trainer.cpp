@@ -379,7 +379,7 @@ namespace Trainer
             return false;
 
         SpellInfo const* trainerSpellInfo = sSpellMgr->AssertSpellInfo(trainerSpell->SpellId, DIFFICULTY_NONE);
-        if (trainerSpellInfo->IsPrimaryProfessionFirstRank() && !player->GetFreePrimaryProfessionPoints())
+        if (!player->CanLearnPrimaryProfession(trainerSpellInfo))
             return false;
 
         for (SpellEffectInfo const& effect : trainerSpellInfo->GetEffects())
@@ -388,7 +388,7 @@ namespace Trainer
                 continue;
 
             SpellInfo const* learnedSpellInfo = sSpellMgr->GetSpellInfo(effect.TriggerSpell, DIFFICULTY_NONE);
-            if (learnedSpellInfo && learnedSpellInfo->IsPrimaryProfessionFirstRank() && !player->GetFreePrimaryProfessionPoints())
+            if (learnedSpellInfo && !player->CanLearnPrimaryProfession(learnedSpellInfo))
                 return false;
         }
 
