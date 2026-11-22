@@ -128,6 +128,8 @@ public:
 
         ObjectGuid m_uiAshGUID;
         ObjectGuid m_uiAdaGUID;
+        ObjectGuid m_uiAdaCellLeverGUID;
+        ObjectGuid m_uiAshCellLeverGUID;
 
         ObjectGuid m_uiDoorCourtyardGUID;
         ObjectGuid m_uiDoorSorcererGUID;
@@ -213,6 +215,10 @@ public:
 
             switch (creature->GetEntry())
             {
+                case CSFK_NPC_RETHILGORE:
+                    if (Enc(1) != DONE)
+                        SetData(CSFK_TYPE_RETHILGORE, DONE);
+                    break;
                 case CSFK_NPC_BARON_SILVERLAINE:
                     showSilverlainePatrol = true;
                     break;
@@ -230,6 +236,16 @@ public:
 
             switch (go->GetEntry())
             {
+                case CSFK_GO_ADA_CELL_LEVER:
+                    m_uiAdaCellLeverGUID = go->GetGUID();
+                    if (Enc(1) != DONE)
+                        go->SetFlag(GO_FLAG_NOT_SELECTABLE);
+                    break;
+                case CSFK_GO_ASH_CELL_LEVER:
+                    m_uiAshCellLeverGUID = go->GetGUID();
+                    if (Enc(1) != DONE)
+                        go->SetFlag(GO_FLAG_NOT_SELECTABLE);
+                    break;
                 case CSFK_GO_COURTYARD_DOOR:
                     m_uiDoorCourtyardGUID = go->GetGUID();
                     if (Enc(0) == DONE)
@@ -314,6 +330,7 @@ public:
                     break;
                 case CSFK_TYPE_RETHILGORE:
                     SetEnc(1, data);
+                    SetCellLeversSelectable(data == DONE);
                     break;
                 case CSFK_TYPE_FENRUS:
                     SetEnc(2, data);
@@ -358,6 +375,21 @@ public:
                     break;
             }
             return 0;
+        }
+
+        void SetCellLeversSelectable(bool selectable)
+        {
+            for (ObjectGuid const leverGuid : { m_uiAdaCellLeverGUID, m_uiAshCellLeverGUID })
+            {
+                GameObject* lever = instance->GetGameObject(leverGuid);
+                if (!lever)
+                    continue;
+
+                if (selectable)
+                    lever->RemoveFlag(GO_FLAG_NOT_SELECTABLE);
+                else
+                    lever->SetFlag(GO_FLAG_NOT_SELECTABLE);
+            }
         }
     };
 

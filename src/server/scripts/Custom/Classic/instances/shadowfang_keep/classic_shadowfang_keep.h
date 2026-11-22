@@ -38,6 +38,7 @@ enum ClassicShadowfangKeepData : uint32
 
     CSFK_NPC_BARON_SILVERLAINE   = 3887,
     CSFK_NPC_CMD_SPRINGVALE      = 4278,
+    CSFK_NPC_RETHILGORE          = 3914,
     CSFK_NPC_ASH                 = 3850,
     CSFK_NPC_ADA                 = 3849,
     CSFK_NPC_ARUGAL              = 10000,                   // "Arugal" says intro text
@@ -48,6 +49,8 @@ enum ClassicShadowfangKeepData : uint32
     CSFK_NPC_WOLF_GUARD          = 3854,                    // Baron Silverlaine and Commander Springvale patrol
 
     CSFK_GO_COURTYARD_DOOR       = 18895,                   // door to open when talking to NPC's
+    CSFK_GO_ADA_CELL_LEVER       = 18900,
+    CSFK_GO_ASH_CELL_LEVER       = 18901,
     CSFK_GO_SORCERER_DOOR        = 18972,                   // door to open when Fenrus the Devourer dies
     CSFK_GO_ARUGAL_DOOR          = 18971,                   // door to open when Wolf Master Nandos dies
     CSFK_GO_ARUGAL_FOCUS         = 18973,                   // this generates the lightning visual in the Fenrus event
