@@ -42,15 +42,15 @@ TEST_CASE("Skyborne races and their teams", "[skyborne]")
 
 TEST_CASE("Skyborne class combinations match the client's CharBaseInfo", "[skyborne]")
 {
-    // High Order Skyborne: Warrior, Hunter, Rogue, Mage, Druid
-    for (uint32_t cls : { WARRIOR, HUNTER, ROGUE, MAGE, DRUID })
+    // High Order Skyborne: Warrior, Paladin, Hunter, Rogue, Priest, Mage, Druid
+    for (uint32_t cls : { WARRIOR, PALADIN, HUNTER, ROGUE, PRIEST, MAGE, DRUID })
         CHECK(IsLegalClass(95, cls));
-    for (uint32_t cls : { PALADIN, PRIEST, SHAMAN, WARLOCK })
+    for (uint32_t cls : { SHAMAN, WARLOCK })
         CHECK_FALSE(IsLegalClass(95, cls));
-    // Windshaper Skyborne: Warrior, Hunter, Rogue, Shaman, Druid
-    for (uint32_t cls : { WARRIOR, HUNTER, ROGUE, SHAMAN, DRUID })
+    // Windshaper Skyborne: Warrior, Paladin, Hunter, Rogue, Priest, Shaman, Druid
+    for (uint32_t cls : { WARRIOR, PALADIN, HUNTER, ROGUE, PRIEST, SHAMAN, DRUID })
         CHECK(IsLegalClass(96, cls));
-    for (uint32_t cls : { PALADIN, PRIEST, MAGE, WARLOCK })
+    for (uint32_t cls : { MAGE, WARLOCK })
         CHECK_FALSE(IsLegalClass(96, cls));
     // not a Skyborne race at all
     CHECK_FALSE(IsLegalClass(HUMAN, WARRIOR));

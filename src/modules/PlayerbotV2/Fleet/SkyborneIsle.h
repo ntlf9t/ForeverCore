@@ -39,14 +39,14 @@ constexpr bool IsSkyborneRace(uint32_t race) { return race == kRaceAlliance || r
 constexpr bool IsSkyborneAlliance(uint32_t race) { return race == kRaceAlliance; }
 constexpr uint8_t RaceForTeam(bool alliance) { return alliance ? kRaceAlliance : kRaceHorde; }
 
-// Class combinations from the client's CharBaseInfo.db2 (sql/custom/world/2026_09_27_00_world_classic_skyborne.sql).
-// Class ids: 1 Warrior, 3 Hunter, 4 Rogue, 7 Shaman, 8 Mage, 11 Druid.
+// Class combinations from the client plus the Forever additions in the custom world database.
+// Class ids: 1 Warrior, 2 Paladin, 3 Hunter, 4 Rogue, 5 Priest, 7 Shaman, 8 Mage, 11 Druid.
 constexpr bool IsLegalClass(uint32_t race, uint32_t cls)
 {
     if (race == kRaceAlliance)
-        return cls == 1 || cls == 3 || cls == 4 || cls == 8 || cls == 11;
+        return cls == 1 || cls == 2 || cls == 3 || cls == 4 || cls == 5 || cls == 8 || cls == 11;
     if (race == kRaceHorde)
-        return cls == 1 || cls == 3 || cls == 4 || cls == 7 || cls == 11;
+        return cls == 1 || cls == 2 || cls == 3 || cls == 4 || cls == 5 || cls == 7 || cls == 11;
     return false;
 }
 
