@@ -1232,6 +1232,8 @@ char* DB2FileLoaderSparseImpl::AutoProduceStrings(char** indexTable, uint32 inde
                 continue;
 
             char* recordData = indexTable[indexVal];
+            if (!recordData)
+                continue;
 
             uint32 offset = 0;
             uint32 fieldIndex = 0;
