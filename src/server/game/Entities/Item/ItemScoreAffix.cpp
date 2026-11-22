@@ -325,23 +325,29 @@ bool ItemScoreAffix::RerollStyle(Player* owner, Item* item)
         return false;
 
     uint32 const mask = MaskForItem(proto);
+    static constexpr uint32 styles[] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15 };
     bool changed = false;
 
+    // 风格洗：只锁每条分到的预算，属性从全部流派大池子里随机
     for (uint32 index = 0; index < count && index < AffixSlotCount; ++index)
     {
-        ScoreAffixEntry const* current = FindEntry(item->GetEnchantmentId(AFFIX_SLOTS[index]));
-        if (!current)
-            continue;
-
-        uint32 const style = StyleOfKind(current->Kind);
         uint32 const budget = GetLineBudget(item, index, score);
-        ScoreAffixEntry const* chosen = PickAffix(mask, style, budget, true);
+        ScoreAffixEntry const* chosen = nullptr;
+        uint32 start = urand(0, uint32(std::size(styles)) - 1);
+
+        for (uint32 n = 0; n < std::size(styles) && !chosen; ++n)
+        {
+            uint32 style = styles[(start + n) % std::size(styles)];
+            chosen = PickAffix(mask, style, budget, false);
+            if (!chosen)
+                chosen = PickAffix(mask, style, budget, true);
+        }
+
         if (!chosen)
             continue;
 
         item->SetEnchantment(AFFIX_SLOTS[index], chosen->Ench, budget, 0);
-        if (chosen->Ench != current->Ench)
-            changed = true;
+        changed = true;
     }
 
     item->SetState(ITEM_CHANGED, owner);
