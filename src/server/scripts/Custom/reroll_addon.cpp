@@ -100,6 +100,25 @@ namespace
         }
     }
 
+    void AppendBudgets(Item* item, std::ostringstream& oss)
+    {
+        static constexpr EnchantmentSlot affixSlots[] =
+        {
+            PROP_ENCHANTMENT_SLOT_1, PROP_ENCHANTMENT_SLOT_2,
+            PROP_ENCHANTMENT_SLOT_3, PROP_ENCHANTMENT_SLOT_4
+        };
+
+        uint32 const score = ItemScoreAffix::GetScore(item);
+        oss << ";b:";
+        for (uint32 i = 0; i < 4; ++i)
+        {
+            uint32 const duration = item->GetEnchantmentDuration(affixSlots[i]);
+            if (i)
+                oss << ',';
+            oss << (duration ? duration : score);
+        }
+    }
+
     Item* GetTargetItem(Player* player, uint32 bag, uint32 slot)
     {
         return player->GetItemByPos(uint8(bag), uint8(slot));
@@ -127,6 +146,7 @@ namespace
         std::ostringstream oss;
         oss << "info;" << item->GetEntry() << ';' << score << ';' << budget << ';'
             << QualityOf(proto) << ';' << player->GetMoney();
+        AppendBudgets(item, oss);
         AppendAffixes(item, oss);
         Reply(player, oss.str());
     }
@@ -184,6 +204,7 @@ namespace
 
         std::ostringstream oss;
         oss << "done;" << item->GetEntry() << ';' << score << ';' << budget << ';' << cost;
+        AppendBudgets(item, oss);
         AppendAffixes(item, oss);
         Reply(player, oss.str());
     }
@@ -214,6 +235,7 @@ namespace
 
         std::ostringstream oss;
         oss << "done;" << item->GetEntry() << ';' << score << ';' << budget << ';' << cost;
+        AppendBudgets(item, oss);
         AppendAffixes(item, oss);
         Reply(player, oss.str());
     }
@@ -246,6 +268,7 @@ namespace
 
         std::ostringstream oss;
         oss << "done;" << item->GetEntry() << ';' << score << ';' << budget << ';' << SPECIAL_COST;
+        AppendBudgets(item, oss);
         AppendAffixes(item, oss);
         Reply(player, oss.str());
     }
