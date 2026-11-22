@@ -112,9 +112,16 @@ namespace
         oss << ";b:";
         for (uint32 i = 0; i < 4; ++i)
         {
-            uint32 const duration = item->GetEnchantmentDuration(affixSlots[i]);
             if (i)
                 oss << ',';
+
+            if (!item->GetEnchantmentId(affixSlots[i]))
+            {
+                oss << 0;
+                continue;
+            }
+
+            uint32 const duration = item->GetEnchantmentDuration(affixSlots[i]);
             oss << (duration ? duration : score);
         }
     }
