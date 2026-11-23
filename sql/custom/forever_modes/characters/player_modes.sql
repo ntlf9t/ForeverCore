@@ -28,7 +28,8 @@ INSERT INTO auth.rbac_permissions (Id, Name) VALUES (1005, 'Command: mode')
 INSERT INTO auth.rbac_permissions (Id, Name) VALUES (1006, 'Command: dungeon')
   ON DUPLICATE KEY UPDATE Name = VALUES(Name);
 INSERT IGNORE INTO auth.rbac_linked_permissions (id, linkedId) VALUES
-  (199, 1000), (199, 1001), (199, 1005), (199, 1006);
+  (195, 1005), (196, 1005), (199, 1005),
+  (199, 1000), (199, 1001), (199, 1006);
 
 INSERT INTO world.command (name, help) VALUES
 ('mode', 'Syntax: .mode [lone|rebirth|info]\n查看/选择角色模式：lone=孤勇，rebirth=重生。')
