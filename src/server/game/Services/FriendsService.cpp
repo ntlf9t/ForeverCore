@@ -22,6 +22,7 @@
 #include "Chat.h"
 #include "DatabaseEnv.h"
 #include "GameTime.h"
+#include "Language.h"
 #include "Log.h"
 #include "MapUtils.h"
 #include "ObjectAccessor.h"
@@ -1018,7 +1019,7 @@ void BattlenetPresence::OnLogin(WorldSession* session)
     });
 
     if (untagged)
-        ChatHandler(session).SendSysMessage("You have no BattleTag yet, so Battle.net friends can't whisper you. Pick one with .battletag <name>.");
+        ChatHandler(session).SendSysMessage(LANG_BATTLETAG_REQUIRED_FOR_WHISPERS);
 }
 
 std::string BattlenetPresence::GetBattleTag(WorldSession const* session)

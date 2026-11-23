@@ -345,7 +345,7 @@ namespace
         }
 
         double ask = company->Price * 1.005;
-        uint64 cost = uint64(ask * quantity * GOLD);
+        uint64 cost = uint64(ask * quantity * static_cast<double>(GOLD));
         uint64 fee = std::max<uint64>(100, cost / 1000);
         uint64 total = cost + fee;
 
@@ -377,7 +377,7 @@ namespace
 
         std::ostringstream oss;
         oss << "买入 " << company->Name << " " << quantity << " 股，成交价 " << FormatGold(ask)
-            << "G，手续费 " << FormatGold(double(fee) / GOLD) << "G。";
+            << "G，手续费 " << FormatGold(double(fee) / static_cast<double>(GOLD)) << "G。";
         message = oss.str();
         return true;
     }
@@ -415,7 +415,7 @@ namespace
         }
 
         double bid = company->Price * 0.995;
-        uint64 gross = uint64(bid * quantity * GOLD);
+        uint64 gross = uint64(bid * quantity * static_cast<double>(GOLD));
         uint64 fee = std::max<uint64>(100, gross / 500); // 佣金 + 印花税约 0.2%
 
         player->ModifyMoney(int64(gross - fee));
@@ -444,7 +444,7 @@ namespace
 
         std::ostringstream oss;
         oss << "卖出 " << company->Name << " " << quantity << " 股，成交价 " << FormatGold(bid)
-            << "G，手续费 " << FormatGold(double(fee) / GOLD) << "G。";
+            << "G，手续费 " << FormatGold(double(fee) / static_cast<double>(GOLD)) << "G。";
         message = oss.str();
         return true;
     }

@@ -64,7 +64,7 @@ static_assert(sizeof(MmapTileHeader) == 20, "MmapTileHeader size drift");
 // Convert a TC area id to the bitmask Detour's filter expects (matches the
 // formula in MMapDefines.h NavTerrainFlag). The probe enables WALK on the
 // usual surfaces (ground, ground steep, water, road). Off-mesh links and
-// magma/slime intentionally left off — same as PathGenerator's default
+// magma/slime intentionally left off - same as PathGenerator's default
 // "land creature" filter.
 static constexpr uint16_t NAV_GROUND       = 1u << (11 - 11); // 0x01
 static constexpr uint16_t NAV_GROUND_STEEP = 1u << (11 - 10); // 0x02

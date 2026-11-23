@@ -71,7 +71,11 @@ namespace
         {
             std::string_view a = argv[i];
             auto val = [&](char const* f) -> std::string {
-                if (i + 1 >= argc) Usage(1);
+                if (i + 1 >= argc)
+                {
+                    std::fprintf(stderr, "Missing value for %s\n", f);
+                    Usage(1);
+                }
                 return argv[++i];
             };
             if (a == "--help" || a == "-h") Usage(0);

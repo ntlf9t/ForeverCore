@@ -55,7 +55,7 @@ uint16 BattlegroundTemplate::GetMinPlayersPerTeam() const
     {
         // Read once: this runs on every queue check. Changing it needs a restart.
         static uint32 const configured = uint32(std::max(0, sConfigMgr->GetIntDefault("Playerbot.Bg.Av.MinPlayersPerTeam", 0)));
-        if (configured > 0 && configured < BattlemasterEntry->MinPlayers)
+        if (configured > 0 && configured < uint32(BattlemasterEntry->MinPlayers))
             return uint16(configured);
     }
     return BattlemasterEntry->MinPlayers;

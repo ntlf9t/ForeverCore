@@ -2070,9 +2070,9 @@ struct battleground_classic_alterac_valley : BattlegroundScript
             return _challenges[(dataId - DATA_CAV_CHALLENGE) / CAV_CHALLENGE_MAX][(dataId - DATA_CAV_CHALLENGE) % CAV_CHALLENGE_MAX];
         if (dataId >= DATA_CAV_CHALLENGE_GOAL && dataId < DATA_CAV_CHALLENGE_GOAL + 2 * CAV_CHALLENGE_MAX)
             return ChallengeGoals[(dataId - DATA_CAV_CHALLENGE_GOAL) / CAV_CHALLENGE_MAX][(dataId - DATA_CAV_CHALLENGE_GOAL) % CAV_CHALLENGE_MAX];
-        if (dataId == DATA_CAV_REINFORCEMENT + CAV_TEAM_ALLIANCE || dataId == DATA_CAV_REINFORCEMENT + CAV_TEAM_HORDE)
+        if (dataId == DATA_CAV_REINFORCEMENT + uint32(CAV_TEAM_ALLIANCE) || dataId == DATA_CAV_REINFORCEMENT + uint32(CAV_TEAM_HORDE))
             return _reinforcement[dataId - DATA_CAV_REINFORCEMENT];
-        if (dataId == DATA_CAV_ARMOR_SCRAPS + CAV_TEAM_ALLIANCE || dataId == DATA_CAV_ARMOR_SCRAPS + CAV_TEAM_HORDE)
+        if (dataId == DATA_CAV_ARMOR_SCRAPS + uint32(CAV_TEAM_ALLIANCE) || dataId == DATA_CAV_ARMOR_SCRAPS + uint32(CAV_TEAM_HORDE))
             return _teamQuestStatus[dataId - DATA_CAV_ARMOR_SCRAPS][0];
         return BattlegroundScript::GetData(dataId);
     }

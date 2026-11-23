@@ -540,7 +540,7 @@ class classic_spell_plainsrunning : public AuraScript
             return;
         }
 
-        if (++_movingSeconds < secondsPerStack)
+        if (++_movingSeconds < uint32(secondsPerStack))
             return;
 
         _movingSeconds = 0;

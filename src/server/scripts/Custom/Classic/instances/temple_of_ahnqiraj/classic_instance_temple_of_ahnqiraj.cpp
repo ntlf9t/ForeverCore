@@ -525,7 +525,7 @@ public:
                     break;
                 case TYPE_TWINS:
                     // Either of the twins can set data, so return to avoid double changing
-                    if (GetBossState(uiType) == uiData)
+                    if (uint32(GetBossState(uiType)) == uiData)
                         return;
                     // Enter door (open unless IN_PROGRESS) and exit door (open on DONE) follow the door data
                     SetBossState(uiType, EncounterState(uiData));

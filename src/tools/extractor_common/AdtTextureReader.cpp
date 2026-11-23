@@ -695,7 +695,7 @@ namespace Road::AdtTexture
         std::size_t mcnkSeqIdx = 0;
         ForEachTopLevelChunk(texSource, texSourceSize,
             [&](uint32 magic, uint8 const* body, std::size_t size,
-                uint8 const* chunkStart) {
+                uint8 const* /*chunkStart*/) {
                 if (magic != kFccMCNK) return true;
                 if (mcnkSeqIdx >= kMcnksPerAdt) return false;
 
