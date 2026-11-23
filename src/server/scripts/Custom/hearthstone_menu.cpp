@@ -69,6 +69,7 @@ namespace
     struct HearthstoneTeleport
     {
         uint32 Map = 0;
+        uint32 Team = 0;
         float X = 0.f, Y = 0.f, Z = 0.f, O = 0.f;
         std::string Comment;
     };
@@ -79,7 +80,7 @@ namespace
     {
         _cityTeleports.clear();
 
-        QueryResult result = WorldDatabase.Query("SELECT map, x, y, z, o, comment FROM Hearthstone_teleport ORDER BY idx ASC");
+        QueryResult result = WorldDatabase.Query("SELECT map, team, x, y, z, o, comment FROM Hearthstone_teleport ORDER BY idx ASC");
         if (!result)
         {
             TC_LOG_INFO("server.loading", ">> 炉石菜单：world.Hearthstone_teleport 为空，主城传送列表未加载。");
@@ -92,11 +93,12 @@ namespace
 
             HearthstoneTeleport tele;
             tele.Map     = fields[0].GetUInt32();
-            tele.X       = fields[1].GetFloat();
-            tele.Y       = fields[2].GetFloat();
-            tele.Z       = fields[3].GetFloat();
-            tele.O       = fields[4].GetFloat();
-            tele.Comment = fields[5].GetString();
+            tele.Team    = fields[1].GetUInt32();
+            tele.X       = fields[2].GetFloat();
+            tele.Y       = fields[3].GetFloat();
+            tele.Z       = fields[4].GetFloat();
+            tele.O       = fields[5].GetFloat();
+            tele.Comment = fields[6].GetString();
 
             _cityTeleports.push_back(std::move(tele));
         } while (result->NextRow());
@@ -157,11 +159,22 @@ namespace
         ClearGossipMenuFor(player);
         InitGossipMenuFor(player, HEARTHSTONE_MENU_ID);
 
+        uint32 now = uint32(GameTime::GetGameTime());
+        ObjectGuid::LowType guid = player->GetGUID().GetCounter();
+        std::string vendorText = "召唤随身商人";
+        std::string bindText = "绑定炉石（记录当前位置）";
+
+        if (uint32 remaining = GetCooldownRemaining(guid, "last_vendor_time", VENDOR_COOLDOWN, now))
+            vendorText += "（冷却：" + FormatCooldown(remaining) + "）";
+
+        if (uint32 remaining = GetCooldownRemaining(guid, "last_bind_time", BIND_COOLDOWN, now))
+            bindText += "（冷却：" + FormatCooldown(remaining) + "）";
+
         AddGossipItemFor(player, GossipOptionNpc::Binder,   "炉石回家（旅店绑定点）",   SENDER_MAIN, ACTION_HEARTHSTONE);
         AddGossipItemFor(player, GossipOptionNpc::Taxinode, "传送到炉石绑定点",         SENDER_MAIN, ACTION_TELEPORT_HOME);
         AddGossipItemFor(player, GossipOptionNpc::Taxinode, "世界主城传送",             SENDER_MAIN, ACTION_CITY_MENU);
-        AddGossipItemFor(player, GossipOptionNpc::Vendor,   "召唤随身商人",             SENDER_MAIN, ACTION_VENDOR);
-        AddGossipItemFor(player, GossipOptionNpc::Binder,   "绑定炉石（记录当前位置）", SENDER_MAIN, ACTION_BIND,
+        AddGossipItemFor(player, GossipOptionNpc::Vendor,   vendorText,                 SENDER_MAIN, ACTION_VENDOR);
+        AddGossipItemFor(player, GossipOptionNpc::Binder,   bindText,                   SENDER_MAIN, ACTION_BIND,
             "确定要将炉石绑定点设置为当前位置吗？", 0, false);
         AddGossipItemFor(player, GossipOptionNpc::None,     "角色解卡",                 SENDER_MAIN, ACTION_UNSTUCK_MENU);
         AddGossipItemFor(player, GossipOptionNpc::None,     "关闭",                     SENDER_MAIN, ACTION_CLOSE);
@@ -178,7 +191,12 @@ namespace
         InitGossipMenuFor(player, HEARTHSTONE_MENU_ID);
 
         for (uint32 i = 0; i < _cityTeleports.size(); ++i)
+        {
+            if (_cityTeleports[i].Team != 0 && _cityTeleports[i].Team != uint32(player->GetTeam()))
+                continue;
+
             AddGossipItemFor(player, GossipOptionNpc::Taxinode, _cityTeleports[i].Comment, SENDER_CITY, i);
+        }
 
         AddGossipItemFor(player, GossipOptionNpc::None, "返回", SENDER_MAIN, ACTION_MAIN_MENU);
         SendGossipMenuFor(player, DEFAULT_GOSSIP_MESSAGE, source);
@@ -231,13 +249,9 @@ namespace
     {
         CloseGossipMenuFor(player);
 
-        if (player->GetSpellHistory()->HasCooldown(HEARTHSTONE_SPELL_ID))
-        {
-            Notify(player, "炉石冷却中，请稍后再试。");
-            return;
-        }
-
-        player->CastSpell(player, HEARTHSTONE_SPELL_ID, false);
+        player->GetSpellHistory()->ResetCooldown(HEARTHSTONE_SPELL_ID, true);
+        player->CastSpell(player, HEARTHSTONE_SPELL_ID,
+            CastSpellExtraArgs(TRIGGERED_IGNORE_SPELL_AND_CATEGORY_CD));
     }
 
     // 炉石绑定点传送：读取 characters.Hearthstone_teleport_home
@@ -284,6 +298,12 @@ namespace
         }
 
         HearthstoneTeleport const& tele = _cityTeleports[index];
+        if (tele.Team != 0 && tele.Team != uint32(player->GetTeam()))
+        {
+            Notify(player, "该传送点不属于你的阵营。");
+            return;
+        }
+
         if (!player->TeleportTo(tele.Map, tele.X, tele.Y, tele.Z, tele.O))
             Notify(player, "传送点「" + tele.Comment + "」已损坏，请联系管理员。");
     }

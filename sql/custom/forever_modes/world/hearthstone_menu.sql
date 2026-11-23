@@ -11,6 +11,7 @@ INSERT INTO world.item_script_names (Id, ScriptName) VALUES (6948, 'item_hearths
 CREATE TABLE IF NOT EXISTS world.Hearthstone_teleport (
   idx     INT UNSIGNED NOT NULL AUTO_INCREMENT,
   map     INT UNSIGNED NOT NULL DEFAULT 0,
+  team    INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '0=中立, 469=联盟, 67=部落',
   x       FLOAT NOT NULL DEFAULT 0,
   y       FLOAT NOT NULL DEFAULT 0,
   z       FLOAT NOT NULL DEFAULT 0,
@@ -19,18 +20,35 @@ CREATE TABLE IF NOT EXISTS world.Hearthstone_teleport (
   PRIMARY KEY (idx)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 已经创建过旧版表时补充 team 字段
+SET @hs_team_exists = (
+  SELECT COUNT(*)
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = 'world'
+    AND TABLE_NAME = 'Hearthstone_teleport'
+    AND COLUMN_NAME = 'team'
+);
+SET @hs_team_sql = IF(
+  @hs_team_exists = 0,
+  'ALTER TABLE world.Hearthstone_teleport ADD COLUMN team INT UNSIGNED NOT NULL DEFAULT 0 COMMENT ''0=中立, 469=联盟, 67=部落'' AFTER map',
+  'SELECT 1'
+);
+PREPARE hs_team_stmt FROM @hs_team_sql;
+EXECUTE hs_team_stmt;
+DEALLOCATE PREPARE hs_team_stmt;
+
 DELETE FROM world.Hearthstone_teleport;
-INSERT INTO world.Hearthstone_teleport (map, x, y, z, o, comment) VALUES
+INSERT INTO world.Hearthstone_teleport (map, team, x, y, z, o, comment) VALUES
   -- 联盟主城
-  (0, -8833.07,   622.778,   93.9317, 0.6771,   '暴风城'),
-  (0, -4918.88,  -940.406,  501.564,  5.42347,  '铁炉堡'),
-  (1,  9949.56,  2284.21,  1341.40,   1.59587,  '达纳苏斯'),
+  (0, 469, -8833.07,   622.778,   93.9317, 0.6771,   '暴风城'),
+  (0, 469, -4918.88,  -940.406,  501.564,  5.42347,  '铁炉堡'),
+  (1, 469,  9949.56,  2284.21,  1341.40,   1.59587,  '达纳苏斯'),
   -- 部落主城
-  (1,  1569.97, -4397.41,    16.0472, 0.543025, '奥格瑞玛'),
-  (1, -1277.37,   124.804,  131.287,  5.22274,  '雷霆崖'),
-  (0,  1584.07,   241.987,  -52.1534, 0.049647, '幽暗城'),
+  (1, 67,  1569.97, -4397.41,    16.0472, 0.543025, '奥格瑞玛'),
+  (1, 67, -1277.37,   124.804,  131.287,  5.22274,  '雷霆崖'),
+  (0, 67,  1584.07,   241.987,  -52.1534, 0.049647, '幽暗城'),
   -- 中立城市
-  (1,  6725.69, -4619.44,   720.909,  4.66802,  '永望镇'),
-  (1,  -956.664, -3754.71,    5.33239, 0.996637, '棘齿城'),
-  (1, -7177.15, -3785.34,     8.36981, 6.10237,  '加基森'),
-  (0, -14297.20,   530.993,   8.77916, 3.98863,  '藏宝海湾');
+  (1, 0,  6725.69, -4619.44,   720.909,  4.66802,  '永望镇'),
+  (1, 0,  -956.664, -3754.71,    5.33239, 0.996637, '棘齿城'),
+  (1, 0, -7177.15, -3785.34,     8.36981, 6.10237,  '加基森'),
+  (0, 0, -14297.20,   530.993,   8.77916, 3.98863,  '藏宝海湾');
