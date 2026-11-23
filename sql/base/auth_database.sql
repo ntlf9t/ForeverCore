@@ -2863,6 +2863,7 @@ INSERT INTO `rbac_linked_permissions` VALUES
 (196,881),
 (196,882),
 (196,883),
+(196,1007),
 (197,232),
 (197,236),
 (197,237),
@@ -3795,7 +3796,8 @@ INSERT INTO `rbac_permissions` VALUES
 (885,'Command: bg stop'),
 (1000,'Command: time'),
 (1001,'Command: bug'),
-(1004,'Command: battletag');
+(1004,'Command: battletag'),
+(1007,'Command: reload gameobject_template');
 /*!40000 ALTER TABLE `rbac_permissions` ENABLE KEYS */;
 UNLOCK TABLES;
 

@@ -121,6 +121,7 @@ public:
             { "gameobject_questender",         rbac::RBAC_PERM_COMMAND_RELOAD_GAMEOBJECT_QUESTENDER,            true,  &HandleReloadGOQuestEnderCommand,               "" },
             { "gameobject_loot_template",      rbac::RBAC_PERM_COMMAND_RELOAD_GAMEOBJECT_QUEST_LOOT_TEMPLATE,   true,  &HandleReloadLootTemplatesGameobjectCommand,    "" },
             { "gameobject_queststarter",       rbac::RBAC_PERM_COMMAND_RELOAD_GAMEOBJECT_QUESTSTARTER,          true,  &HandleReloadGOQuestStarterCommand,             "" },
+            { "gameobject_template",           rbac::RBAC_PERM_COMMAND_RELOAD_GAMEOBJECT_TEMPLATE,              true,  &HandleReloadGameObjectTemplateCommand,         "" },
             { "gossip_menu",                   rbac::RBAC_PERM_COMMAND_RELOAD_GOSSIP_MENU,                      true,  &HandleReloadGossipMenuCommand,                 "" },
             { "gossip_menu_option",            rbac::RBAC_PERM_COMMAND_RELOAD_GOSSIP_MENU_OPTION,               true,  &HandleReloadGossipMenuOptionCommand,           "" },
             { "item_random_bonus_list_template", rbac::RBAC_PERM_COMMAND_RELOAD_ITEM_RANDOM_BONUS_LIST_TEMPLATE, true, &HandleReloadItemRandomBonusListTemplatesCommand, "" },
@@ -481,6 +482,25 @@ public:
         TC_LOG_INFO("misc", "Loading Quests Relations... (`creature_queststarter`)");
         sObjectMgr->LoadCreatureQuestStarters();
         handler->SendGlobalGMSysMessage("DB table `creature_queststarter` reloaded.");
+        return true;
+    }
+
+    static bool HandleReloadGameObjectTemplateCommand(ChatHandler* handler, char const* args)
+    {
+        Optional<uint32> entry = Trinity::StringTo<uint32>(args);
+        if (!entry)
+            return false;
+
+        if (!sObjectMgr->LoadGameObjectTemplate(*entry))
+        {
+            handler->PSendSysMessage("GameObject template {} not found.", *entry);
+            return true;
+        }
+
+        sObjectMgr->InitializeQueriesData(QUERY_DATA_GAMEOBJECTS);
+        sScriptMgr->NotifyScriptIDUpdate();
+        TC_LOG_INFO("misc", "Reloaded gameobject template entry {}", *entry);
+        handler->SendGlobalGMSysMessage("GameObject template reloaded.");
         return true;
     }
 
