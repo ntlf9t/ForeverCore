@@ -243,10 +243,22 @@ namespace
         return candidates[urand(0, int(candidates.size()) - 1)];
     }
 
-    uint32 GetLineBudget(Item const* item, uint32 index, uint32 score)
+    uint32 GetLineBudget(Item* item, uint32 index, uint32 score)
     {
-        uint32 duration = item->GetEnchantmentDuration(AFFIX_SLOTS[index]);
-        return duration ? duration : score;
+        uint32 const charges = item->GetEnchantmentCharges(AFFIX_SLOTS[index]);
+        if (charges)
+            return charges;
+
+        // 兼容旧数据：之前把预算错存在 duration 里
+        uint32 const duration = item->GetEnchantmentDuration(AFFIX_SLOTS[index]);
+        if (duration)
+        {
+            item->SetEnchantment(AFFIX_SLOTS[index],
+                item->GetEnchantmentId(AFFIX_SLOTS[index]), 0, duration);
+            return duration;
+        }
+
+        return score;
     }
 
     std::vector<uint32> SplitBudget(uint32 total, uint32 count)
@@ -303,7 +315,7 @@ bool ItemScoreAffix::RerollChaos(Player* owner, Item* item)
         if (!chosen)
             break;
 
-        item->SetEnchantment(AFFIX_SLOTS[index], chosen->Ench, budgets[index], 0);
+        item->SetEnchantment(AFFIX_SLOTS[index], chosen->Ench, 0, budgets[index]);
     }
 
     item->SetState(ITEM_CHANGED, owner);
@@ -346,7 +358,7 @@ bool ItemScoreAffix::RerollStyle(Player* owner, Item* item)
         if (!chosen)
             continue;
 
-        item->SetEnchantment(AFFIX_SLOTS[index], chosen->Ench, budget, 0);
+        item->SetEnchantment(AFFIX_SLOTS[index], chosen->Ench, 0, budget);
         changed = true;
     }
 
@@ -469,7 +481,7 @@ void ItemScoreAffix::Apply(Player* owner, Item* item)
         if (index >= AffixSlotCount)
             break;
 
-        item->SetEnchantment(AFFIX_SLOTS[index], chosen->Ench, shown, 0);
+        item->SetEnchantment(AFFIX_SLOTS[index], chosen->Ench, 0, shown);
     }
 }
 
@@ -662,7 +674,7 @@ void ItemScoreAffix::Reroll(Player* owner, Item* item, bool maxScore)
             break;
 
         usedKinds.push_back(chosen->Kind);
-        item->SetEnchantment(AFFIX_SLOTS[index], chosen->Ench, shown, 0);
+        item->SetEnchantment(AFFIX_SLOTS[index], chosen->Ench, 0, shown);
     }
 
     item->SetState(ITEM_CHANGED, owner);
@@ -790,6 +802,6 @@ void ItemScoreAffix::RerollLine(Player* owner, Item* item, uint32 index)
     if (!chosen)
         return;
 
-    item->SetEnchantment(AFFIX_SLOTS[index], chosen->Ench, budget, 0);
+    item->SetEnchantment(AFFIX_SLOTS[index], chosen->Ench, 0, budget);
     item->SetState(ITEM_CHANGED, owner);
 }

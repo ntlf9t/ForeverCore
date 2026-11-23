@@ -121,8 +121,18 @@ namespace
                 continue;
             }
 
-            uint32 const duration = item->GetEnchantmentDuration(affixSlots[i]);
-            oss << (duration ? duration : score);
+            uint32 charges = item->GetEnchantmentCharges(affixSlots[i]);
+            if (!charges)
+            {
+                // 兼容旧数据：之前把预算错存在 duration 里
+                uint32 const duration = item->GetEnchantmentDuration(affixSlots[i]);
+                if (duration)
+                {
+                    item->SetEnchantment(affixSlots[i], item->GetEnchantmentId(affixSlots[i]), 0, duration);
+                    charges = duration;
+                }
+            }
+            oss << (charges ? charges : score);
         }
     }
 
@@ -201,7 +211,7 @@ namespace
             }
 
             for (uint32 s = 0; s < 5; ++s)
-                item->SetEnchantment(slots[s], bestIds[s], s == 0 ? 0 : bestScore, 0);
+                item->SetEnchantment(slots[s], bestIds[s], 0, s == 0 ? 0 : bestScore);
         }
 
         item->SetState(ITEM_CHANGED, player);
