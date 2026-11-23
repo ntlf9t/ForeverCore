@@ -119,6 +119,12 @@ namespace
         if (!player || !player->IsInWorld())
             return false;
 
+        if (player->IsInCombat())
+        {
+            player->GetSession()->SendNotification("战斗中无法使用传送。");
+            return false;
+        }
+
         // 回家：直接去炉石绑定点，不消耗炉石 CD
         if (key == "home")
             return player->TeleportTo(player->m_homebind);
