@@ -2133,7 +2133,7 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
         bool CanLearnPrimaryProfession(uint32 skill) const;
         bool CanLearnPrimaryProfession(SpellInfo const* spellInfo) const;
         uint32 GetClientProfessionSlotLimit() const;
-        void SetFreePrimaryProfessions(uint16 profs) { SetUpdateFieldValue(m_values.ModifyValue(&Player::m_activePlayerData).ModifyValue(&UF::ActivePlayerData::CharacterPoints), profs); }
+        void SetFreePrimaryProfessions(uint32 profs);
         void InitPrimaryProfessions();
 
         PlayerSpellMap const& GetSpellMap() const { return m_spells; }
