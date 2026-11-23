@@ -1,11 +1,13 @@
 #include "CreatureRandomBuff.h"
 #include "Creature.h"
 #include "DatabaseEnv.h"
+#include "GameObject.h"
 #include "Log.h"
 #include "Map.h"
 #include "Player.h"
 #include "Random.h"
 #include "SpellAuras.h"
+#include "SpellAuraEffects.h"
 #include "SpellInfo.h"
 #include "SpellMgr.h"
 #include "Timer.h"
@@ -252,6 +254,7 @@ namespace CreatureRandomBuff
         State state;
         std::string pickedNames;
         std::string pickedData;
+        bool has80Reduction = false;
         for (uint8 n = 0; n < count && !candidates.empty(); ++n)
         {
             BuffRow const* row = PickWeighted(candidates);
@@ -284,6 +287,8 @@ namespace CreatureRandomBuff
             pickedData += row->name;
 
             state.spellIds[n] = row->spellId;
+            if (row->category == 3 && row->percent >= 80)
+                has80Reduction = true;
             state.info.percentSum += row->percent;
             state.info.treasure = state.info.treasure || row->treasure;
             state.info.count = uint8(n + 1);
@@ -292,6 +297,10 @@ namespace CreatureRandomBuff
         if (!state.info.count)
             return;
 
+        state.info.dangerPercent = state.info.percentSum;
+        if (has80Reduction)
+            state.info.dangerPercent = std::max(state.info.dangerPercent, 300);
+
         state.info.lootMultiplier = 1.0f + float(state.info.percentSum) / 100.0f
             + (state.info.treasure ? 9.0f : 0.0f);
         if (state.info.lootMultiplier > MAX_LOOT_MULTIPLIER)
@@ -299,16 +308,33 @@ namespace CreatureRandomBuff
         state.info.buffs = pickedNames;
         state.info.buffData = pickedData;
 
+        // 300 以下只微调；300 开始直接跳到 2 倍，方便一眼分辨
         float scale = 1.0f;
-        if (state.info.percentSum >= 600)
-            scale = 2.0f;
-        else if (state.info.percentSum >= 300)
-            scale = 1.5f;
-        else if (state.info.percentSum >= 100)
-            scale = 1.2f;
+        if (state.info.dangerPercent >= 300)
+            scale = 2.0f + std::min(state.info.dangerPercent - 300, 600) / 600.0f;
+        else if (state.info.dangerPercent >= 200)
+            scale = 1.15f;
+        else if (state.info.dangerPercent >= 100)
+            scale = 1.05f;
+
+        if (scale > 3.0f)
+            scale = 3.0f;
 
         if (scale != 1.0f)
             creature->SetObjectScale(creature->GetNativeObjectScale() * scale);
+
+        // 300 以上：永久寒冰护盾视觉，吸收量设为 0
+        if (state.info.dangerPercent >= 300)
+        {
+            if (Aura* aura = creature->AddAura(11426, creature))
+            {
+                aura->SetMaxDuration(-1);
+                aura->SetDuration(-1);
+                for (AuraEffect* effect : aura->GetAuraEffects())
+                    if (effect->GetAuraType() == SPELL_AURA_SCHOOL_ABSORB)
+                        effect->SetAmount(0.0);
+            }
+        }
 
         Info info = state.info;
         {
@@ -351,6 +377,7 @@ namespace CreatureRandomBuff
                 creature->RemoveAurasDueToSpell(spellId);
 
         creature->SetObjectScale(creature->GetNativeObjectScale());
+        creature->RemoveAurasDueToSpell(11426);
     }
 
     float GetLootMultiplier(ObjectGuid guid)

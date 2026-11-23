@@ -27,6 +27,7 @@ namespace CreatureRandomBuff
     {
         uint8 count = 0;            // 抽到几个 buff
         int32 percentSum = 0;       // 百分比之和
+        int32 dangerPercent = 0;    // 危险值：80% 减伤时至少按 300 算
         float lootMultiplier = 1.f; // 掉落/经验/金币倍率
         bool treasure = false;      // 是否带宝藏
         std::string buffs;          // buff 名字（用 + 连接，调试/日志用）

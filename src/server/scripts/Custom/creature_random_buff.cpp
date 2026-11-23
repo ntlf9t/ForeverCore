@@ -13,6 +13,7 @@
 #include "Player.h"
 #include "RBAC.h"
 #include "ScriptMgr.h"
+#include "SpellAuras.h"
 #include "WorldSession.h"
 
 #include <algorithm>
@@ -102,7 +103,7 @@ namespace
         ChatHandler(player->GetSession()).SendSysMessage(msg);
     }
 
-    bool HandleDungeonCommand(ChatHandler* handler, Optional<std::string> mode)
+    bool HandleDungeonCommand(ChatHandler* handler, Optional<std::string> mode, Optional<uint32> spellId)
     {
         if (!mode)
         {
@@ -115,6 +116,34 @@ namespace
         std::string value = *mode;
         std::transform(value.begin(), value.end(), value.begin(),
             [](unsigned char c) { return char(std::tolower(c)); });
+
+        // 测试用：.dungeon aura <spellId>，给选中怪挂永久光环
+        if (value == "aura")
+        {
+            Creature* target = handler->getSelectedCreature();
+            if (!target)
+            {
+                handler->SendSysMessage("先选中一只怪。");
+                return true;
+            }
+
+            if (!spellId || !*spellId)
+            {
+                handler->SendSysMessage("用法：.dungeon aura <spellId>");
+                return true;
+            }
+
+            uint32 const id = *spellId;
+            if (Aura* aura = target->AddAura(id, target))
+            {
+                aura->SetMaxDuration(-1);
+                aura->SetDuration(-1);
+                handler->PSendSysMessage("已给 %s 挂上光环 %u（永久）。", target->GetName().c_str(), id);
+            }
+            else
+                handler->PSendSysMessage("光环 %u 挂载失败。", id);
+            return true;
+        }
 
         if (value == "check" || value == "info")
         {

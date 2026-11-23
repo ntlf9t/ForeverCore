@@ -1587,6 +1587,7 @@ void Guardian::UpdateAttackPowerAndDamage(bool ranged)
     {
         if (IsHunterPet())                      // Classic 1.60 (vanilla): hunter pets get nothing from their owner's attack power
         {
+            bonusAP = owner->GetTotalAttackPowerValue(BASE_ATTACK);
         }
         else if (IsPetGhoul()) //ghouls benefit from deathknight's attack power (may be summon pet or not)
         {
@@ -1602,6 +1603,8 @@ void Guardian::UpdateAttackPowerAndDamage(bool ranged)
         // Classic 1.60 (vanilla): demons get nothing from their warlock's fire or shadow damage
         else if (IsPet())
         {
+            if (owner->GetClass() == CLASS_WARLOCK)
+                bonusAP = owner->GetTotalAttackPowerValue(BASE_ATTACK);
         }
         //water elementals benefit from mage's frost damage
         else if (GetEntry() == ENTRY_WATER_ELEMENTAL)

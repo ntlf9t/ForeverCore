@@ -1600,6 +1600,22 @@ bool Guardian::InitStatsForLevel(uint8 petlevel)
         }
     }
 
+    // 猎人 / 术士宠物：继承主人基础属性、攻强和法强，血量 x1.5，仇恨 x5
+    if (Player* owner = GetOwner() ? GetOwner()->ToPlayer() : nullptr)
+    {
+        if (owner->GetClass() == CLASS_HUNTER || owner->GetClass() == CLASS_WARLOCK)
+        {
+            for (uint8 stat = 0; stat < MAX_STATS; ++stat)
+                SetStatFlatModifier(UnitMods(UNIT_MOD_STAT_STRENGTH + stat), BASE_VALUE,
+                    owner->GetCreateStat(Stats(stat)));
+
+            SetBonusDamage(owner->SpellBaseDamageBonusDone(SPELL_SCHOOL_MASK_MAGIC));
+
+            SetCreateHealth(uint32(GetCreateHealth() * 1.5f));
+            GetThreatManager().SetGeneratedThreatMultiplier(5.0f);
+        }
+    }
+
     UpdateAllStats();
 
     SetFullHealth();
