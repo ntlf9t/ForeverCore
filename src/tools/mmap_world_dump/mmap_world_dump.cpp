@@ -280,7 +280,7 @@ static void RasterTriangle(Image& img, float ax, float ay, float bx, float by, f
 
 // Project Detour vertex (y, z, x) onto pixel space using the world bbox.
 // Image x grows EAST  (decreasing TC Y);
-// Image y grows SOUTH (decreasing TC X) — i.e. north-up.
+// Image y grows SOUTH (decreasing TC X) - i.e. north-up.
 static inline void ProjectVert(float const* v, WorldBBox const& bb, float yardsPerPixel, float& px, float& py)
 {
     float worldY = v[0]; // TC Y
@@ -457,14 +457,14 @@ static bool WriteSidecar(std::string const& path,
     // Image col 0 corresponds to the highest TC Y (we render with TC Y
     // decreasing as image x increases). So at pixel (0, 0):
     //   wx = bb.maxY = world_origin_x (which is the TC X axis name in
-    //                                   our struct? — careful here)
+    //                                   our struct? - careful here)
     // Convention used in this file: the operator works in TC frame and
     // the JSON encodes how to recover (TC_X, TC_Y) from (px, py).
     // We name JSON fields `world_x` = TC X (north-south), `world_y` = TC Y
     // (east-west) so the road editor matches the same naming as the
     // worldserver / GM commands. Mapping:
-    //   row (py = 0) → TC X = bb.maxX (north)
-    //   col (px = 0) → TC Y = bb.maxY (west)
+    //   row (py = 0) -> TC X = bb.maxX (north)
+    //   col (px = 0) -> TC Y = bb.maxY (west)
     // Hence world_origin_x in JSON = bb.maxX, world_origin_y in JSON = bb.maxY.
     std::fclose(f);
     return true;

@@ -8047,39 +8047,47 @@ inline void CheckGOConsumable(GameObjectTemplate const* goInfo, uint32 dataN, ui
         goInfo->entry, goInfo->type, N, dataN);
 }
 
-void ObjectMgr::LoadGameObjectTemplate()
+bool ObjectMgr::LoadGameObjectTemplate(Optional<uint32> entry)
 {
     uint32 oldMSTime = getMSTime();
 
-    for (GameObjectsEntry const* db2go : sGameObjectsStore)
+    if (!entry)
     {
-        GameObjectTemplate& go = _gameObjectTemplateStore[db2go->ID];
-        go.entry = db2go->ID;
-        go.type = db2go->TypeID;
-        go.displayId = db2go->DisplayID;
-        go.name = db2go->Name[sWorld->GetDefaultDbcLocale()];
-        go.size = db2go->Scale;
-        memset(go.raw.data, 0, sizeof(go.raw.data));
-        std::ranges::copy(db2go->PropValue, std::begin(go.raw.data));
-        go.ContentTuningId = 0;
-        go.RequiredLevel = 0;
-        go.ScriptId = 0;
+        for (GameObjectsEntry const* db2go : sGameObjectsStore)
+        {
+            GameObjectTemplate& go = _gameObjectTemplateStore[db2go->ID];
+            go.entry = db2go->ID;
+            go.type = db2go->TypeID;
+            go.displayId = db2go->DisplayID;
+            go.name = db2go->Name[sWorld->GetDefaultDbcLocale()];
+            go.size = db2go->Scale;
+            memset(go.raw.data, 0, sizeof(go.raw.data));
+            std::ranges::copy(db2go->PropValue, std::begin(go.raw.data));
+            go.ContentTuningId = 0;
+            go.RequiredLevel = 0;
+            go.ScriptId = 0;
+        }
     }
 
     //                                               0      1     2          3     4         5               6     7
-    QueryResult result = WorldDatabase.Query("SELECT entry, type, displayId, name, IconName, castBarCaption, unk1, size, "
+    std::string const query = Trinity::StringFormat("SELECT entry, type, displayId, name, IconName, castBarCaption, unk1, size, "
     //                                        8      9      10     11     12     13     14     15     16     17     18      19      20
                                              "Data0, Data1, Data2, Data3, Data4, Data5, Data6, Data7, Data8, Data9, Data10, Data11, Data12, "
     //                                        21      22      23      24      25      26      27      28      29      30      31      32      33      34      35      36
                                              "Data13, Data14, Data15, Data16, Data17, Data18, Data19, Data20, Data21, Data22, Data23, Data24, Data25, Data26, Data27, Data28, "
     //                                        37      38       39     40      41      42      43               44             45      46          47
                                              "Data29, Data30, Data31, Data32, Data33, Data34, ContentTuningId, RequiredLevel, AIName, ScriptName, StringId "
-                                             "FROM gameobject_template");
+                                             "FROM gameobject_template{}",
+                                             entry ? Trinity::StringFormat(" WHERE entry = {}", *entry) : "");
+    QueryResult result = WorldDatabase.Query(query);
 
     if (!result)
     {
+        if (entry)
+            return false;
+
         TC_LOG_INFO("server.loading", ">> Loaded 0 gameobject definitions. DB table `gameobject_template` is empty.");
-        return;
+        return true;
     }
 
     _gameObjectTemplateStore.reserve(result->GetRowCount());
@@ -8266,7 +8274,20 @@ void ObjectMgr::LoadGameObjectTemplate()
         }
     } while (result->NextRow());
 
+    if (entry)
+    {
+        _transportMaps.clear();
+        for (auto const& [_, gameObjectTemplate] : _gameObjectTemplateStore)
+        {
+            if (gameObjectTemplate.type == GAMEOBJECT_TYPE_MAP_OBJ_TRANSPORT && gameObjectTemplate.moTransport.SpawnMap)
+                _transportMaps.insert(gameObjectTemplate.moTransport.SpawnMap);
+            else if (gameObjectTemplate.type == GAMEOBJECT_TYPE_GARRISON_BUILDING && gameObjectTemplate.garrisonBuilding.SpawnMap)
+                _transportMaps.insert(gameObjectTemplate.garrisonBuilding.SpawnMap);
+        }
+    }
+
     TC_LOG_INFO("server.loading", ">> Loaded {} game object templates in {} ms", _gameObjectTemplateStore.size(), GetMSTimeDiffToNow(oldMSTime));
+    return true;
 }
 
 void ObjectMgr::LoadGameObjectTemplateAddons()

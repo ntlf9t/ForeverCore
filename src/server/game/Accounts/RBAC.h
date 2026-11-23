@@ -764,6 +764,7 @@ enum RBACPermissions
     RBAC_PERM_COMMAND_DEATHRECAP                             = 1004, // .deathrecap [name]: text dump of a player's last recorded death
     RBAC_PERM_COMMAND_MODE                                    = 1005,
     RBAC_PERM_COMMAND_DUNGEON_DIFFICULTY                     = 1006,
+    RBAC_PERM_COMMAND_RELOAD_GAMEOBJECT_TEMPLATE             = 1007,
     RBAC_PERM_MAX
 };
 

@@ -511,7 +511,7 @@ namespace
         return out;
     }
 
-    void SendJson(LoginHttpSession& session, Trinity::Net::Http::RequestContext& context, std::string body, boost::beast::http::status status = boost::beast::http::status::ok)
+    void SendJson(Trinity::Net::Http::RequestContext& context, std::string body, boost::beast::http::status status = boost::beast::http::status::ok)
     {
         context.response.result(status);
         context.response.set(boost::beast::http::field::content_type, "application/json;charset=utf-8");
@@ -538,7 +538,7 @@ LoginRESTService::RequestHandlerResult LoginRESTService::HandlePostLauncherRemem
         accountId, hash, now, now, expires, session->GetRemoteIpAddress().to_string());
 
     TC_LOG_INFO("server.http.login", "[{}, Id {}] launcher auto-login token created", session->GetClientInfo(), accountId);
-    SendJson(*session, context, Trinity::StringFormat(R"({{"token":"{}","expires":{}}})", token, expires));
+    SendJson(context, Trinity::StringFormat(R"({{"token":"{}","expires":{}}})", token, expires));
     return RequestHandlerResult::Handled;
 }
 
@@ -556,7 +556,7 @@ LoginRESTService::RequestHandlerResult LoginRESTService::HandlePostLauncherLogin
         "WHERE t.token_hash = '{}' AND t.expires > UNIX_TIMESTAMP()", hash);
     if (!result)
     {
-        SendJson(*session, context, R"({"error":"expired"})", boost::beast::http::status::unauthorized);
+        SendJson(context, R"({"error":"expired"})", boost::beast::http::status::unauthorized);
         return RequestHandlerResult::Handled;
     }
 
@@ -568,7 +568,7 @@ LoginRESTService::RequestHandlerResult LoginRESTService::HandlePostLauncherLogin
     uint32 const ticketExpiry = fields[4].GetUInt32();
     if (!fields[5].IsNull() && fields[5].GetUInt64() != 0)
     {
-        SendJson(*session, context, R"({"error":"banned"})", boost::beast::http::status::forbidden);
+        SendJson(context, R"({"error":"banned"})", boost::beast::http::status::forbidden);
         return RequestHandlerResult::Handled;
     }
 
@@ -592,7 +592,7 @@ LoginRESTService::RequestHandlerResult LoginRESTService::HandlePostLauncherLogin
     }
 
     TC_LOG_INFO("server.http.login", "[{}, Id {}] launcher auto-login", session->GetClientInfo(), accountId);
-    SendJson(*session, context, Trinity::StringFormat(R"({{"login_ticket":"{}","account_id":{},"email":"{}","game_accounts":[{}]}})",
+    SendJson(context, Trinity::StringFormat(R"({{"login_ticket":"{}","account_id":{},"email":"{}","game_accounts":[{}]}})",
         loginTicket, accountId, JsonEscape(email), gameAccounts));
     return RequestHandlerResult::Handled;
 }
@@ -604,7 +604,7 @@ LoginRESTService::RequestHandlerResult LoginRESTService::HandlePostLauncherForge
         return HandleUnauthorized(std::move(session), context);
 
     LoginDatabase.DirectPExecute("DELETE FROM battlenet_launcher_tokens WHERE token_hash = '{}'", ByteArrayToHexStr(Trinity::Crypto::SHA256::GetDigestOf(token)));
-    SendJson(*session, context, R"({"ok":true})");
+    SendJson(context, R"({"ok":true})");
     return RequestHandlerResult::Handled;
 }
 

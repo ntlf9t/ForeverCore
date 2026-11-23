@@ -1087,7 +1087,7 @@ class TC_GAME_API ObjectMgr
         uint32 LoadReferenceVendor(int32 vendor, int32 item_id, std::set<uint32>* skip_vendors);
 
         void LoadDestructibleHitpoints();
-        void LoadGameObjectTemplate();
+        bool LoadGameObjectTemplate(Optional<uint32> entry = {});
         void LoadGameObjectTemplateAddons();
         void LoadGameObjectOverrides();
 

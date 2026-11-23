@@ -77,9 +77,9 @@ public:
         {
             std::string const tag = BattlenetPresence::GetBattleTag(session);
             if (tag.empty())
-                handler->SendSysMessage("You have no BattleTag yet. Pick one with .battletag <name>; a number is added, like Name#1234.");
+                handler->SendSysMessage(LANG_BATTLETAG_NONE);
             else
-                handler->PSendSysMessage("Your BattleTag is %s. Change it with .battletag <name>.", tag.c_str());
+                handler->PSendSysMessage(LANG_BATTLETAG_CURRENT, tag.c_str());
             return true;
         }
 
@@ -87,16 +87,16 @@ public:
         switch (BattlenetPresence::SetBattleTag(session, *name, tag))
         {
             case BattlenetPresence::BattleTagResult::Ok:
-                handler->PSendSysMessage("Your BattleTag is now %s.", tag.c_str());
+                handler->PSendSysMessage(LANG_BATTLETAG_CHANGED, tag.c_str());
                 return true;
             case BattlenetPresence::BattleTagResult::NoAccount:
-                handler->SendSysMessage("This account has no Battle.net account, so it can't have a BattleTag.");
+                handler->SendSysMessage(LANG_BATTLETAG_NO_ACCOUNT);
                 break;
             case BattlenetPresence::BattleTagResult::InvalidName:
-                handler->SendSysMessage("A BattleTag name is 2-12 letters and digits (A-Z, 0-9), starting with a letter.");
+                handler->SendSysMessage(LANG_BATTLETAG_INVALID_NAME);
                 break;
             case BattlenetPresence::BattleTagResult::NoFreeNumber:
-                handler->SendSysMessage("That name has no free numbers left, pick another one.");
+                handler->SendSysMessage(LANG_BATTLETAG_NO_FREE_NUMBER);
                 break;
         }
         handler->SetSentErrorMessage(true);

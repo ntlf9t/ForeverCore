@@ -20279,6 +20279,8 @@ bool Player::LoadFromDB(ObjectGuid guid, CharacterDatabaseQueryHolder const& hol
         GetSession()->GetCollectionMgr()->AddTransmogIllusion(transmogIllusion->ID);
     }
 
+    SetFreePrimaryProfessions(GetFreePrimaryProfessionPoints());
+
     return true;
 }
 
@@ -26428,6 +26430,16 @@ void Player::UpdateVisibilityForPlayer()
 void Player::InitPrimaryProfessions()
 {
     SetFreePrimaryProfessions(sWorld->getIntConfig(CONFIG_MAX_PRIMARY_TRADE_SKILL));
+}
+
+void Player::SetFreePrimaryProfessions(uint32 profs)
+{
+    int32 const maximum = sWorld->getIntConfig(CONFIG_MAX_PRIMARY_TRADE_SKILL);
+    uint32 clientProfs = profs;
+    if (maximum > MAX_PRIMARY_PROFESSIONS && profs)
+        clientProfs = 1;
+
+    SetUpdateFieldValue(m_values.ModifyValue(&Player::m_activePlayerData).ModifyValue(&UF::ActivePlayerData::CharacterPoints), int32(clientProfs));
 }
 
 uint32 Player::GetFreePrimaryProfessionPoints() const

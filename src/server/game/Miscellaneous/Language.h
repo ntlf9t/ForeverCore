@@ -1001,7 +1001,14 @@ enum TrinityStrings
     LANG_GUILD_LIST_HEADER                = 1220,
     LANG_GUILD_LIST_ROW                   = 1221,
     LANG_GUILD_LIST_TOTAL                 = 1222,
-    // 1223-1499 - free
+    LANG_BATTLETAG_NONE                   = 1223,
+    LANG_BATTLETAG_CURRENT                = 1224,
+    LANG_BATTLETAG_CHANGED                = 1225,
+    LANG_BATTLETAG_NO_ACCOUNT             = 1226,
+    LANG_BATTLETAG_INVALID_NAME           = 1227,
+    LANG_BATTLETAG_NO_FREE_NUMBER         = 1228,
+    LANG_BATTLETAG_REQUIRED_FOR_WHISPERS  = 1229,
+    // 1230-1499 - free
 
     // Command argument parsers
     LANG_CMDPARSER_EITHER                 = 1500,
