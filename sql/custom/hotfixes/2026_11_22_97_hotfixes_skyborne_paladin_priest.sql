@@ -17,3 +17,17 @@ VALUES
 (26140001, 1400000001, 812099832, 9910001, 1, 70959),
 (26140002, 1400000002, 812099832, 9910002, 1, 70959),
 (26140003, 1400000003, 812099832, 9910003, 1, 70959);
+
+-- Include both Skyborne races in the Human Priest new-character loadout.
+DELETE FROM `character_loadout` WHERE `ID` = 1560 AND `VerifiedBuild` = 70959;
+INSERT INTO `character_loadout`
+    (`ID`, `ChrClassID`, `Purpose`, `ItemContext`, `Field_1_60_1_69876_003`,
+     `RaceMask1`, `RaceMask2`, `VerifiedBuild`)
+VALUES
+(1560, 5, 9, 75, 0, 1, 3, 70959);
+
+DELETE FROM `hotfix_data` WHERE `Id` = 26140006;
+INSERT INTO `hotfix_data`
+    (`Id`, `UniqueId`, `TableHash`, `RecordId`, `Status`, `VerifiedBuild`)
+VALUES
+(26140006, 1400000006, 3758770171, 1560, 1, 70959);
