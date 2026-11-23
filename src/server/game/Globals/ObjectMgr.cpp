@@ -8079,7 +8079,7 @@ bool ObjectMgr::LoadGameObjectTemplate(Optional<uint32> entry)
                                              "Data29, Data30, Data31, Data32, Data33, Data34, ContentTuningId, RequiredLevel, AIName, ScriptName, StringId "
                                              "FROM gameobject_template{}",
                                              entry ? Trinity::StringFormat(" WHERE entry = {}", *entry) : "");
-    QueryResult result = WorldDatabase.Query(query);
+    QueryResult result = WorldDatabase.Query(query.c_str());
 
     if (!result)
     {
