@@ -26444,6 +26444,23 @@ uint32 Player::GetFreePrimaryProfessionPoints() const
     return learned < uint32(maximum) ? uint32(maximum) - learned : 0;
 }
 
+uint32 Player::GetClientProfessionSlotLimit() const
+{
+    int32 const maximum = sWorld->getIntConfig(CONFIG_MAX_PRIMARY_TRADE_SKILL);
+    if (maximum <= 0)
+        return 0;
+
+    uint32 const protocolLimit = uint32(std::distance(m_activePlayerData->ProfessionSkillLine.begin(), m_activePlayerData->ProfessionSkillLine.end()));
+    if (uint32(maximum) > MAX_PRIMARY_PROFESSIONS)
+    {
+        // The Classic client has only two profession slots and hardcodes the two-profession limit
+        // when both are occupied. Keep one slot available while the server permits additional professions.
+        return 1;
+    }
+
+    return std::min(uint32(maximum), protocolLimit);
+}
+
 bool Player::CanLearnPrimaryProfession(uint32 skill) const
 {
     return !IsPrimaryProfessionSkill(skill) || HasSkill(skill) || GetFreePrimaryProfessionPoints() > 0;
@@ -27221,9 +27238,9 @@ int32 Player::FindEmptyProfessionSlotFor(uint32 skillId) const
         return -1;
 
     int32 const* professionsBegin = m_activePlayerData->ProfessionSkillLine.begin();
-    int32 const* professionsEnd = m_activePlayerData->ProfessionSkillLine.end();
+    int32 const* professionsEnd = professionsBegin + GetClientProfessionSlotLimit();
 
-    // if there is no same profession, find any free slot
+    // If there is no same profession, find any free client-visible slot.
     auto freeSlot = std::find(professionsBegin, professionsEnd, 0);
     return freeSlot != professionsEnd ? std::distance(professionsBegin, freeSlot) : -1;
 }
@@ -29168,9 +29185,9 @@ void Player::_LoadSkills(PreparedQueryResult result)
                     if (!step)
                         step = max / 75;
 
-                    if (!skillLine->ParentSkillLineID)
+                    if (value && !skillLine->ParentSkillLineID)
                     {
-                        if (professionSlot != -1)
+                        if (professionSlot >= 0 && uint32(professionSlot) < GetClientProfessionSlotLimit())
                             SetUpdateFieldValue(m_values.ModifyValue(&Player::m_activePlayerData).ModifyValue(&UF::ActivePlayerData::ProfessionSkillLine, professionSlot), skill);
                         else
                             loadedProfessionsWithoutSlot.push_back(skill);
@@ -29240,6 +29257,8 @@ void Player::_LoadSkills(PreparedQueryResult result)
 
     if (HasSkill(SKILL_FIST_WEAPONS))
         SetSkill(SKILL_FIST_WEAPONS, 0, GetSkillValue(SKILL_UNARMED), GetMaxSkillValueForLevel());
+
+    SetFreePrimaryProfessions(GetFreePrimaryProfessionPoints());
 }
 
 InventoryResult Player::CanEquipUniqueItem(Item* pItem, uint8 eslot, uint32 limit_count) const
