@@ -14,6 +14,7 @@
  */
 
 #include "Chat.h"
+#include "ChatCommand.h"
 #include "Creature.h"
 #include "DatabaseEnv.h"
 #include "GameTime.h"
@@ -23,6 +24,7 @@
 #include "ObjectMgr.h"
 #include "Player.h"
 #include "PlayerMode.h"
+#include "RBAC.h"
 #include "ScriptedGossip.h"
 #include "ScriptMgr.h"
 #include "SpellHistory.h"
@@ -32,6 +34,8 @@
 #include <limits>
 #include <string>
 #include <vector>
+
+using namespace Trinity::ChatCommands;
 
 namespace
 {
@@ -68,8 +72,8 @@ namespace
 
     struct HearthstoneTeleport
     {
-        uint32 Map = 0;
         uint32 Team = 0;
+        uint32 Map = 0;
         float X = 0.f, Y = 0.f, Z = 0.f, O = 0.f;
         std::string Comment;
     };
@@ -80,7 +84,7 @@ namespace
     {
         _cityTeleports.clear();
 
-        QueryResult result = WorldDatabase.Query("SELECT map, team, x, y, z, o, comment FROM Hearthstone_teleport ORDER BY idx ASC");
+        QueryResult result = WorldDatabase.Query("SELECT team, map, x, y, z, o, comment FROM Hearthstone_teleport ORDER BY idx ASC");
         if (!result)
         {
             TC_LOG_INFO("server.loading", ">> 炉石菜单：world.Hearthstone_teleport 为空，主城传送列表未加载。");
@@ -92,8 +96,8 @@ namespace
             Field* fields = result->Fetch();
 
             HearthstoneTeleport tele;
-            tele.Map     = fields[0].GetUInt32();
-            tele.Team    = fields[1].GetUInt32();
+            tele.Team    = fields[0].GetUInt32();
+            tele.Map     = fields[1].GetUInt32();
             tele.X       = fields[2].GetFloat();
             tele.Y       = fields[3].GetFloat();
             tele.Z       = fields[4].GetFloat();
@@ -578,9 +582,35 @@ public:
     }
 };
 
+class hearthstone_menu_commandscript : public CommandScript
+{
+public:
+    hearthstone_menu_commandscript() : CommandScript("hearthstone_menu_commandscript") { }
+
+    std::span<ChatCommandBuilder const> GetCommands() const override
+    {
+        static ChatCommandTable commandTable =
+        {
+            { "reload hearthstone_teleport", HandleReloadHearthstoneTeleportCommand,
+                rbac::RBAC_PERM_COMMAND_RELOAD_GAME_TELE, Console::Yes },
+        };
+        return commandTable;
+    }
+
+private:
+    static bool HandleReloadHearthstoneTeleportCommand(ChatHandler* handler)
+    {
+        LoadCityTeleports();
+        handler->PSendSysMessage("Hearthstone_teleport 重载完成，共加载 %zu 个传送点。",
+            _cityTeleports.size());
+        return true;
+    }
+};
+
 void AddSC_hearthstone_menu()
 {
     new item_hearthstone_menu();
     new hearthstone_menu_playerscript();
     new hearthstone_menu_worldscript();
+    new hearthstone_menu_commandscript();
 }
