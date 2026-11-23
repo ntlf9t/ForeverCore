@@ -17,6 +17,7 @@ INSERT INTO auth.rbac_permissions (Id, Name) VALUES (1006, 'Command: dungeon')
   ON DUPLICATE KEY UPDATE Name = VALUES(Name);
 
 INSERT IGNORE INTO auth.rbac_linked_permissions (id, linkedId) VALUES
+  (195, 1005), (196, 1005),
   (199, 1000), (199, 1001), (199, 1002), (199, 1005), (199, 1006);
 
 SELECT Id, Name FROM auth.rbac_permissions WHERE Id BETWEEN 1000 AND 1006 ORDER BY Id;
