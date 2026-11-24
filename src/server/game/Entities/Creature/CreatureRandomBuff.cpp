@@ -320,6 +320,10 @@ namespace CreatureRandomBuff
         if (scale > 3.0f)
             scale = 3.0f;
 
+        // 宝藏怪也要一眼看出来：至少放大到 135%
+        if (state.info.treasure)
+            scale = std::max(scale, 1.35f);
+
         if (scale != 1.0f)
             creature->SetObjectScale(creature->GetNativeObjectScale() * scale);
 
@@ -327,6 +331,19 @@ namespace CreatureRandomBuff
         if (state.info.dangerPercent >= 300)
         {
             if (Aura* aura = creature->AddAura(11426, creature))
+            {
+                aura->SetMaxDuration(-1);
+                aura->SetDuration(-1);
+                for (AuraEffect* effect : aura->GetAuraEffects())
+                    if (effect->GetAuraType() == SPELL_AURA_SCHOOL_ABSORB)
+                        effect->SetAmount(0.0);
+            }
+        }
+
+        // 宝藏：金色真言术盾，同样不吸收伤害
+        if (state.info.treasure)
+        {
+            if (Aura* aura = creature->AddAura(17, creature))
             {
                 aura->SetMaxDuration(-1);
                 aura->SetDuration(-1);
@@ -378,6 +395,7 @@ namespace CreatureRandomBuff
 
         creature->SetObjectScale(creature->GetNativeObjectScale());
         creature->RemoveAurasDueToSpell(11426);
+        creature->RemoveAurasDueToSpell(17);
     }
 
     float GetLootMultiplier(ObjectGuid guid)
