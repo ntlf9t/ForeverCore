@@ -260,7 +260,7 @@ namespace
 
         std::string sql = "REPLACE INTO characters.item_score_affix_budget (item_guid, slot, budget) VALUES ("
             + std::to_string(itemGuid) + "," + std::to_string(index) + "," + std::to_string(budget) + ")";
-        CharacterDatabase.Execute(sql.c_str());
+        CharacterDatabase.DirectExecute(sql.c_str());
     }
 
     void DeleteBudget(ObjectGuid::LowType itemGuid, uint32 index)
@@ -270,7 +270,7 @@ namespace
 
         std::string sql = "DELETE FROM characters.item_score_affix_budget WHERE item_guid = "
             + std::to_string(itemGuid) + " AND slot = " + std::to_string(index);
-        CharacterDatabase.Execute(sql.c_str());
+        CharacterDatabase.DirectExecute(sql.c_str());
     }
 
     // 旧版 4 条布局的 slot3 合并到 slot2，保持总预算
