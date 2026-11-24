@@ -245,8 +245,8 @@ public:
 
 private:
     std::string const& english_;
-    std::string texts_[2];
-    bool made_[2] = { false, false };
+    std::string texts_[3];
+    bool made_[3] = { false, false, false };
 };
 
 } // namespace
