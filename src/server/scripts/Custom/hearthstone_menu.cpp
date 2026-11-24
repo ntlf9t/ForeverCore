@@ -45,8 +45,9 @@ namespace
     constexpr uint32 HEARTHSTONE_MENU_ID  = 21;      // 合法 GossipID，否则客户端会忽略服务器主动推送的菜单
     constexpr uint32 GHOST_AURA_SPELL_ID  = 8326;    // 幽灵状态
     constexpr uint32 UNSTUCK_COOLDOWN     = 7200;    // 解卡冷却：2 小时
-    constexpr uint32 VENDOR_COOLDOWN      = 900;     // 随身商人冷却：15 分钟
+    constexpr uint32 VENDOR_COOLDOWN      = 600;     // 随身商人冷却：10 分钟
     constexpr uint32 BIND_COOLDOWN        = 600;     // 绑定炉石冷却：10 分钟
+    constexpr uint32 LONE_BIND_COOLDOWN   = 1800;    // 孤勇绑定炉石冷却：30 分钟
 
     // 随身商人（与 portable_services 共用商人 NPC 及 npc_vendor 数据）
     constexpr uint32 PORTABLE_VENDOR_HORDE    = 3625; // 兽人商人
@@ -145,6 +146,11 @@ namespace
         return std::to_string(minutes) + " 分钟";
     }
 
+    uint32 GetBindCooldown(Player* player)
+    {
+        return PlayerMode::IsLone(player) ? LONE_BIND_COOLDOWN : BIND_COOLDOWN;
+    }
+
     uint32 GetUnstuckCooldownRemaining(uint64 guidLow, uint32 now)
     {
         QueryResult result = CharacterDatabase.PQuery(
@@ -172,7 +178,7 @@ namespace
         if (uint32 remaining = GetCooldownRemaining(guid, "last_vendor_time", VENDOR_COOLDOWN, now))
             vendorText += "（冷却：" + FormatCooldown(remaining) + "）";
 
-        if (uint32 remaining = GetCooldownRemaining(guid, "last_bind_time", BIND_COOLDOWN, now))
+        if (uint32 remaining = GetCooldownRemaining(guid, "last_bind_time", GetBindCooldown(player), now))
             bindText += "（冷却：" + FormatCooldown(remaining) + "）";
 
         AddGossipItemFor(player, GossipOptionNpc::Binder,   "炉石回家（旅店绑定点）",   SENDER_MAIN, ACTION_HEARTHSTONE);
@@ -366,14 +372,8 @@ namespace
             return;
         }
 
-        if (PlayerMode::IsLone(player))
-        {
-            Notify(player, "孤勇模式角色禁止绑定炉石。");
-            return;
-        }
-
         uint32 now = uint32(GameTime::GetGameTime());
-        if (uint32 remaining = GetCooldownRemaining(player->GetGUID().GetCounter(), "last_bind_time", BIND_COOLDOWN, now))
+        if (uint32 remaining = GetCooldownRemaining(player->GetGUID().GetCounter(), "last_bind_time", GetBindCooldown(player), now))
         {
             Notify(player, "绑定炉石冷却中，剩余 " + FormatCooldown(remaining) + "。");
             return;
