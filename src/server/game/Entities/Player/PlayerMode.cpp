@@ -455,6 +455,15 @@ namespace PlayerMode
             return false;
         }
 
+        for (uint8 slot = EQUIPMENT_SLOT_START; slot < EQUIPMENT_SLOT_END; ++slot)
+        {
+            if (player->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
+            {
+                reason = "重生前必须脱下所有装备（武器、护甲、饰品、戒指等全部卸下）";
+                return false;
+            }
+        }
+
         return true;
     }
 
