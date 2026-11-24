@@ -1,7 +1,8 @@
 -- WoW Forever: a trainee Riding Turtle without an Apprentice Riding requirement.
 -- Item 9902000 teaches mount spell 1399990. Mount type 490 deliberately has no
 -- Riding requirement; its hidden speed aura 1399991 grants exactly 20%.
--- The turtle model is Riding Turtle 17266 / display 12655. Safe to run again.
+-- The turtle model uses Riding Turtle 17266's client-supported display 17158.
+-- Display 12655 is missing from the current 1.60 client data. Safe to run again.
 
 DELETE FROM `spell_name` WHERE `ID` IN (1399990,1399991);
 INSERT INTO `spell_name` (`ID`,`Name`,`VerifiedBuild`) VALUES
@@ -58,7 +59,7 @@ INSERT INTO `mount_locale` (`ID`,`locale`,`Name_lang`,`SourceText_lang`,`Descrip
 
 DELETE FROM `mount_x_display` WHERE `ID` = 9920;
 INSERT INTO `mount_x_display` (`ID`,`CreatureDisplayInfoID`,`PlayerConditionID`,`Unknown1100`,`MountID`,`VerifiedBuild`) VALUES
-(9920,12655,0,0,3920,70959);
+(9920,17158,0,0,3920,70959);
 
 DELETE FROM `mount_capability` WHERE `ID` = 9900;
 INSERT INTO `mount_capability` (`ID`,`Flags`,`ReqRidingSkill`,`ReqAreaID`,`ReqSpellAuraID`,`ReqSpellKnownID`,`ModSpellAuraID`,`ReqMapID`,`PlayerConditionID`,`FlightCapabilityID`,`DriveCapabilityID`,`VerifiedBuild`) VALUES
@@ -96,7 +97,8 @@ INSERT INTO `item_x_item_effect` (`ID`,`ItemEffectID`,`ItemID`,`VerifiedBuild`) 
 
 DELETE FROM `hotfix_data` WHERE `Id` BETWEEN 26150000 AND 26150013
   OR `Id` BETWEEN 26150100 AND 26150118
-  OR `Id` BETWEEN 26150200 AND 26150223;
+  OR `Id` BETWEEN 26150200 AND 26150223
+  OR `Id` = 26150300;
 INSERT INTO `hotfix_data` (`Id`,`UniqueId`,`TableHash`,`RecordId`,`Status`,`VerifiedBuild`) VALUES
 (26150200,1400020200,1187407512,1399990,1,70959),
 (26150201,1400020201,1187407512,1399991,1,70959),
@@ -112,7 +114,6 @@ INSERT INTO `hotfix_data` (`Id`,`UniqueId`,`TableHash`,`RecordId`,`Status`,`Veri
 (26150211,1400020211,666345498,1399990,1,70959),
 (26150212,1400020212,3776013982,1399990,1,70959),
 (26150213,1400020213,2524150337,3920,1,70959),
-(26150214,1400020214,2030087241,9920,1,70959),
 (26150215,1400020215,4134404214,9900,1,70959),
 (26150216,1400020216,685366953,9900,1,70959),
 (26150217,1400020217,1344507586,9902000,1,70959),
@@ -121,4 +122,5 @@ INSERT INTO `hotfix_data` (`Id`,`UniqueId`,`TableHash`,`RecordId`,`Status`,`Veri
 (26150220,1400020220,1073915313,9902000,1,70959),
 (26150221,1400020221,1073915313,9902001,1,70959),
 (26150222,1400020222,13330255,9902000,1,70959),
-(26150223,1400020223,13330255,9902001,1,70959);
+(26150223,1400020223,13330255,9902001,1,70959),
+(26150300,1400020300,2030087241,9920,1,70959);
