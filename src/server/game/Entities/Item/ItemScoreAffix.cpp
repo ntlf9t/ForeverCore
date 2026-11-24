@@ -200,8 +200,10 @@ namespace
     ScoreAffixEntry const* PickAffix(uint32 mask, uint32 style, uint32 budget, bool allowOverBudget)
     {
         std::vector<ScoreAffixEntry const*> candidates;
-        uint32 bestLevel = 0;
 
+        // 同一属性种类只保留预算买得起的最高档，但不同种类之间按权重随机。
+        // 不能只取“评分最高的那一种”，否则同流派的其他属性永远轮不到。
+        std::map<uint32, ScoreAffixEntry const*> bestPerKind;
         for (ScoreAffixEntry const& entry : _pool)
         {
             if (!(entry.Mask & mask) || StyleOfKind(entry.Kind) != style)
@@ -209,37 +211,48 @@ namespace
 
             if (entry.Level <= budget)
             {
-                if (entry.Level > bestLevel)
-                {
-                    bestLevel = entry.Level;
-                    candidates.clear();
-                }
-                if (entry.Level == bestLevel)
-                    candidates.push_back(&entry);
+                auto it = bestPerKind.find(entry.Kind);
+                if (it == bestPerKind.end() || entry.Level > it->second->Level)
+                    bestPerKind[entry.Kind] = &entry;
             }
         }
 
-        if (candidates.empty() && allowOverBudget)
+        if (bestPerKind.empty() && allowOverBudget)
         {
-            uint32 lowest = std::numeric_limits<uint32>::max();
+            // 预算低于该流派最低档时，每个种类取最低档再随机
+            std::map<uint32, ScoreAffixEntry const*> lowestPerKind;
             for (ScoreAffixEntry const& entry : _pool)
             {
                 if (!(entry.Mask & mask) || StyleOfKind(entry.Kind) != style)
                     continue;
-                if (entry.Level < lowest)
-                {
-                    lowest = entry.Level;
-                    candidates.clear();
-                }
-                if (entry.Level == lowest)
-                    candidates.push_back(&entry);
+
+                auto it = lowestPerKind.find(entry.Kind);
+                if (it == lowestPerKind.end() || entry.Level < it->second->Level)
+                    lowestPerKind[entry.Kind] = &entry;
             }
+            bestPerKind.swap(lowestPerKind);
         }
+
+        for (auto const& pair : bestPerKind)
+            candidates.push_back(pair.second);
 
         if (candidates.empty())
             return nullptr;
 
-        return candidates[urand(0, int(candidates.size()) - 1)];
+        uint32 totalWeight = 0;
+        for (ScoreAffixEntry const* entry : candidates)
+            totalWeight += std::max(1u, entry->Weight);
+
+        uint32 roll = urand(1, totalWeight);
+        uint32 cursor = 0;
+        for (ScoreAffixEntry const* entry : candidates)
+        {
+            cursor += std::max(1u, entry->Weight);
+            if (roll <= cursor)
+                return entry;
+        }
+
+        return candidates.back();
     }
 
     uint32 LoadStoredBudget(ObjectGuid::LowType itemGuid, uint32 index)
@@ -372,12 +385,23 @@ bool ItemScoreAffix::RerollStyle(Player* owner, Item* item)
 
     uint32 const mask = MaskForItem(proto);
     static constexpr uint32 styles[] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15 };
-    bool changed = false;
 
-    // 风格洗：只锁每条分到的预算，属性从全部流派大池子里随机
+    uint32 totalBudget = 0;
+    for (uint32 index = 0; index < count && index < AffixSlotCount; ++index)
+        totalBudget += ResolveLineBudget(item, index, score);
+
+    // 预算已经超过正常上限：先全部重置为评分，再重抽属性
+    bool const overCap = totalBudget > score * count;
+    if (overCap)
+        for (uint32 index = 0; index < count && index < AffixSlotCount; ++index)
+            SetLineBudget(item, index, score);
+
+    bool changed = overCap;
+
+    // 风格洗：预算没超上限时锁预算；超了已经先重置为评分
     for (uint32 index = 0; index < count && index < AffixSlotCount; ++index)
     {
-        uint32 const budget = ResolveLineBudget(item, index, score);
+        uint32 const budget = overCap ? score : ResolveLineBudget(item, index, score);
         ScoreAffixEntry const* chosen = nullptr;
         uint32 start = urand(0, uint32(std::size(styles)) - 1);
 
@@ -837,7 +861,7 @@ uint32 ItemScoreAffix::GetBudget(Player* owner, Item const* item)
 
 void ItemScoreAffix::RerollLine(Player* owner, Item* item, uint32 index)
 {
-    if (!owner || !item || index >= 4)
+    if (!owner || !item || index >= AffixSlotCount)
         return;
 
     ItemTemplate const* proto = item->GetTemplate();
@@ -851,7 +875,8 @@ void ItemScoreAffix::RerollLine(Player* owner, Item* item, uint32 index)
     if (!shown)
         return;
 
-    uint32 const budget = ResolveLineBudget(item, index, shown);
+    // 单条洗：上限永远是装备评分，哪怕当前这条是 397
+    uint32 const budget = urand(1, shown);
     uint32 const mask = MaskForItem(proto);
 
     std::vector<ScoreAffixEntry const*> candidates;
@@ -873,6 +898,24 @@ void ItemScoreAffix::RerollLine(Player* owner, Item* item, uint32 index)
         candidates.clear();
         for (auto const& pair : bestPerKind)
             candidates.push_back(pair.second);
+    }
+
+    if (candidates.empty())
+    {
+        // 随机预算低于最低档时，取该部位最低档兜底
+        uint32 lowest = std::numeric_limits<uint32>::max();
+        for (ScoreAffixEntry const& entry : _pool)
+        {
+            if (!(entry.Mask & mask))
+                continue;
+            if (entry.Level < lowest)
+            {
+                lowest = entry.Level;
+                candidates.clear();
+            }
+            if (entry.Level == lowest)
+                candidates.push_back(&entry);
+        }
     }
 
     if (candidates.empty())
@@ -925,6 +968,6 @@ void ItemScoreAffix::RerollLine(Player* owner, Item* item, uint32 index)
         return;
 
     item->SetEnchantment(AFFIX_SLOTS[index], chosen->Ench, 0, 0);
-    SetLineBudget(item, index, budget);
+    SetLineBudget(item, index, chosen->Level);
     item->SetState(ITEM_CHANGED, owner);
 }
