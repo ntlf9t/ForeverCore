@@ -29,7 +29,9 @@
 #include "ScriptMgr.h"
 #include "Spell.h"
 #include "SpellHistory.h"
+#include "SpellMgr.h"
 #include "TemporarySummon.h"
+#include "World.h"
 #include "WorldSession.h"
 
 #include <limits>
@@ -57,6 +59,7 @@ namespace
     {
         SENDER_MAIN    = 1,
         SENDER_CITY    = 2,
+        SENDER_PROFESSION = 3,
         SENDER_UNSTUCK = 5
     };
 
@@ -69,7 +72,8 @@ namespace
         ACTION_VENDOR        = 5,
         ACTION_BIND          = 6,
         ACTION_UNSTUCK_MENU  = 7,
-        ACTION_CLOSE         = 8
+        ACTION_CLOSE         = 8,
+        ACTION_PROFESSION_MENU = 9
     };
 
     struct HearthstoneTeleport
@@ -81,6 +85,28 @@ namespace
     };
 
     std::vector<HearthstoneTeleport> _cityTeleports;
+
+    struct PrimaryProfession
+    {
+        char const* Name;
+        uint32 SkillId;
+        uint32 LearnSpellId;
+    };
+
+    constexpr PrimaryProfession PRIMARY_PROFESSIONS[] =
+    {
+        { "炼金术",   171, 2259  },
+        { "锻造",     164, 2018  },
+        { "附魔",     333, 7411  },
+        { "工程学",   202, 4036  },
+        { "草药学",   182, 2366  },
+        { "铭文",     773, 45357 },
+        { "珠宝加工", 755, 25229 },
+        { "制皮",     165, 2108  },
+        { "采矿",     186, 2575  },
+        { "剥皮",     393, 8613  },
+        { "裁缝",     197, 3908  },
+    };
 
     void LoadCityTeleports()
     {
@@ -187,9 +213,34 @@ namespace
         AddGossipItemFor(player, GossipOptionNpc::Vendor,   vendorText,                 SENDER_MAIN, ACTION_VENDOR);
         AddGossipItemFor(player, GossipOptionNpc::Binder,   bindText,                   SENDER_MAIN, ACTION_BIND,
             "确定要将炉石绑定点设置为当前位置吗？", 0, false);
+        AddGossipItemFor(player, GossipOptionNpc::Trainer,  "学习主专业（剩余 "
+            + std::to_string(player->GetFreePrimaryProfessionPoints()) + "）",
+            SENDER_MAIN, ACTION_PROFESSION_MENU);
         AddGossipItemFor(player, GossipOptionNpc::None,     "角色解卡",                 SENDER_MAIN, ACTION_UNSTUCK_MENU);
         AddGossipItemFor(player, GossipOptionNpc::None,     "关闭",                     SENDER_MAIN, ACTION_CLOSE);
 
+        SendGossipMenuFor(player, DEFAULT_GOSSIP_MESSAGE, source);
+    }
+
+    void ShowProfessionMenu(Player* player, ObjectGuid source)
+    {
+        ClearGossipMenuFor(player);
+        InitGossipMenuFor(player, HEARTHSTONE_MENU_ID);
+
+        for (uint32 i = 0; i < std::size(PRIMARY_PROFESSIONS); ++i)
+        {
+            PrimaryProfession const& profession = PRIMARY_PROFESSIONS[i];
+            std::string text = profession.Name;
+
+            if (player->HasSkill(profession.SkillId))
+                text += "（已学习）";
+            else if (!player->CanLearnPrimaryProfession(profession.SkillId))
+                text += "（主专业已满）";
+
+            AddGossipItemFor(player, GossipOptionNpc::Trainer, text, SENDER_PROFESSION, i);
+        }
+
+        AddGossipItemFor(player, GossipOptionNpc::None, "返回", SENDER_MAIN, ACTION_MAIN_MENU);
         SendGossipMenuFor(player, DEFAULT_GOSSIP_MESSAGE, source);
     }
 
@@ -316,6 +367,44 @@ namespace
 
         if (!player->TeleportTo(tele.Map, tele.X, tele.Y, tele.Z, tele.O))
             Notify(player, "传送点「" + tele.Comment + "」已损坏，请联系管理员。");
+    }
+
+    void LearnPrimaryProfession(Player* player, uint32 index)
+    {
+        CloseGossipMenuFor(player);
+
+        if (index >= std::size(PRIMARY_PROFESSIONS))
+            return;
+
+        PrimaryProfession const& profession = PRIMARY_PROFESSIONS[index];
+        if (player->HasSkill(profession.SkillId))
+        {
+            Notify(player, "你已经学习了" + std::string(profession.Name) + "。");
+            return;
+        }
+
+        if (!player->CanLearnPrimaryProfession(profession.SkillId))
+        {
+            Notify(player, "主专业数量已达到 MaxPrimaryTradeSkill 上限（"
+                + std::to_string(sWorld->getIntConfig(CONFIG_MAX_PRIMARY_TRADE_SKILL)) + "）。");
+            return;
+        }
+
+        SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(profession.LearnSpellId, DIFFICULTY_NONE);
+        if (!spellInfo)
+        {
+            Notify(player, "专业「" + std::string(profession.Name) + "」的学习法术配置无效。");
+            return;
+        }
+
+        player->LearnSpell(profession.LearnSpellId, false);
+        if (!player->HasSkill(profession.SkillId))
+        {
+            Notify(player, "学习" + std::string(profession.Name) + "失败，请联系管理员。");
+            return;
+        }
+
+        ChatHandler(player->GetSession()).PSendSysMessage("已学习主专业：%s。", profession.Name);
     }
 
     // 随身商人：召唤临时商人并直接打开购买列表
@@ -560,6 +649,9 @@ public:
                     case ACTION_UNSTUCK_MENU:
                         ShowUnstuckMenu(player, source);
                         break;
+                    case ACTION_PROFESSION_MENU:
+                        ShowProfessionMenu(player, source);
+                        break;
                     case ACTION_CLOSE:
                     default:
                         CloseGossipMenuFor(player);
@@ -568,6 +660,9 @@ public:
                 break;
             case SENDER_CITY:
                 TeleportToCity(player, action);
+                break;
+            case SENDER_PROFESSION:
+                LearnPrimaryProfession(player, action);
                 break;
             case SENDER_UNSTUCK:
                 if (action >= GOSSIP_ACTION_INFO_DEF)
