@@ -78,8 +78,7 @@ namespace
     {
         static constexpr EnchantmentSlot affixSlots[] =
         {
-            PROP_ENCHANTMENT_SLOT_1, PROP_ENCHANTMENT_SLOT_2,
-            PROP_ENCHANTMENT_SLOT_3, PROP_ENCHANTMENT_SLOT_4
+            BONUS_ENCHANTMENT_SLOT, USE_ENCHANTMENT_SLOT, PROP_ENCHANTMENT_SLOT_0
         };
 
         auto const& names = EnchantNames();
@@ -104,13 +103,12 @@ namespace
     {
         static constexpr EnchantmentSlot affixSlots[] =
         {
-            PROP_ENCHANTMENT_SLOT_1, PROP_ENCHANTMENT_SLOT_2,
-            PROP_ENCHANTMENT_SLOT_3, PROP_ENCHANTMENT_SLOT_4
+            BONUS_ENCHANTMENT_SLOT, USE_ENCHANTMENT_SLOT, PROP_ENCHANTMENT_SLOT_0
         };
 
         uint32 const score = ItemScoreAffix::GetScore(item);
         oss << ";b:";
-        for (uint32 i = 0; i < 4; ++i)
+        for (uint32 i = 0; i < 3; ++i)
         {
             if (i)
                 oss << ',';
@@ -177,15 +175,15 @@ namespace
         }
         else
         {
-            // 100 次里取最高：记录 enchant 快照（评分 5，词条 9/10/11/12）
+            // 100 次里取最高：记录 enchant 快照（评分 9，词条 5/7/8）
             EnchantmentSlot const slots[] =
             {
-                BONUS_ENCHANTMENT_SLOT, PROP_ENCHANTMENT_SLOT_1, PROP_ENCHANTMENT_SLOT_2,
-                PROP_ENCHANTMENT_SLOT_3, PROP_ENCHANTMENT_SLOT_4
+                PROP_ENCHANTMENT_SLOT_1,
+                BONUS_ENCHANTMENT_SLOT, USE_ENCHANTMENT_SLOT, PROP_ENCHANTMENT_SLOT_0
             };
 
             uint32 bestScore = 0;
-            uint32 bestIds[5] = { 0, 0, 0, 0, 0 };
+            uint32 bestIds[4] = { 0, 0, 0, 0 };
 
             for (uint32 i = 0; i < BATCH_TIMES; ++i)
             {
@@ -195,12 +193,12 @@ namespace
                 if (score > bestScore)
                 {
                     bestScore = score;
-                    for (uint32 s = 0; s < 5; ++s)
+                    for (uint32 s = 0; s < 4; ++s)
                         bestIds[s] = item->GetEnchantmentId(slots[s]);
                 }
             }
 
-            for (uint32 s = 0; s < 5; ++s)
+            for (uint32 s = 0; s < 4; ++s)
             {
                 item->SetEnchantment(slots[s], bestIds[s], 0, 0);
                 if (s > 0)
@@ -222,7 +220,7 @@ namespace
 
     void DoLine(Player* player, Item* item, uint32 index)
     {
-        if (index >= 4)
+        if (index >= 3)
         {
             Reply(player, "err;badindex");
             return;

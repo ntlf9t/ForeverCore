@@ -20,16 +20,15 @@
 
 namespace
 {
-    // 0/1 是玩家永久/临时附魔槽；评分放槽 5（tooltip 显示），4 条词条放 9-12（tooltip 也显示）。
-    constexpr EnchantmentSlot SCORE_ENCHANTMENT_SLOT = BONUS_ENCHANTMENT_SLOT;
-    constexpr EnchantmentSlot AFFIX_SLOTS[4] =
+    // 0/1 是玩家永久/临时附魔槽；评分放隐藏槽 9，3 条词条放原生可见的 5/7/8。
+    constexpr EnchantmentSlot SCORE_ENCHANTMENT_SLOT = PROP_ENCHANTMENT_SLOT_1;
+    constexpr EnchantmentSlot AFFIX_SLOTS[3] =
     {
-        PROP_ENCHANTMENT_SLOT_1,
-        PROP_ENCHANTMENT_SLOT_2,
-        PROP_ENCHANTMENT_SLOT_3,
-        PROP_ENCHANTMENT_SLOT_4
+        BONUS_ENCHANTMENT_SLOT,
+        USE_ENCHANTMENT_SLOT,
+        PROP_ENCHANTMENT_SLOT_0
     };
-    constexpr uint32 AffixSlotCount = 4;
+    constexpr uint32 AffixSlotCount = 3;
 
     struct ScoreAffixEntry
     {
@@ -69,9 +68,9 @@ namespace
             case ITEM_QUALITY_NORMAL:    return 1;
             case ITEM_QUALITY_UNCOMMON:  return 2;
             case ITEM_QUALITY_RARE:      return 3;
-            case ITEM_QUALITY_EPIC:      return 4;
-            case ITEM_QUALITY_ARTIFACT:  return 4;
-            case ITEM_QUALITY_LEGENDARY: return 4;
+            case ITEM_QUALITY_EPIC:      return 3;
+            case ITEM_QUALITY_ARTIFACT:  return 3;
+            case ITEM_QUALITY_LEGENDARY: return 3;
             default:                     return 0;
         }
     }
@@ -87,9 +86,9 @@ namespace
             case ITEM_QUALITY_NORMAL:    qualityNum = 50; break;   // ×5.0
             case ITEM_QUALITY_UNCOMMON:  qualityNum = 28; break;   // ×2.8
             case ITEM_QUALITY_RARE:      qualityNum = 22; break;   // ×2.2
-            case ITEM_QUALITY_EPIC:      qualityNum = 18; break;   // ×1.8
-            case ITEM_QUALITY_ARTIFACT:  qualityNum = 18; break;   // ×1.8
-            case ITEM_QUALITY_LEGENDARY: qualityNum = 23; break;   // ×2.3（本服：橙 4 条，靠系数拉高总量）
+            case ITEM_QUALITY_EPIC:      qualityNum = 24; break;   // ×2.4（4 条→3 条，保持总预算）
+            case ITEM_QUALITY_ARTIFACT:  qualityNum = 24; break;   // ×2.4
+            case ITEM_QUALITY_LEGENDARY: qualityNum = 31; break;   // ×3.1（4 条→3 条，保持总预算）
             default:                     return 0;
         }
 
@@ -272,6 +271,18 @@ namespace
         std::string sql = "DELETE FROM characters.item_score_affix_budget WHERE item_guid = "
             + std::to_string(itemGuid) + " AND slot = " + std::to_string(index);
         CharacterDatabase.Execute(sql.c_str());
+    }
+
+    // 旧版 4 条布局的 slot3 合并到 slot2，保持总预算
+    void MergeLegacyBudgetRows(ObjectGuid::LowType itemGuid)
+    {
+        uint32 const slot3 = LoadStoredBudget(itemGuid, 3);
+        if (!slot3)
+            return;
+
+        uint32 const slot2 = LoadStoredBudget(itemGuid, 2);
+        StoreBudget(itemGuid, 2, slot2 + slot3);
+        DeleteBudget(itemGuid, 3);
     }
 
     uint32 ResolveLineBudget(Item* item, uint32 index, uint32 score)
@@ -543,9 +554,6 @@ void ItemScoreAffix::Migrate(Player* owner, Item* item)
         return;
 
     bool needsMigration = item->GetEnchantmentId(SCORE_ENCHANTMENT_SLOT) != score;
-    for (EnchantmentSlot slot : { BONUS_ENCHANTMENT_SLOT, USE_ENCHANTMENT_SLOT, PROP_ENCHANTMENT_SLOT_0 })
-        if (item->GetEnchantmentId(slot))
-            needsMigration = true;
 
     if (!needsMigration)
         return;
@@ -553,6 +561,7 @@ void ItemScoreAffix::Migrate(Player* owner, Item* item)
     TC_LOG_INFO("server.loading", ">> ItemScoreAffix migrate item={} score={}", item->GetEntry(), score);
 
     std::vector<uint32> affixes;
+    std::vector<uint32> legacyBudgets;
     static constexpr EnchantmentSlot oldSlots[] =
     {
         TEMP_ENCHANTMENT_SLOT, BONUS_ENCHANTMENT_SLOT, PRISMATIC_ENCHANTMENT_SLOT,
@@ -564,9 +573,26 @@ void ItemScoreAffix::Migrate(Player* owner, Item* item)
     {
         uint32 const ench = item->GetEnchantmentId(slot);
         if (ench >= 200000 && ench < SCORE_ENCHANT_BASE)
+        {
             if (std::find(affixes.begin(), affixes.end(), ench) == affixes.end())
+            {
                 affixes.push_back(ench);
+                uint32 const budget = item->GetEnchantmentCharges(slot)
+                    ? item->GetEnchantmentCharges(slot)
+                    : item->GetEnchantmentDuration(slot);
+                legacyBudgets.push_back(budget);
+            }
+        }
     }
+
+    // 旧版预算可能在 DB 的 0..3，也可能还在 charges/duration 里
+    ObjectGuid::LowType const itemGuid = item->GetGUID().GetCounter();
+    uint32 stored[4] =
+    {
+        LoadStoredBudget(itemGuid, 0), LoadStoredBudget(itemGuid, 1),
+        LoadStoredBudget(itemGuid, 2), LoadStoredBudget(itemGuid, 3)
+    };
+    bool hasStored = stored[0] || stored[1] || stored[2] || stored[3];
 
     // 清掉旧可见槽和旧词条槽，玩家 0/1 附魔槽不动
     for (EnchantmentSlot slot : { BONUS_ENCHANTMENT_SLOT, USE_ENCHANTMENT_SLOT, PROP_ENCHANTMENT_SLOT_0,
@@ -576,6 +602,23 @@ void ItemScoreAffix::Migrate(Player* owner, Item* item)
     item->SetEnchantmentRaw(SCORE_ENCHANTMENT_SLOT, score);
     for (uint32 i = 0; i < affixes.size() && i < AffixSlotCount; ++i)
         item->SetEnchantmentRaw(AFFIX_SLOTS[i], affixes[i]);
+
+    // 旧版 4 条的第 4 条预算合并到第 3 条，不能让总预算凭空消失
+    for (uint32 i = 0; i < AffixSlotCount; ++i)
+    {
+        uint32 budget = hasStored ? stored[i] : (i < legacyBudgets.size() ? legacyBudgets[i] : 0);
+        if (i == 2)
+        {
+            if (hasStored)
+                budget += stored[3];
+            else if (legacyBudgets.size() > 3)
+                budget += legacyBudgets[3];
+        }
+
+        if (budget)
+            SetLineBudget(item, i, budget);
+    }
+    DeleteBudget(itemGuid, 3);
 
     if (owner)
         item->SetState(ITEM_CHANGED, owner);
@@ -743,6 +786,7 @@ uint32 ItemScoreAffix::GetLineBudget(Item* item, uint32 index)
         return 0;
 
     ObjectGuid::LowType const itemGuid = item->GetGUID().GetCounter();
+    MergeLegacyBudgetRows(itemGuid);
     uint32 const stored = LoadStoredBudget(itemGuid, index);
     if (stored)
         return stored;
@@ -836,7 +880,7 @@ void ItemScoreAffix::RerollLine(Player* owner, Item* item, uint32 index)
 
     // 避开其它槽已经用掉的词条种类
     std::vector<uint32> usedKinds;
-    for (uint32 i = 0; i < 4; ++i)
+    for (uint32 i = 0; i < AffixSlotCount; ++i)
     {
         if (i == index)
             continue;
