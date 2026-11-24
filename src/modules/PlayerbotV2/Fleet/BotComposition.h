@@ -27,6 +27,7 @@ public:
         uint8       cls     = 0;
         uint8       gender  = 0;
         std::string name;     // pre-validated unique against sCharacterCache
+        std::string surname;  // race-flavoured last name (empty when disabled/unavailable)
     };
 
     // Roll a fully-resolved (race, class, gender, name) tuple. Retries

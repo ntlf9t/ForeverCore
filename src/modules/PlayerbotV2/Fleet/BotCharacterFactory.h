@@ -36,12 +36,18 @@ public:
     //
     // Defaults: gender=0 (male). The character spawns at the race/class
     // start location at the start level for that race+class.
+    //
+    // `surname` (Classic 1.60 "Name Surname"): stored on characters.surname
+    // in the same transaction as the character row — mirroring the core's
+    // HandleCharCreateOpcode, which appends the surname UPDATE to the
+    // create transaction rather than letting Player::Create write it.
     static Result Create(
         WorldSession*      ownerSession,
         std::string const& name,
         uint8              race,
         uint8              charClass,
-        uint8              gender = 0);
+        uint8              gender = 0,
+        std::string const& surname = "");
 
     // Re-roll the appearance of every bot character whose customizations the
     // client could reject (options or choices it doesn't offer) or that has

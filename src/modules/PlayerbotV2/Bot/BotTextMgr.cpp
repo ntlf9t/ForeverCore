@@ -788,6 +788,29 @@ std::string CreatureName(NearbyUnit const& u)
     return {};
 }
 
+// The creature names the bot actually sees around it (its snapshot's nearby enemies, resolved
+// through their templates): the ground truth a channel post may name, so the model's "a dry joke
+// about the mobs here" speaks of real ones and not of a creature that lives in another zone.
+// Critters and players are not worth naming.
+std::string LocalFauna(BotSnapshotView const& s)
+{
+    std::string out;
+    for (NearbyUnit const& u : s.nearby_enemies())
+    {
+        CreatureTemplate const* ct = (u.is_player || !u.entry) ? nullptr : sObjectMgr->GetCreatureTemplate(u.entry);
+        if (!ct || ct->type == CREATURE_TYPE_CRITTER || ct->Name.empty())
+            continue;
+        if (out.find(ct->Name) == std::string::npos)
+        {
+            out += out.empty() ? std::string() : ", ";
+            out += ct->Name;
+            if (out.size() > 160)
+                break;
+        }
+    }
+    return out;
+}
+
 // %my_role: the bot's spec and class ("Protection Warrior"), ike3's formatClass(bot, spec).
 std::string RoleName(BotSnapshotView const& s)
 {
@@ -1315,6 +1338,11 @@ void Suggest(BotAI& ai, BotSnapshotView const& s, BotIntentEmitter& em, uint32 n
                 detail = "complain about the drop rate on your quest " + quest_title;
             detail += "; " + me + ". Not about grinding spots";
         }
+        // Ground the post in what the bot actually sees: the mob names around it. Without this the
+        // model joked about creatures its zone does not have (the same failure VanillaLevelPlaces
+        // fixed for zone names).
+        if (std::string const fauna = LocalFauna(s); !fauna.empty())
+            detail += " The creatures around you here: " + fauna + ".";
         if (BotBridge::QueuePost(s.bot_id(), sug.channel, what, detail, text, link.empty() ? std::string() : name_of(link), link))
             return;
     }

@@ -181,6 +181,23 @@ Playerbot.Population.MaxHeavyFactor = 0.40
 Playerbot.Population.SpawnCapFactor = 1.10
 
 #-----------------------------------------------------------------------------
+# Bot names (Fleet/BotNamePool)
+#-----------------------------------------------------------------------------
+
+# Give created bots a surname — the Classic 1.60 client shows them as
+# "Firstname Surname" (character select, party frames, mail, /who).
+# Surnames come from {shared}.playerbots_surnames (whole names) and
+# {shared}.playerbots_surname_parts (combinable halves), both race-keyed;
+# filled by the bot migrations 0063/0064 (sql/playerbot_v2), applied at startup.
+# HR-no
+Playerbot.Names.Surnames = 1
+
+# Chance (0..1) that a bot's surname is composed from two surname_parts
+# halves ("Hammer"+"fist") instead of taken whole from playerbots_surnames.
+# HR-no
+Playerbot.Names.SurnameCompoundChance = 0.5
+
+#-----------------------------------------------------------------------------
 # World bots around real players (proximity spawner, Fleet/WorldBotSpawner)
 #-----------------------------------------------------------------------------
 # Ambient bots that live around the real players, like ike3 / mod-playerbots random bots: they log in near a

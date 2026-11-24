@@ -16,6 +16,7 @@
 #include "Creature.h"
 #include "CreatureData.h"
 #include "DB2Stores.h"
+#include "Fleet/BotNamePool.h"
 #include "GossipDef.h"
 #include "Map.h"
 #include "ObjectAccessor.h"
@@ -145,6 +146,7 @@ public:
             { "npc",         HandleNpc,         rbac::RBAC_PERM_COMMAND_GM, Console::Yes },
             { "path",        HandlePath,        rbac::RBAC_PERM_COMMAND_GM, Console::Yes },
             { "namegen",     HandleNameGen,     rbac::RBAC_PERM_COMMAND_GM, Console::Yes },
+            { "botnames",    HandleBotNames,    rbac::RBAC_PERM_COMMAND_GM, Console::Yes },
             { "cast",        HandleCast,        rbac::RBAC_PERM_COMMAND_GM, Console::Yes },
             { "auras",       HandleAuras,       rbac::RBAC_PERM_COMMAND_GM, Console::Yes },
         };
@@ -520,8 +522,21 @@ public:
 
     // .playerbot selftest namegen <race> <sex 0|1> [count]
     // What the character-creation dice gets from the server for that race and sex (the same call the opcode handler makes).
+    // Validates race/sex exactly like the opcode handler — an out-of-range sex used to send GetNameGenEntry
+    // sampling an empty bucket forever (world-thread hang; the caller's client died and couldn't relogin
+    // until a restart).
     static bool HandleNameGen(ChatHandler* handler, uint8 race, uint8 sex, Optional<uint32> count)
     {
+        if (!Player::IsValidRace(race))
+        {
+            handler->PSendSysMessage("selftest namegen: race %u is not a valid player race", uint32(race));
+            return false;
+        }
+        if (!Player::IsValidGender(sex))
+        {
+            handler->PSendSysMessage("selftest namegen: sex %u must be 0 (male) or 1 (female)", uint32(sex));
+            return false;
+        }
         uint32 const n = std::min<uint32>(20, count.value_or(5));
         uint32 two = 0;
         for (uint32 i = 0; i < n; ++i)
@@ -532,6 +547,26 @@ public:
             handler->PSendSysMessage("  namegen race %u sex %u: '%s'%s", uint32(race), uint32(sex), nm.c_str(), hasSurname ? " (name + surname)" : "");
         }
         handler->PSendSysMessage("selftest namegen: %u of %u with a surname", two, n);
+        return true;
+    }
+
+    // .playerbot selftest botnames <race> <sex 0|1> [count]
+    // Samples the V2 bot name generator (Fleet/BotNamePool): a non-destructive peek at the
+    // curated per-race first-name pool plus the surname generator (whole + compound parts).
+    // Consumes no pool entries.
+    static bool HandleBotNames(ChatHandler* handler, uint8 race, uint8 sex, Optional<uint32> count)
+    {
+        uint32 const n = std::min<uint32>(20, count.value_or(5));
+        uint32 two = 0;
+        for (uint32 i = 0; i < n; ++i)
+        {
+            std::string const nm = Playerbot::V2::Fleet::BotNamePool::PreviewName(sex, race);
+            std::string const sn = Playerbot::V2::Fleet::BotNamePool::AcquireSurname(race, sex);
+            two += sn.empty() ? 0 : 1;
+            handler->PSendSysMessage("  botnames race %u sex %u: '%s%s%s'", uint32(race), uint32(sex),
+                nm.c_str(), sn.empty() ? "" : " ", sn.c_str());
+        }
+        handler->PSendSysMessage("selftest botnames: %u of %u with a surname", two, n);
         return true;
     }
 

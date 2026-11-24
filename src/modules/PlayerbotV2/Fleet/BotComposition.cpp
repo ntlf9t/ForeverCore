@@ -4,6 +4,7 @@
 #include "SkyborneIsle.h"
 #include "../Bot/ClassTables.h"   // IsVanillaRealm
 #include "CharacterCache.h"
+#include "Config.h"
 #include "Log.h"
 #include "ObjectMgr.h"
 #include "RaceMask.h"
@@ -455,22 +456,37 @@ BotComposition::Pick BotComposition::Roll(uint8 race_hint, uint8 cls_hint,
         p.race   = race;
         p.cls    = cls;
         p.gender = (gender_hint == 0xFF) ? PickGender() : gender_hint;
-        // Prefer the curated name pool (107K names in
-        // wowc_playerbot.playerbots_names, all pre-validated). Falls back
-        // to the syllable generator if the pool is exhausted or returns
-        // empty for the gender. Pool names are guaranteed to pass
-        // ObjectMgr::CheckPlayerName, fixing the create_fail observed
-        // 2026-05-15 where 3/3 JIT DPS bots died on
+        // Prefer the curated name pools: race-flavoured names from
+        // playerbots_race_names first (BotNamePool::Acquire tries that race's
+        // bucket, then the curated any-race bucket), then the 107K-name
+        // generic pool (playerbots_names, all pre-validated). Falls back to
+        // the syllable generator only when every pool is empty. Pool names
+        // are guaranteed to pass ObjectMgr::CheckPlayerName, fixing the
+        // create_fail observed 2026-05-15 where 3/3 JIT DPS bots died on
         // CHAR_NAME_THREE_CONSECUTIVE.
+        static bool const surnames_enabled =
+            sConfigMgr->GetBoolDefault("Playerbot.Names.Surnames", true, true);
         if (!name_hint.empty())
-            p.name = std::move(name_hint);
+        {
+            // "Name Surname" typed in full is honoured as-is (the surname
+            // half is stored on characters.surname by the factory).
+            if (auto sp = name_hint.find(' '); sp != std::string::npos)
+            {
+                p.name    = name_hint.substr(0, sp);
+                p.surname = name_hint.substr(sp + 1);
+            }
+            else
+                p.name = std::move(name_hint);
+        }
         else
         {
-            p.name = Fleet::BotNamePool::Acquire(p.gender);
+            p.name = Fleet::BotNamePool::Acquire(p.gender, race);
             if (p.name.empty())
                 p.name = RollUniqueName();
         }
         if (p.name.empty()) { ++fail_empty_name; continue; }
+        if (surnames_enabled && p.surname.empty())
+            p.surname = Fleet::BotNamePool::AcquireSurname(race, p.gender);
         return p;
     }
 

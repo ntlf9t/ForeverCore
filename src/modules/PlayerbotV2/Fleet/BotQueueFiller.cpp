@@ -845,7 +845,7 @@ void BotQueueFiller::Fill(FillRequest const& req)
             BotComposition::Pick pick = BotComposition::Roll(race_hint, cls_hint);
             if (!pick.race) { ++roll_fail; continue; }
             auto created = BotCharacterFactory::Create(/*ownerSession=*/nullptr,
-                pick.name, pick.race, pick.cls, pick.gender);
+                pick.name, pick.race, pick.cls, pick.gender, pick.surname);
             // Name-collision retry: rolled names collide against the 40K+
             // existing characters DB at meaningful rates, and a single-shot
             // create made the whole JIT spawn batch fail with 'name already
@@ -871,7 +871,7 @@ void BotQueueFiller::Fill(FillRequest const& req)
                 pick = BotComposition::Roll(retry_race, cls_hint);
                 if (!pick.race) break;
                 created = BotCharacterFactory::Create(/*ownerSession=*/nullptr,
-                    pick.name, pick.race, pick.cls, pick.gender);
+                    pick.name, pick.race, pick.cls, pick.gender, pick.surname);
             }
             if (!created.ok)
             {

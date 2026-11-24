@@ -4214,7 +4214,7 @@ uint64 BotPopulationManager::SpawnNew(uint8 level, bool alliance, uint8 race_hin
     }
 
     auto created = BotCharacterFactory::Create(/*ownerSession=*/nullptr,
-        pick.name, pick.race, pick.cls, pick.gender);
+        pick.name, pick.race, pick.cls, pick.gender, pick.surname);
     if (!created.ok)
     {
         note_fail(created.reason);

@@ -594,7 +594,7 @@ bool Launch(uint32 owner_account_id, LaunchOptions const& opts_in)
             continue;  // both attempts missed — drop this slot, move on
 
         auto r = Playerbot::V2::BotCharacterFactory::Create(
-            sess, picked.name, picked.race, picked.cls, picked.gender);
+            sess, picked.name, picked.race, picked.cls, picked.gender, picked.surname);
         if (!r.ok) continue;
         ++created;
 

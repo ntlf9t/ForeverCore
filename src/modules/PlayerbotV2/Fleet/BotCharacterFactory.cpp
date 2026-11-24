@@ -23,6 +23,8 @@
 #include "RealmList.h"
 #include "ScriptMgr.h"
 #include "SharedDefines.h"
+#include "StringFormat.h"
+#include "Util.h"
 #include "WorldSession.h"
 
 #include <fmt/format.h>
@@ -266,7 +268,8 @@ BotCharacterFactory::Result BotCharacterFactory::Create(
     std::string const& name,
     uint8              race,
     uint8              charClass,
-    uint8              gender)
+    uint8              gender,
+    std::string const& surname)
 {
     if (!IsRacePlayable(race))
         return {false, fmt::format("race {} is not playable", race), {}};
@@ -374,7 +377,7 @@ BotCharacterFactory::Result BotCharacterFactory::Create(
 
     newChar->SetAtLoginFlag(AT_LOGIN_FIRST);   // grants starting items + cinematic on first login
 
-    // SaveToDB(true) commits asynchronously - the call returns before the
+    // The save commits asynchronously - the call returns before the
     // INSERT INTO characters has actually landed on the DB worker. Under
     // load (mass spawn after wipefleet), the caller's subsequent LoginBot
     // racing the async write produced "Player::LoadFromDB ... not found
@@ -388,7 +391,31 @@ BotCharacterFactory::Result BotCharacterFactory::Create(
     // defer the LoginBot call by one world tick - by then the async worker
     // has committed and LoadFromDB sees the row. See BotPopulationManager
     // for the deferred-login queue.
-    newChar->SaveToDB(true);
+    //
+    // Built from the two-transaction SaveToDB overload (what SaveToDB(true)
+    // does internally, what HandleCharCreateOpcode uses) so the surname
+    // UPDATE rides the SAME transaction as the INSERT - ordering guaranteed
+    // no matter how many DB workers the pool runs, where a separate
+    // post-save Execute could land on a different connection first.
+    //
+    // Classic 1.60: surname from character creation ("Name Surname"), up to
+    // 48 characters, same rule as the opcode handler (over-length cleared,
+    // no CheckPlayerName).
+    std::string sanitizedSurname = surname;
+    if (utf8length(sanitizedSurname) > 48)
+        sanitizedSurname.clear();
+    CharacterDatabaseTransaction characterTransaction = CharacterDatabase.BeginTransaction();
+    LoginDatabaseTransaction loginTransaction = LoginDatabase.BeginTransaction();
+    newChar->SaveToDB(loginTransaction, characterTransaction, true);
+    if (!sanitizedSurname.empty())
+    {
+        std::string escapedSurname = sanitizedSurname;
+        CharacterDatabase.EscapeString(escapedSurname);
+        characterTransaction->Append(Trinity::StringFormat(
+            "UPDATE characters SET surname = '{}' WHERE guid = {}", escapedSurname, newGuidLow).c_str());
+    }
+    CharacterDatabase.CommitTransaction(characterTransaction);
+    LoginDatabase.CommitTransaction(loginTransaction);
 
     ObjectGuid newGuid = ObjectGuid::Create<HighGuid::Player>(newGuidLow);
 
@@ -403,6 +430,8 @@ BotCharacterFactory::Result BotCharacterFactory::Create(
         charClass,
         newChar->GetLevel(),
         false /*isDeleted*/);
+    if (!sanitizedSurname.empty())
+        sCharacterCache->UpdateCharacterSurname(newGuid, sanitizedSurname);
 
     // Mark as a V2 bot. The shared_ptr deleter will run CleanupsBeforeDelete
     // on the Player when this function returns; the row in `characters` and

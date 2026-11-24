@@ -1166,7 +1166,7 @@ public:
             return false;
         }
 
-        auto const created = Playerbot::V2::BotCharacterFactory::Create(sess, pick.name, race, cls, gender);
+        auto const created = Playerbot::V2::BotCharacterFactory::Create(sess, pick.name, race, cls, gender, pick.surname);
         if (!created.ok)
         { outMsg = "Couldn't create the bot: " + created.reason; return false; }
 
@@ -2597,6 +2597,7 @@ public:
         std::string name = nameArg ? *nameArg : std::string{};
 
         const bool needsRoll = (race == 0) || (cls == 0) || (gender == 0xFF) || name.empty();
+        std::string surname;
         if (needsRoll)
         {
             auto picked = Playerbot::V2::BotComposition::Roll(race, cls, gender, name);
@@ -2605,10 +2606,15 @@ public:
                 handler->SendSysMessage("BotComposition::Roll failed â possibly invalid race/class hint. See log.");
                 return false;
             }
-            race = picked.race; cls = picked.cls; gender = picked.gender; name = picked.name;
+            race = picked.race; cls = picked.cls; gender = picked.gender; name = picked.name; surname = picked.surname;
         }
+        // "Name Surname" typed in full: the surname half goes to
+        // characters.surname, like character creation does.
+        if (surname.empty())
+            if (auto sp = name.find(' '); sp != std::string::npos)
+            { surname = name.substr(sp + 1); name = name.substr(0, sp); }
 
-        auto r = Playerbot::V2::BotCharacterFactory::Create(sess, name, race, cls, gender);
+        auto r = Playerbot::V2::BotCharacterFactory::Create(sess, name, race, cls, gender, surname);
         if (!r.ok)
         {
             handler->PSendSysMessage("create failed: %s", r.reason.c_str());
@@ -2762,7 +2768,7 @@ public:
             if (picked.race == 0) break;
 
             auto r = Playerbot::V2::BotCharacterFactory::Create(
-                sess, picked.name, picked.race, picked.cls, picked.gender);
+                sess, picked.name, picked.race, picked.cls, picked.gender, picked.surname);
             if (!r.ok)
             {
                 handler->PSendSysMessage("[%u/%u] create failed: %s", i+1, count, r.reason.c_str());

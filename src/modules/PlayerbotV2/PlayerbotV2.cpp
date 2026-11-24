@@ -2197,7 +2197,7 @@ void Module::OnWorldUpdate(std::chrono::milliseconds diff)
                 auto picked = BotComposition::Roll();
                 if (picked.race == 0) break;
                 auto r = BotCharacterFactory::Create(
-                    /*ownerSession*/ nullptr, picked.name, picked.race, picked.cls, picked.gender);
+                    /*ownerSession*/ nullptr, picked.name, picked.race, picked.cls, picked.gender, picked.surname);
                 if (!r.ok) continue;
                 ++created;
                 auto login = Services::SessionMgr().LoginBot(r.guid);
