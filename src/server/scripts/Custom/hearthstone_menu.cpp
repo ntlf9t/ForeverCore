@@ -100,8 +100,6 @@ namespace
         { "附魔",     333, 7411  },
         { "工程学",   202, 4036  },
         { "草药学",   182, 2366  },
-        { "铭文",     773, 45357 },
-        { "珠宝加工", 755, 25229 },
         { "制皮",     165, 2108  },
         { "采矿",     186, 2575  },
         { "剥皮",     393, 8613  },
@@ -399,6 +397,7 @@ namespace
         }
 
         player->LearnSpell(profession.LearnSpellId, false);
+
         if (!player->HasSkill(profession.SkillId))
         {
             Notify(player, "学习" + std::string(profession.Name) + "失败，请联系管理员。");
