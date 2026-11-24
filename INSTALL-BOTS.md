@@ -72,6 +72,10 @@ console: `account set gmlevel <accountname> 3 -1`).
 - Raids: add the bots, enter the instance, use the window's Pull and Release. A good Molten Core
   group is 4 tanks, 12 healers, 6 mages, 4 warlocks, 3 hunters, 5 rogues, 4 warriors.
 - Battlegrounds: queue yourself; bots fill the other places.
+- Hired bots: a Sellsword Captain stands beside the innkeeper of 30 towns, a Veteran Recruiter in each capital and a
+  Black Market Broker in Gadgetzan, Booty Bay and Ratchet. Talk to one to hire a bot for gold (Veterans and Legends wear
+  raid and best-in-slot gear at the level cap). Free bots stay the default; `Playerbot.Hire.Mode = 1` makes the realm
+  hired bots only. Everything about them: `src/modules/PlayerbotV2/Hire/README.md`.
 
 ## Updating, removing, reporting problems
 

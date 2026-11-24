@@ -98,7 +98,7 @@ ForeverBotsLocale = {
     ["A new bot joins you at your level, wearing the gear chosen below."] = "Новый бот вашего уровня присоединяется к вам в выбранной ниже экипировке.",
     ["Pick the class, then a role below."] = "Выберите класс, затем роль ниже.",
     ["Quick party"] = "Быстрая группа",
-    ["Fills your group with bots at your level: to five in the open world and 5-player dungeons, to the size of a bigger instance (10 in Upper Blackrock Spire) or raid."] = "Заполняет группу ботами вашего уровня: до пяти в открытом мире и подземельях на 5 игроков, до размера большего подземелья (10 в Верхней части вершины Черной горы) или рейда.",
+    ["Fills your group with bots at your level: to five in the open world and 5-player dungeons, to the size of a bigger instance (10 in Upper Blackrock Spire) or raid. With hired bots on (/fb hire), your hired bots come; next to a mercenary broker the missing places are hired for gold."] = "Заполняет группу ботами вашего уровня: до пяти в открытом мире и подземельях на 5 игроков, до размера большего подземелья (10 в Верхней части вершины Черной горы) или рейда. Если включены наемники (/fb hire), приходят ваши нанятые боты; рядом с вербовщиком наемников недостающие места нанимаются за золото.", -- check
     ["Match my gear"] = "Как у меня",
     ["Best for their level"] = "Лучшее для уровня",
     ["Best in slot"] = "БиС",
@@ -539,6 +539,8 @@ ForeverBotsLocale = {
     ["Delete"] = "Удалить",
     ["Deletes the bot's character for good (asks first)."] = "Навсегда удаляет персонажа бота (сначала спросит).",
     ["Details"] = "Сведения",
+    -- Hired bots only (ForeverBots_Hire.lua), 0.6.10 -- check
+    ["Hired bots only on this realm. Hire bots from a Sellsword Captain at an inn, a Veteran Recruiter in a capital or a Black Market Broker in Gadgetzan, Booty Bay or Ratchet. The Group finder and the dungeon finder still bring bots."] = "На этом сервере только наемные боты. Нанимайте ботов у капитана наемников в таверне, у вербовщика ветеранов в столице или у торговца черного рынка в Прибамбасске, Пиратской Бухте или Кабестане. Поиск группы и поиск подземелий по-прежнему приводят ботов.",
     -- Positions tab (ForeverBots_Place.lua), 0.6.12 -- check
     ["Positions"] = "Позиции",
     ["Arc"] = "Дуга",

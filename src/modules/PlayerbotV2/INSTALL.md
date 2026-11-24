@@ -40,6 +40,10 @@ Without it `TRINITY_PLAYERBOT_V2` is undefined and the build fails in
 called unconditionally but declared only under that macro. If you see
 `error C3861: 'IsBot': identifier not found`, this flag is why.
 
+Hired bots (the sellsword brokers at the inns, `Playerbot.Hire.*`) are built in
+with the module. `-DPLAYERBOT_V2_HIRE=0` leaves them out; companions are then
+always free. What they are and how to set them up: `Hire/README.md`.
+
 ## 2. Install TrinityCore normally
 
 Create and populate `auth`, `characters` and `world` exactly as upstream

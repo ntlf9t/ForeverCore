@@ -31,7 +31,7 @@
 CREATE TABLE IF NOT EXISTS {SHARED}.`playerbots_race_names` (
   `name_id` int unsigned NOT NULL AUTO_INCREMENT,
   `name` varchar(12) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `race` tinyint unsigned NOT NULL DEFAULT '0' COMMENT 'ChrRaces id; 0 = any race',
+  `race` tinyint unsigned NOT NULL DEFAULT '0' COMMENT 'ChrRaces id, 0 = any race',
   `gender` tinyint unsigned NOT NULL DEFAULT '2' COMMENT '0=male, 1=female, 2=neutral',
   `is_used` tinyint(1) NOT NULL DEFAULT '0',
   `used_by_guid` bigint unsigned DEFAULT NULL,
@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS {SHARED}.`playerbots_race_names` (
 CREATE TABLE IF NOT EXISTS {SHARED}.`playerbots_surnames` (
   `surname_id` int unsigned NOT NULL AUTO_INCREMENT,
   `surname` varchar(48) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `race` tinyint unsigned NOT NULL DEFAULT '0' COMMENT 'ChrRaces id; 0 = any race',
+  `race` tinyint unsigned NOT NULL DEFAULT '0' COMMENT 'ChrRaces id, 0 = any race',
   `gender` tinyint unsigned NOT NULL DEFAULT '2' COMMENT '0=male, 1=female, 2=neutral',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`surname_id`),
@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS {SHARED}.`playerbots_surname_parts` (
   `part_id` int unsigned NOT NULL AUTO_INCREMENT,
   `part` varchar(24) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `half` tinyint unsigned NOT NULL COMMENT '0=prefix, 1=suffix',
-  `race` tinyint unsigned NOT NULL DEFAULT '0' COMMENT 'ChrRaces id; 0 = any race',
+  `race` tinyint unsigned NOT NULL DEFAULT '0' COMMENT 'ChrRaces id, 0 = any race',
   PRIMARY KEY (`part_id`),
   UNIQUE KEY `uk_part` (`part`,`half`,`race`),
   KEY `idx_race` (`race`,`half`)

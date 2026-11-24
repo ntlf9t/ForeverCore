@@ -32,6 +32,8 @@ regroup, formation and spacing, tanks and markers), Assign a bot to an icon, You
   server answers in a system line. Secure buttons, so they work in combat.
 - One button per class and role: adds that bot (`.bot add <class> <role>`). It joins you at your level, geared,
   in your group.
+- Hired bots only (0.6.10, the server's Playerbot.Hire.Mode): when you must hire, the class and role buttons are hidden and a
+  line says where to hire bots instead (HIRE_REQ / HIRE_RESP, ForeverBots_Hire.lua). Quick party, Call saved and Raid ready stay.
 - Orders to the group: Follow, Stay, Attack (your target), Resume; Pull (your tank bots open on your target, the
   rest join once it is engaged), Flee (break off and run to you), Come (teleport to you), Stop (stop attacking and
   return to normal), Release (after a wipe: every dead bot releases its spirit, runs back to its corpse as a ghost,

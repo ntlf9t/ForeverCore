@@ -254,6 +254,7 @@ std::unique_ptr<BattlegroundScript> MakeEmpyreanDomainArenaScript();
 #include "Threading/TickScheduler.h"
 #include "Util/ConfigReader.h"
 #include "Diagnostics/PerfCounters.h"
+#include "HireHooks.h"
 #include "Config.h"   // sConfigMgr->GetFilename for resolving playerbot.conf next to worldserver.conf
 #include <atomic>
 #include <filesystem>
@@ -342,6 +343,8 @@ void Init()
     // also reads, so safe to load right after.
     h->owners = std::make_unique<OwnerRegistry>();
     h->owners->LoadFromDb();
+    // Hired bots (Playerbot.Hire.*, the Hire/ module when built in): grades, prices paid and upkeep, from the same character table.
+    V2::Fleet::Hiring().LoadFromDb();
     // Dungeon script registry — pure in-memory, populated by
     // factories defined in Bot/Dungeon/Scripts/*.cpp. Empty registry
     // is fine — script-less dungeons fall back to generic logic.

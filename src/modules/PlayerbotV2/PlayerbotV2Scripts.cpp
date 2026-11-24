@@ -39,6 +39,11 @@
 #include <vector>
 
 void AddSC_playerbot_v2_commandscript();
+#ifdef PLAYERBOT_V2_HIRE
+void AddSC_playerbot_v2_hire();       // Hire/HireModule.cpp: hired bots and their brokers (CMake PLAYERBOT_V2_HIRE)
+#else
+void AddSC_playerbot_v2_hire_off();   // HireHooks.cpp: the brokers say there are no hired bots here
+#endif
 void AddSC_playerbot_v2_selftest_commandscript();
 
 namespace
@@ -581,6 +586,11 @@ void AddSC_playerbot_v2()
     new playerbot_v2_group();
     new playerbot_v2_guild();
     AddSC_playerbot_v2_commandscript();
+#ifdef PLAYERBOT_V2_HIRE
+    AddSC_playerbot_v2_hire();
+#else
+    AddSC_playerbot_v2_hire_off();
+#endif
     AddSC_playerbot_v2_selftest_commandscript();
 
     PathGenerator::SetLiquidRouteCheck(&BotPathTouchesAvoidedLiquid);

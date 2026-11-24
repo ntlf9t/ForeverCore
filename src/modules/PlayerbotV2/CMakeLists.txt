@@ -172,6 +172,22 @@ CollectAndAddSourceFiles(playerbot-v2-api ${CMAKE_CURRENT_SOURCE_DIR}/Api)
 playerbot_v2_configure_sublib(playerbot-v2-api)
 
 # ---------------------------------------------------------------------------
+# Sub-library: Hire — hired bots: the Sellsword Captains, Veteran Recruiters and black-market brokers, their prices, upkeep,
+# grade gear and health (Playerbot.Hire.* in playerbot.conf). The rest of the module asks it only through HireHooks.h, so it can
+# be left out (-DPLAYERBOT_V2_HIRE=0): companions are then always free and the broker NPCs have no script. See Hire/README.md.
+# ---------------------------------------------------------------------------
+option(PLAYERBOT_V2_HIRE "Build hired bots (the hire brokers, Playerbot.Hire.*) into the bot module" 1)
+if(PLAYERBOT_V2_HIRE AND NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/Hire/HireModule.cpp)
+  message(STATUS "Playerbot V2: Hire/ not found, hired bots are left out")
+  set(PLAYERBOT_V2_HIRE 0)
+endif()
+if(PLAYERBOT_V2_HIRE)
+  add_library(playerbot-v2-hire STATIC)
+  CollectAndAddSourceFiles(playerbot-v2-hire ${CMAKE_CURRENT_SOURCE_DIR}/Hire)
+  playerbot_v2_configure_sublib(playerbot-v2-hire)
+endif()
+
+# ---------------------------------------------------------------------------
 # Sub-library: Core — module entry point, script registration, the commands
 # (.playerbot, .bot, .w) and the Services aggregator.
 # ---------------------------------------------------------------------------
@@ -181,6 +197,7 @@ add_library(playerbot-v2-core STATIC
   ${CMAKE_CURRENT_SOURCE_DIR}/LfgBotFill.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/DungeonFinder.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/Services.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/HireHooks.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/Commands/cs_playerbot_v2.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/Commands/cs_selftest.cpp
 )
@@ -191,9 +208,14 @@ target_sources(playerbot-v2-core
       ${CMAKE_CURRENT_SOURCE_DIR}/PlayerbotV2.h
       ${CMAKE_CURRENT_SOURCE_DIR}/LfgBotFill.h
       ${CMAKE_CURRENT_SOURCE_DIR}/Services.h
+      ${CMAKE_CURRENT_SOURCE_DIR}/HireHooks.h
+      ${CMAKE_CURRENT_SOURCE_DIR}/HireTypes.h
       ${CMAKE_CURRENT_SOURCE_DIR}/PCH.h
 )
 playerbot_v2_configure_sublib(playerbot-v2-core)
+if(PLAYERBOT_V2_HIRE)
+  target_compile_definitions(playerbot-v2-core PRIVATE PLAYERBOT_V2_HIRE=1)
+endif()
 
 # ---------------------------------------------------------------------------
 # Umbrella INTERFACE library. The single name dependents reference; CMake
@@ -226,6 +248,9 @@ set(PLAYERBOT_V2_SUBLIBS
   playerbot-v2-api
   playerbot-v2-core
 )
+if(PLAYERBOT_V2_HIRE)
+  list(APPEND PLAYERBOT_V2_SUBLIBS playerbot-v2-hire)
+endif()
 if(MSVC OR APPLE)
   # Apple's ld64 also searches every archive until all symbols resolve, and CMake has no RESCAN link group for it
   target_link_libraries(playerbot-v2 INTERFACE ${PLAYERBOT_V2_SUBLIBS} game)
@@ -272,4 +297,4 @@ if(COPY_CONF)
   endif()
 endif()
 
-message(STATUS "Playerbot V2 module enabled (multi-library: 13 sub-libs)")
+message(STATUS "Playerbot V2 module enabled (multi-library: 13 sub-libs; hired bots: ${PLAYERBOT_V2_HIRE})")

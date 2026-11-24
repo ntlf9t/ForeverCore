@@ -204,7 +204,11 @@ public:
     // each RunGearBackfill pass teaches it its new ranks, class-quest abilities and talents, and mends its gear. Runs
     // for every companion, whatever its gear. Cheap; no-op for any other bot.
     void CompanionUpkeep(BotId id, Player* p);
-    // A hunter companion's starter pet, granted once per bot (OwnerRegistry::StarterPetGranted).
+    // Hired bots only: a Group Finder loan bot out of its owner's group is deleted (HireHooks::SetLoaned).
+    bool ReleaseLoan(BotId id, Player* p, uint32 now_ms);
+    void ReleaseOfflineLoans(uint32 now_ms);
+    // A hunter companion's starter pet, granted once per bot (OwnerRegistry::StarterPetGranted). When it cannot be given yet (the bot is
+    // still on its way to the owner, in combat, mounted...) the bot waits in pending_pet_grants_ and is tried again every second.
     void GrantCompanionStarterPet(BotId id, Player* p);
     // Hunter companions whose pet grant answered "not now": bot -> first refused at (getMSTime). DrainPetGrants tries them again.
     std::unordered_map<uint64, uint32> pending_pet_grants_;
