@@ -27,6 +27,7 @@
 #include "RBAC.h"
 #include "ScriptedGossip.h"
 #include "ScriptMgr.h"
+#include "Spell.h"
 #include "SpellHistory.h"
 #include "TemporarySummon.h"
 #include "WorldSession.h"
@@ -254,8 +255,7 @@ namespace
         CloseGossipMenuFor(player);
 
         player->GetSpellHistory()->ResetCooldown(HEARTHSTONE_SPELL_ID, true);
-        player->CastSpell(player, HEARTHSTONE_SPELL_ID,
-            CastSpellExtraArgs(TRIGGERED_IGNORE_SPELL_AND_CATEGORY_CD));
+        player->CastSpell(player, HEARTHSTONE_SPELL_ID, false);
     }
 
     // 炉石绑定点传送：读取 characters.Hearthstone_teleport_home
@@ -505,6 +505,18 @@ class hearthstone_menu_playerscript : public PlayerScript
 {
 public:
     hearthstone_menu_playerscript() : PlayerScript("hearthstone_menu_playerscript") { }
+
+    void OnSpellCast(Player* player, Spell* spell, bool /*skipCheck*/) override
+    {
+        if (!player || !spell || spell->GetSpellInfo()->Id != HEARTHSTONE_SPELL_ID)
+            return;
+
+        // OnSpellCast 位于法术真正执行阶段；稍后清除核心刚写入的冷却。
+        player->m_Events.AddEventAtOffset([player]()
+        {
+            player->GetSpellHistory()->ResetCooldown(HEARTHSTONE_SPELL_ID, true);
+        }, 100ms);
+    }
 
     void OnGossipSelect(Player* player, ObjectGuid source, uint32 menuId, uint32 listId, std::string const& /*code*/) override
     {
