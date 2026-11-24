@@ -518,6 +518,11 @@ void ItemScoreAffix::Migrate(Player* owner, Item* item)
     if (!item)
         return;
 
+    // 旧数据迁移：把 charges/duration 里的预算移到独立表，并清掉客户端显示的“次数”
+    for (uint32 i = 0; i < AffixSlotCount; ++i)
+        if (item->GetEnchantmentId(AFFIX_SLOTS[i]))
+            GetLineBudget(item, i);
+
     // 旧版可见槽：5/7/8；新槽是 6（评分）+ 9/10/11/12（词条）
     uint32 score = 0;
     static constexpr EnchantmentSlot scoreSlots[] =

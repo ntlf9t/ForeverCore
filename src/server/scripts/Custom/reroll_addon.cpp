@@ -464,6 +464,11 @@ class reroll_addon_playerscript : public PlayerScript
 public:
     reroll_addon_playerscript() : PlayerScript("reroll_addon_playerscript") { }
 
+    void OnLogin(Player* player, bool /*firstLogin*/) override
+    {
+        ItemScoreAffix::MigrateAll(player);
+    }
+
     void OnChat(Player* player, uint32 /*type*/, uint32 /*lang*/, std::string& msg) override
     {
         TC_LOG_INFO("server.loading", ">> CHAT hook: {}", msg);
