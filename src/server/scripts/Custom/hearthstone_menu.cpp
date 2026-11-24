@@ -213,9 +213,10 @@ namespace
         AddGossipItemFor(player, GossipOptionNpc::Vendor,   vendorText,                 SENDER_MAIN, ACTION_VENDOR);
         AddGossipItemFor(player, GossipOptionNpc::Binder,   bindText,                   SENDER_MAIN, ACTION_BIND,
             "确定要将炉石绑定点设置为当前位置吗？", 0, false);
-        AddGossipItemFor(player, GossipOptionNpc::Trainer,  "学习主专业（剩余 "
-            + std::to_string(player->GetFreePrimaryProfessionPoints()) + "）",
-            SENDER_MAIN, ACTION_PROFESSION_MENU);
+        if (sWorld->getIntConfig(CONFIG_MAX_PRIMARY_TRADE_SKILL) > 2)
+            AddGossipItemFor(player, GossipOptionNpc::Trainer,  "学习主专业（剩余 "
+                + std::to_string(player->GetFreePrimaryProfessionPoints()) + "）",
+                SENDER_MAIN, ACTION_PROFESSION_MENU);
         AddGossipItemFor(player, GossipOptionNpc::None,     "角色解卡",                 SENDER_MAIN, ACTION_UNSTUCK_MENU);
         AddGossipItemFor(player, GossipOptionNpc::None,     "关闭",                     SENDER_MAIN, ACTION_CLOSE);
 
@@ -650,7 +651,10 @@ public:
                         ShowUnstuckMenu(player, source);
                         break;
                     case ACTION_PROFESSION_MENU:
-                        ShowProfessionMenu(player, source);
+                        if (sWorld->getIntConfig(CONFIG_MAX_PRIMARY_TRADE_SKILL) > 2)
+                            ShowProfessionMenu(player, source);
+                        else
+                            CloseGossipMenuFor(player);
                         break;
                     case ACTION_CLOSE:
                     default:
