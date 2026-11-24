@@ -1,6 +1,6 @@
 -- WoW Forever: a trainee Riding Turtle without an Apprentice Riding requirement.
 -- Item 9902000 teaches mount spell 1399990. Client mount type 283 deliberately
--- has no Riding requirement, while the mount spell grants exactly 20% speed.
+-- has no Riding requirement, while the mount spell grants exactly 30% speed.
 -- The turtle model uses Riding Turtle 17266's client-supported display 17158.
 -- Display 12655 is missing from the current 1.60 client data. Safe to run again.
 
@@ -19,7 +19,7 @@ INSERT INTO `spell_misc` (`ID`,`Attributes1`,`Attributes2`,`Attributes3`,`Attrib
 DELETE FROM `spell_effect` WHERE `ID` IN (1399990,1399991);
 INSERT INTO `spell_effect` (`ID`,`EffectAura`,`DifficultyID`,`EffectIndex`,`Effect`,`EffectAmplitude`,`EffectAttributes`,`EffectAuraPeriod`,`EffectBonusCoefficient`,`EffectChainAmplitude`,`EffectChainTargets`,`EffectItemType`,`EffectMechanic`,`EffectPointsPerResource`,`EffectPosFacing`,`EffectRealPointsPerLevel`,`EffectTriggerSpell`,`BonusCoefficientFromAP`,`PvpMultiplier`,`Coefficient`,`Variance`,`ResourceCoefficient`,`GroupSizeBasePointsCoefficient`,`EffectBasePoints`,`ScalingClass`,`TargetNodeGraph`,`EffectMiscValue1`,`EffectMiscValue2`,`EffectRadiusIndex1`,`EffectRadiusIndex2`,`EffectSpellClassMask1`,`EffectSpellClassMask2`,`EffectSpellClassMask3`,`EffectSpellClassMask4`,`ImplicitTarget1`,`ImplicitTarget2`,`SpellID`,`VerifiedBuild`) VALUES
 (1399990,78,0,0,6,0,0,0,1,1,0,0,0,0,0,0,0,0,1,0,0,0,1,0,0,0,17266,0,0,0,0,0,0,0,1,0,1399990,70959),
-(1399991,32,0,1,6,0,0,0,1,1,0,0,0,0,0,0,0,0,1,0,0,0,1,20,0,0,0,0,0,0,0,0,0,0,1,0,1399990,70959);
+(1399991,32,0,1,6,0,0,0,1,1,0,0,0,0,0,0,0,0,1,0,0,0,1,30,0,0,0,0,0,0,0,0,0,0,1,0,1399990,70959);
 
 DELETE FROM `spell_aura_options` WHERE `ID` = 1399990;
 INSERT INTO `spell_aura_options` (`ID`,`DifficultyID`,`CumulativeAura`,`ProcCategoryRecovery`,`ProcChance`,`ProcCharges`,`SpellProcsPerMinuteID`,`ProcTypeMask1`,`ProcTypeMask2`,`SpellID`,`VerifiedBuild`) VALUES
@@ -43,8 +43,8 @@ INSERT INTO `spell_x_spell_visual` (`ID`,`DifficultyID`,`SpellVisualID`,`Probabi
 
 DELETE FROM `hotfix_blob` WHERE `TableHash` = 3776013982 AND `RecordId` = 1399990 AND `locale` IN ('enUS','zhCN');
 INSERT INTO `hotfix_blob` (`TableHash`,`RecordId`,`locale`,`Blob`,`VerifiedBuild`) VALUES
-(3776013982,1399990,'enUS',CONCAT('',CHAR(0),'Summons and dismisses a trainee riding turtle. Increases ground speed by 20%.',CHAR(0),'Increases ground speed by 20%.',CHAR(0)),70959),
-(3776013982,1399990,'zhCN',CONCAT('',CHAR(0),'召唤或解散一只新手骑乘乌龟。地面移动速度提高20%。',CHAR(0),'地面移动速度提高20%。',CHAR(0)),70959);
+(3776013982,1399990,'enUS',CONCAT('',CHAR(0),'Summons and dismisses a trainee riding turtle. Increases ground speed by 30%.',CHAR(0),'Increases ground speed by 30%.',CHAR(0)),70959),
+(3776013982,1399990,'zhCN',CONCAT('',CHAR(0),'召唤或解散一只新手骑乘乌龟。地面移动速度提高30%。',CHAR(0),'地面移动速度提高30%。',CHAR(0)),70959);
 
 DELETE FROM `mount` WHERE `ID` = 3920;
 INSERT INTO `mount` (`Name`,`SourceText`,`Description`,`ID`,`MountTypeID`,`Flags`,`SourceTypeEnum`,`SourceSpellID`,`PlayerConditionID`,`MountFlyRideHeight`,`UiModelSceneID`,`MountSpecialRiderAnimKitID`,`MountSpecialSpellVisualKitID`,`VerifiedBuild`) VALUES
@@ -90,7 +90,8 @@ INSERT INTO `item_x_item_effect` (`ID`,`ItemEffectID`,`ItemID`,`VerifiedBuild`) 
 DELETE FROM `hotfix_data` WHERE `Id` BETWEEN 26150000 AND 26150013
   OR `Id` BETWEEN 26150100 AND 26150118
   OR `Id` BETWEEN 26150200 AND 26150223
-  OR `Id` BETWEEN 26150300 AND 26150406;
+  OR `Id` BETWEEN 26150300 AND 26150406
+  OR `Id` BETWEEN 26150500 AND 26150501;
 INSERT INTO `hotfix_data` (`Id`,`UniqueId`,`TableHash`,`RecordId`,`Status`,`VerifiedBuild`) VALUES
 (26150200,1400020200,1187407512,1399990,1,70959),
 (26150202,1400020202,3322146344,1399990,1,70959),
@@ -117,4 +118,6 @@ INSERT INTO `hotfix_data` (`Id`,`UniqueId`,`TableHash`,`RecordId`,`Status`,`Veri
 (26150403,1400020403,3322146344,1399991,3,70959),
 (26150404,1400020404,1720692227,1399991,3,70959),
 (26150405,1400020405,4134404214,9900,3,70959),
-(26150406,1400020406,685366953,9900,3,70959);
+(26150406,1400020406,685366953,9900,3,70959),
+(26150500,1400020500,4030871717,1399991,1,70959),
+(26150501,1400020501,3776013982,1399990,1,70959);
