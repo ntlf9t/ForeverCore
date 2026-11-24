@@ -41,6 +41,7 @@ enum class Pref : uint8
     Auto = 0,   // the client's language
     En   = 1,
     Ru   = 2,
+    Zh   = 3,
 };
 
 // Reads the config and the stored choices. World thread, at module init.

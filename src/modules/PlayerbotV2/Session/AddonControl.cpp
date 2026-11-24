@@ -18,6 +18,7 @@
 #include "Services.h"
 #include "Session/BotSessionMgr.h"
 #include "Session/HumanLogin.h"
+#include "Session/AccountBotLink.h"
 #include "Fleet/BotAccountMgr.h"
 #include "Threading/SnapshotPublisher.h"
 #include "Util/ConfigReader.h"
@@ -1338,6 +1339,15 @@ void HandleSummon(uint32 /*client_seq*/, WorldSession* sess,
                   "'" + target_name + "' is not on your account");
         return;
     }
+    OwnerBinding const existing_owner =
+        Services::Owners().GetOwner(BotId(cc->Guid.GetCounter()));
+    if (existing_owner.account_id &&
+        existing_owner.account_id != sess->GetAccountId())
+    {
+        PushEvent(sess, "warn", "0", "summon_failed",
+                  "'" + target_name + "' is linked to another player");
+        return;
+    }
     if (ObjectAccessor::FindConnectedPlayerByName(target_name))
     {
         PushEvent(sess, "warn", "0", "summon_failed",
@@ -1384,6 +1394,27 @@ void HandleSummon(uint32 /*client_seq*/, WorldSession* sess,
 
     PushEvent(sess, "info", std::to_string(guid_low),
               "summoned", target_name);
+}
+
+void HandleAccountSummon(uint32 /*client_seq*/, WorldSession* sess,
+                         std::vector<std::string> const& fields)
+{
+    if (fields.size() != 3)
+    {
+        PushEvent(sess, "warn", "0", "account_bot_failed",
+                  "account, password and character are required");
+        return;
+    }
+
+    AccountBot::LinkResult const result =
+        AccountBot::LinkAndLogin(sess, fields[0], fields[1], fields[2]);
+    if (!result.ok)
+    {
+        PushEvent(sess, "warn", "0", "account_bot_failed", result.message);
+        return;
+    }
+    PushEvent(sess, "info", std::to_string(result.guid_low),
+              "account_bot_added", result.character_name);
 }
 
 // ----------------------------------------------------------------------------
@@ -1477,10 +1508,10 @@ SessionTarget ResolveSessionTarget(WorldSession* sess,
         return out;
     }
     const uint32 acct = sess->GetAccountId();
-    const bool same_account = (cc->AccountId == acct);
-    const bool owned_by_me  =
-        Services::Owners().GetOwner(BotId(cc->Guid.GetCounter())).account_id == acct;
-    if (!same_account && !owned_by_me)
+    uint32 const owner_account =
+        Services::Owners().GetOwner(BotId(cc->Guid.GetCounter())).account_id;
+    const bool allowed = owner_account ? owner_account == acct : cc->AccountId == acct;
+    if (!allowed)
     {
         PushEvent(sess, "warn", "0", fail_event,
                   "'" + cc->Name + "' is not your character or bot");
@@ -1730,6 +1761,10 @@ void DispatchAssembled(WorldSession* sess, uint32 seq,
     {
         HandleSummon(seq, sess, fields);
     }
+    else if (mtype == "ACCOUNT_SUMMON")
+    {
+        HandleAccountSummon(seq, sess, fields);
+    }
     else if (mtype == "LOGIN_REQ")
     {
         HandleLoginReq(seq, sess, fields);
@@ -1813,6 +1848,7 @@ bool OnAddonWhisper(Player* sender, Player* /*receiver*/,
             && mtype != "ROSTER_REQ"
             && mtype != "ALTS_REQ"
             && mtype != "SUMMON"
+            && mtype != "ACCOUNT_SUMMON"
             && mtype != "LOGIN_REQ"
             && mtype != "LOGOUT_REQ"
             && mtype != "SELF"

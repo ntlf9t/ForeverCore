@@ -58,6 +58,7 @@ The `.bot` commands for your own bots work for every account, no GM needed; each
 | Command | What it does |
 |---|---|
 | `.bot add <class> [tank\|healer\|dps] [race] [male\|female]` | Creates a companion bound to you, levels it to you, teaches spells, sets role/talents/gear, brings it over and groups it. The role is kept across relog and `.bot call`. |
+| `.playerbot account <account> <password> <character>` | Verifies the supplied game account once, then logs one of its offline characters in as a bot bound only to the player who added it. The password is not stored. The Chinese command alias is `.playerbot 添加账号`; the addon form is `/fb account`. Another player cannot take over an already linked character, and failed checks are rate-limited. |
 | `.bot lfg [tank\|healer\|dps]` | Fills the missing tank / healer / damage places of your group (1 tank, 1 healer, 3 damage) with level-matched companions, now. The word is your own role. The Group Finder does the same on its own: post a dungeon listing and, if nobody joins within `Playerbot.Lfg.BotFillSeconds` (default 180), the missing roles are filled. |
 | `.bot dungeon [list \| <name\|any> [tank\|healer\|dps] \| leave \| cancel]` | Dungeon finder. `.bot dungeon any` (a random 5-player dungeon for your level) or `.bot dungeon <word>` (`rfc`, `vc`/`dm` Deadmines, `smgy`, `smlib`, `dme`, `strat`, `ubrs`...; `.bot dungeon list` shows them): the missing tank / healer / damage places are filled with your companions at your level, and once the group is complete (at most 90 s) you are put inside the dungeon's door and your bots are brought after you. Real players in your group get a summon. `.bot dungeon leave` takes you back to where you queued, bots follow; `cancel` stops a queue still forming. Only the group leader queues. `Playerbot.Lfg.Finder.Enable` turns it off. |
 | `.bot lead [on\|pause\|off]` | Tank leads: in a 5-man dungeon or a raid your tank bot leads and you follow (in a raid it stops before each boss for you) (the same as `lead on` / `lead pause` / `lead off` in party chat and the Orders tab's Tank leads button). See section 8. |
@@ -83,6 +84,7 @@ Install the `ForeverBots` folder into `Interface\AddOns` (the folder name must s
 out of date AddOns"). The addon only sends ordinary chat, so it needs nothing else on the client.
 
 - `/fb` opens or closes the window (it stays open across relog). The window has:
+  - **Account character** (`/fb account`): masked password form that links an offline character from another account to your player account after server-side password validation. The password is cleared immediately and is never saved.
   - **Raid ready** (also `/fb raidready`): calls your saved bots (`.bot summon saved`) when you are alone (already in a group it uses that group and never changes it), waits until the group stops growing,
     makes it a raid when it holds more than five, sets formation circle and spacing close, sends `resume` and the
     crowd-control switch, sets the Main Tank flag when you target a group member, and starts a ready check about twenty

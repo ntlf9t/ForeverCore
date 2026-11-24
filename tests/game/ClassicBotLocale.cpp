@@ -67,6 +67,26 @@ TEST_CASE("BotLocale: every Russian entry is well formed and used once", "[BotLo
     }
 }
 
+TEST_CASE("BotLocale: Chinese command entries keep their captures", "[BotLocale]")
+{
+    Catalog const& zh = Chinese();
+    for (std::string const& bad : zh.Rejected())
+        FAIL_CHECK("refused: " << bad);
+    CHECK(zh.Rejected().empty());
+    CHECK(zh.Size() == ChineseEntries().size());
+
+    for (Catalog::Entry const& e : ChineseEntries())
+    {
+        INFO(e.en);
+        CHECK(Placeholders(e.tr) == Captures(e.en));
+    }
+
+    CHECK(Translate(Lang::Zh, "Account name or password is invalid.") ==
+          "账号名称或密码错误。");
+    CHECK(Translate(Lang::Zh, "Linked character BotSeven and started it as a bot. Only your account can control it.") ==
+          "已添加角色“BotSeven”并以机器人方式登录。此角色仅可由你的账号控制。");
+}
+
 TEST_CASE("BotLocale: the stock chatter keeps every placeholder", "[BotLocale]")
 {
     // A placeholder the translation drops loses the item, the zone or the name; one it invents is never filled.

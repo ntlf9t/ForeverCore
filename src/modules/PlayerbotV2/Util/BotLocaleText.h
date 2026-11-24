@@ -30,6 +30,7 @@ enum class Lang : uint8_t
 {
     En = 0,
     Ru = 1,
+    Zh = 2,
 };
 
 class Catalog
@@ -99,6 +100,9 @@ std::vector<Catalog::Entry> const& RussianEntries();
 // The bots' stock chatter in Russian (Util/BotLocaleRu.cpp), added to Russian() with Catalog::AddChatter: the English side is the
 // database line of migration 0019 exactly as stored (playerbot_v2_bot_text.text).
 std::vector<Catalog::Entry> const& RussianChatterEntries();
+
+Catalog const& Chinese();
+std::vector<Catalog::Entry> const& ChineseEntries();
 
 // `text` for a player reading `lang`.
 std::string Translate(Lang lang, std::string_view text);

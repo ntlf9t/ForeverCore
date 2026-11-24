@@ -409,6 +409,17 @@ Catalog const& Russian()
     return catalog;
 }
 
+Catalog const& Chinese()
+{
+    static Catalog const catalog = []
+    {
+        Catalog c(ChineseEntries());
+        c.SetMoneyUnits("金", "银", "铜");
+        return c;
+    }();
+    return catalog;
+}
+
 bool NeverTranslate(std::string_view text)
 {
     return text.substr(0, 7) == "ASSIGN|";
@@ -417,6 +428,7 @@ bool NeverTranslate(std::string_view text)
 std::string Translate(Lang lang, std::string_view text)
 {
     if (lang == Lang::En || NeverTranslate(text)) return std::string(text);
+    if (lang == Lang::Zh) return Chinese().Translate(text);
     return Russian().Translate(text);
 }
 

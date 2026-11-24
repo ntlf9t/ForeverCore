@@ -92,6 +92,7 @@
 #include "Api/BotLanguage.h"
 #include "Bot/BotRng.h"
 #include "Session/BotSessionMgr.h"
+#include "Session/AccountBotLink.h"
 #include "Threading/TickScheduler.h"
 #include "PathGenerator.h"      // /playerbot pathcompare
 #include "dtQueryFilterTC.h"    // /playerbot roadstats RoadStats counters
@@ -780,6 +781,8 @@ public:
             // prevents cross-account abuse, and PlayerbotV2.MaxAltsAsBots
             // caps total simultaneously-owned alts per account.
             { "summon",        HandleSummon,        rbac::RBAC_PERM_JOIN_NORMAL_BG, Console::No  },
+            { "account",       HandleAccountBot,    rbac::RBAC_PERM_JOIN_NORMAL_BG, Console::No  },
+            { "添加账号",      HandleAccountBot,    rbac::RBAC_PERM_JOIN_NORMAL_BG, Console::No  },
             { "self",          HandleSelf,          rbac::RBAC_PERM_JOIN_NORMAL_BG, Console::No  },
             { "lazy",          HandleLazy,          rbac::RBAC_PERM_JOIN_NORMAL_BG, Console::No  },
         };
@@ -976,7 +979,7 @@ public:
     }
 
     // .bot about: the name of the bots, so it shows in the command list and `.bot` help
-    // .bot language [auto|en|ru]: the language your bots answer you in (whispers, group chat, these command replies). auto, the start
+    // .bot language [auto|en|ru|zh]: the language your bots answer you in (whispers, group chat, these command replies). auto, the start
     // setting, follows the game client's language; the choice is kept per account (Api/BotLanguage.h).
     // .bot lead [on|pause|off]: the "Tank leads" switch (BotCommandParser::ApplyLeadOrder, the same as the party words "lead on" /
     // "lead pause" / "lead off" and the ForeverBots Lead button). On: in a 5-man dungeon the caller's tank bot leads (walks the route,
@@ -1012,8 +1015,10 @@ public:
         }
         // Taken after the change, so the answer is already in the language just chosen.
         Lang::LocalizedHandler localized(handler); handler = localized.Get();
-        bool const russian = Lang::LangOf(me) == Playerbot::Locale::Lang::Ru;
-        handler->PSendSysMessage("Bot replies: %s (%s). .bot language auto|en|ru changes it.", russian ? "Russian" : "English",
+        char const* language = "English";
+        if (Lang::LangOf(me) == Playerbot::Locale::Lang::Ru) language = "Russian";
+        else if (Lang::LangOf(me) == Playerbot::Locale::Lang::Zh) language = "Chinese";
+        handler->PSendSysMessage("Bot replies: %s (%s). .bot language auto|en|ru changes it.", language,
             Lang::GetPref(sess->GetAccountId()) == Lang::Pref::Auto ? "your client's language" : "your choice");
         return true;
     }
@@ -1685,7 +1690,17 @@ public:
             ObjectGuid const g = sCharacterCache->GetCharacterGuidByName(name);
             if (!g.IsEmpty() && sCharacterCache->GetCharacterAccountIdByGuid(g) == sess->GetAccountId() &&
                 Playerbot::Services::SessionMgr().IsHeadless(g))
+            {
+                uint32 const owner =
+                    Playerbot::Services::Owners().GetOwner(g.GetCounter()).account_id;
+                if (owner && owner != sess->GetAccountId())
+                {
+                    handler->SendSysMessage("That linked character is controlled by its owner account.");
+                    handler->SetSentErrorMessage(true);
+                    return false;
+                }
                 ids.push_back(g.GetCounter());
+            }
         }
         if (ids.empty())
         {
@@ -8800,6 +8815,13 @@ public:
             handler->SetSentErrorMessage(true);
             return false;
         }
+        Playerbot::OwnerBinding const existing_owner = Playerbot::Services::Owners().GetOwner(id);
+        if (existing_owner.account_id && existing_owner.account_id != my_account)
+        {
+            handler->PSendSysMessage("'%s' is linked to another player.", target_name.c_str());
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
         // Refuse if the alt is already logged in as a live player (would
         // cause two sessions for the same GUID). The owner is using that
         // character right now and presumably doesn't want it taken over.
@@ -8868,6 +8890,50 @@ public:
             "You (and any other char on your account) can whisper `follow`, `stop`, `engage`, `squad`, `role` to it.",
             target_name.c_str());
         return true;
+    }
+
+    static bool HandleAccountBot(ChatHandler* handler, Tail args)
+    {
+        Playerbot::BotLanguage::LocalizedHandler localized(handler);
+        handler = localized.Get();
+
+        std::string text(args);
+        auto trim_left = [&text]
+        {
+            size_t const at = text.find_first_not_of(" \t");
+            if (at != std::string::npos)
+                text.erase(0, at);
+            else
+                text.clear();
+        };
+        auto take_word = [&text, &trim_left]() -> std::string
+        {
+            trim_left();
+            size_t const end = text.find_first_of(" \t");
+            std::string word = text.substr(0, end);
+            text.erase(0, end == std::string::npos ? text.size() : end);
+            return word;
+        };
+
+        std::string const account = take_word();
+        std::string const password = take_word();
+        trim_left();
+        std::string const character = text;
+        if (account.empty() || password.empty() || character.empty())
+        {
+            handler->SendSysMessage("Usage: .playerbot account <account> <password> <character>.");
+            handler->SendSysMessage("The password is checked once and is never stored.");
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+
+        WorldSession* session = handler->GetSession();
+        Playerbot::V2::AccountBot::LinkResult result =
+            Playerbot::V2::AccountBot::LinkAndLogin(
+                session, account, password, character);
+        handler->SendSysMessage(result.message);
+        handler->SetSentErrorMessage(!result.ok);
+        return result.ok;
     }
 
     // .playerbot self on | off | status

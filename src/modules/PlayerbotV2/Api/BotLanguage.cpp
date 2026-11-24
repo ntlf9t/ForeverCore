@@ -40,7 +40,9 @@ QueryCallbackProcessor g_queries;   // world thread only
 
 Locale::Lang FromLocale(LocaleConstant l)
 {
-    return l == LOCALE_ruRU ? Locale::Lang::Ru : Locale::Lang::En;
+    if (l == LOCALE_ruRU) return Locale::Lang::Ru;
+    if (l == LOCALE_zhCN) return Locale::Lang::Zh;
+    return Locale::Lang::En;
 }
 
 // One packet per language, built when the first reader of that language is met (Trinity::LocalizedDo keyed on our language
@@ -66,7 +68,7 @@ private:
     ChatMsg       type_;
     Language      language_;
     std::string const& english_;
-    std::unique_ptr<Trinity::ChatPacketSender> senders_[2];
+    std::unique_ptr<Trinity::ChatPacketSender> senders_[3];
 };
 
 } // namespace
@@ -80,7 +82,7 @@ void Load()
         {
             Field* f = r->Fetch();
             uint8 const v = f[1].GetUInt8();
-            if (v == uint8(Pref::En) || v == uint8(Pref::Ru))
+            if (v == uint8(Pref::En) || v == uint8(Pref::Ru) || v == uint8(Pref::Zh))
                 prefs[f[0].GetUInt32()] = Pref(v);
         } while (r->NextRow());
     size_t const n = prefs.size();
@@ -88,10 +90,12 @@ void Load()
         std::unique_lock lk(g_mtx);
         g_prefs = std::move(prefs);
     }
-    TC_LOG_INFO("playerbot.v2", "[language] bot replies in the player's language {} ({} Russian catalog entries, {} players chose a language)",
-        g_enabled ? "on" : "off", Locale::Russian().Size(), n);
+    TC_LOG_INFO("playerbot.v2", "[language] bot replies in the player's language {} ({} Russian, {} Chinese catalog entries, {} players chose a language)",
+        g_enabled ? "on" : "off", Locale::Russian().Size(), Locale::Chinese().Size(), n);
     for (std::string const& bad : Locale::Russian().Rejected())
         TC_LOG_ERROR("playerbot.v2", "[language] Russian catalog entry refused (malformed or duplicate): \"{}\"", bad);
+    for (std::string const& bad : Locale::Chinese().Rejected())
+        TC_LOG_ERROR("playerbot.v2", "[language] Chinese catalog entry refused (malformed or duplicate): \"{}\"", bad);
 }
 
 void OnLogin(Player* p)
@@ -124,7 +128,11 @@ Locale::Lang LangOf(Player const* reader)
     {
         std::shared_lock lk(g_mtx);
         if (auto it = g_prefs.find(account); it != g_prefs.end())
-            return it->second == Pref::Ru ? Locale::Lang::Ru : Locale::Lang::En;
+        {
+            if (it->second == Pref::Ru) return Locale::Lang::Ru;
+            if (it->second == Pref::Zh) return Locale::Lang::Zh;
+            return Locale::Lang::En;
+        }
         if (s->GetSessionDbcLocale() != LOCALE_enUS) return FromLocale(s->GetSessionDbcLocale());
         if (s->GetSessionDbLocaleIndex() != LOCALE_enUS) return FromLocale(s->GetSessionDbLocaleIndex());
         if (auto it = g_client_locale.find(account); it != g_client_locale.end())
@@ -160,6 +168,7 @@ char const* PrefName(Pref pref)
     {
         case Pref::En: return "en";
         case Pref::Ru: return "ru";
+        case Pref::Zh: return "zh";
         default:       return "auto";
     }
 }
@@ -168,13 +177,14 @@ bool ParsePref(std::string_view word, Pref& out)
 {
     std::string w(word);
     strToLower(w);
-    if (w == "auto" || w == "авто")                                        { out = Pref::Auto; return true; }
+    if (w == "auto" || w == "авто")                                         { out = Pref::Auto; return true; }
     if (w == "en" || w == "english" || w == "eng" || w == "англ")          { out = Pref::En;   return true; }
     if (w == "ru" || w == "russian" || w == "rus" || w == "рус" || w == "русский") { out = Pref::Ru; return true; }
     // strToLower leaves Cyrillic capitals alone: the capitalised forms a Russian keyboard gives.
     if (word == "Авто")                                                    { out = Pref::Auto; return true; }
     if (word == "Рус" || word == "Русский")                                { out = Pref::Ru;   return true; }
     if (word == "Англ")                                                    { out = Pref::En;   return true; }
+    if (w == "zh" || w == "cn" || w == "chinese" || w == "中文")           { out = Pref::Zh;   return true; }
     return false;
 }
 
