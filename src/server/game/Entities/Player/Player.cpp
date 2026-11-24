@@ -3027,6 +3027,12 @@ bool Player::AddSpell(uint32 spellId, bool active, bool learning, bool dependent
         return false;
     }
 
+    // Mount DB2 can be introduced after a spell was already saved in character_spell.
+    // Rebuild the account collection during login even when the spell takes the
+    // PLAYERSPELL_UNCHANGED early-return path below.
+    if (loading && sDB2Manager.GetMount(spellId))
+        GetSession()->GetCollectionMgr()->AddMount(spellId, MOUNT_STATUS_NONE, false, true);
+
     PlayerSpellState state = learning ? PLAYERSPELL_NEW : PLAYERSPELL_UNCHANGED;
 
     bool dependent_set = false;
