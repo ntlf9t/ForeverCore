@@ -243,22 +243,41 @@ namespace
         return candidates[urand(0, int(candidates.size()) - 1)];
     }
 
-    uint32 GetLineBudget(Item* item, uint32 index, uint32 score)
+    uint32 LoadStoredBudget(ObjectGuid::LowType itemGuid, uint32 index)
     {
-        uint32 const charges = item->GetEnchantmentCharges(AFFIX_SLOTS[index]);
-        if (charges)
-            return charges;
+        if (!itemGuid)
+            return 0;
 
-        // 兼容旧数据：之前把预算错存在 duration 里
-        uint32 const duration = item->GetEnchantmentDuration(AFFIX_SLOTS[index]);
-        if (duration)
-        {
-            item->SetEnchantment(AFFIX_SLOTS[index],
-                item->GetEnchantmentId(AFFIX_SLOTS[index]), 0, duration);
-            return duration;
-        }
+        std::string sql = "SELECT budget FROM characters.item_score_affix_budget WHERE item_guid = "
+            + std::to_string(itemGuid) + " AND slot = " + std::to_string(index);
+        QueryResult result = CharacterDatabase.Query(sql.c_str());
+        return result ? result->Fetch()[0].GetUInt32() : 0;
+    }
 
-        return score;
+    void StoreBudget(ObjectGuid::LowType itemGuid, uint32 index, uint32 budget)
+    {
+        if (!itemGuid)
+            return;
+
+        std::string sql = "REPLACE INTO characters.item_score_affix_budget (item_guid, slot, budget) VALUES ("
+            + std::to_string(itemGuid) + "," + std::to_string(index) + "," + std::to_string(budget) + ")";
+        CharacterDatabase.Execute(sql.c_str());
+    }
+
+    void DeleteBudget(ObjectGuid::LowType itemGuid, uint32 index)
+    {
+        if (!itemGuid)
+            return;
+
+        std::string sql = "DELETE FROM characters.item_score_affix_budget WHERE item_guid = "
+            + std::to_string(itemGuid) + " AND slot = " + std::to_string(index);
+        CharacterDatabase.Execute(sql.c_str());
+    }
+
+    uint32 ResolveLineBudget(Item* item, uint32 index, uint32 score)
+    {
+        uint32 const budget = ItemScoreAffix::GetLineBudget(item, index);
+        return budget ? budget : score;
     }
 
     std::vector<uint32> SplitBudget(uint32 total, uint32 count)
@@ -297,7 +316,10 @@ bool ItemScoreAffix::RerollChaos(Player* owner, Item* item)
     uint32 const mask = MaskForItem(proto);
 
     for (uint32 i = 0; i < AffixSlotCount; ++i)
+    {
+        SetLineBudget(item, i, 0);
         item->SetEnchantment(AFFIX_SLOTS[i], 0, 0, 0);
+    }
 
     static constexpr uint32 styles[] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15 };
     for (uint32 index = 0; index < count && index < AffixSlotCount; ++index)
@@ -315,7 +337,8 @@ bool ItemScoreAffix::RerollChaos(Player* owner, Item* item)
         if (!chosen)
             break;
 
-        item->SetEnchantment(AFFIX_SLOTS[index], chosen->Ench, 0, budgets[index]);
+        item->SetEnchantment(AFFIX_SLOTS[index], chosen->Ench, 0, 0);
+        SetLineBudget(item, index, budgets[index]);
     }
 
     item->SetState(ITEM_CHANGED, owner);
@@ -343,7 +366,7 @@ bool ItemScoreAffix::RerollStyle(Player* owner, Item* item)
     // 风格洗：只锁每条分到的预算，属性从全部流派大池子里随机
     for (uint32 index = 0; index < count && index < AffixSlotCount; ++index)
     {
-        uint32 const budget = GetLineBudget(item, index, score);
+        uint32 const budget = ResolveLineBudget(item, index, score);
         ScoreAffixEntry const* chosen = nullptr;
         uint32 start = urand(0, uint32(std::size(styles)) - 1);
 
@@ -358,7 +381,8 @@ bool ItemScoreAffix::RerollStyle(Player* owner, Item* item)
         if (!chosen)
             continue;
 
-        item->SetEnchantment(AFFIX_SLOTS[index], chosen->Ench, 0, budget);
+        item->SetEnchantment(AFFIX_SLOTS[index], chosen->Ench, 0, 0);
+        SetLineBudget(item, index, budget);
         changed = true;
     }
 
@@ -441,7 +465,10 @@ void ItemScoreAffix::Apply(Player* owner, Item* item)
 
     // 0/1 是玩家附魔槽，不能用；5/7/8 是旧版随机槽，清掉避免重复显示
     for (uint32 i = 0; i < AffixSlotCount; ++i)
+    {
+        SetLineBudget(item, i, 0);
         item->SetEnchantment(AFFIX_SLOTS[i], 0, 0, 0);
+    }
     item->SetEnchantment(USE_ENCHANTMENT_SLOT, 0, 0, 0);
     item->SetEnchantment(PROP_ENCHANTMENT_SLOT_0, 0, 0, 0);
 
@@ -481,7 +508,8 @@ void ItemScoreAffix::Apply(Player* owner, Item* item)
         if (index >= AffixSlotCount)
             break;
 
-        item->SetEnchantment(AFFIX_SLOTS[index], chosen->Ench, 0, shown);
+        item->SetEnchantment(AFFIX_SLOTS[index], chosen->Ench, 0, 0);
+        SetLineBudget(item, index, shown);
     }
 }
 
@@ -637,7 +665,10 @@ void ItemScoreAffix::Reroll(Player* owner, Item* item, bool maxScore)
 
     // 先清空四条词条槽，避免旧的残留；不动玩家的 0/1 附魔槽
     for (uint32 i = 0; i < AffixSlotCount; ++i)
+    {
+        SetLineBudget(item, i, 0);
         item->SetEnchantment(AFFIX_SLOTS[i], 0, 0, 0);
+    }
     item->SetEnchantment(USE_ENCHANTMENT_SLOT, 0, 0, 0);
     item->SetEnchantment(PROP_ENCHANTMENT_SLOT_0, 0, 0, 0);
 
@@ -674,7 +705,8 @@ void ItemScoreAffix::Reroll(Player* owner, Item* item, bool maxScore)
             break;
 
         usedKinds.push_back(chosen->Kind);
-        item->SetEnchantment(AFFIX_SLOTS[index], chosen->Ench, 0, shown);
+        item->SetEnchantment(AFFIX_SLOTS[index], chosen->Ench, 0, 0);
+        SetLineBudget(item, index, shown);
     }
 
     item->SetState(ITEM_CHANGED, owner);
@@ -698,6 +730,47 @@ uint32 ItemScoreAffix::GetScore(Item const* item)
         return legacy - SCORE_ENCHANT_BASE;
 
     return 0;
+}
+
+uint32 ItemScoreAffix::GetLineBudget(Item* item, uint32 index)
+{
+    if (!item || index >= AffixSlotCount)
+        return 0;
+
+    ObjectGuid::LowType const itemGuid = item->GetGUID().GetCounter();
+    uint32 const stored = LoadStoredBudget(itemGuid, index);
+    if (stored)
+        return stored;
+
+    // 兼容旧数据：预算曾经存在 charges 或 duration 里
+    uint32 const legacy = item->GetEnchantmentCharges(AFFIX_SLOTS[index])
+        ? item->GetEnchantmentCharges(AFFIX_SLOTS[index])
+        : item->GetEnchantmentDuration(AFFIX_SLOTS[index]);
+    if (legacy)
+    {
+        StoreBudget(itemGuid, index, legacy);
+        item->SetEnchantment(AFFIX_SLOTS[index],
+            item->GetEnchantmentId(AFFIX_SLOTS[index]), 0, 0);
+        return legacy;
+    }
+
+    return 0;
+}
+
+void ItemScoreAffix::SetLineBudget(Item* item, uint32 index, uint32 budget)
+{
+    if (!item || index >= AffixSlotCount)
+        return;
+
+    ObjectGuid::LowType const itemGuid = item->GetGUID().GetCounter();
+    if (!budget)
+        DeleteBudget(itemGuid, index);
+    else
+        StoreBudget(itemGuid, index, budget);
+
+    // 预算不再写进 duration/charges，避免客户端显示“次数”或被装备时清掉
+    item->SetEnchantment(AFFIX_SLOTS[index],
+        item->GetEnchantmentId(AFFIX_SLOTS[index]), 0, 0);
 }
 
 uint32 ItemScoreAffix::GetBudget(Player* owner, Item const* item)
@@ -729,7 +802,7 @@ void ItemScoreAffix::RerollLine(Player* owner, Item* item, uint32 index)
     if (!shown)
         return;
 
-    uint32 const budget = GetLineBudget(item, index, shown);
+    uint32 const budget = ResolveLineBudget(item, index, shown);
     uint32 const mask = MaskForItem(proto);
 
     std::vector<ScoreAffixEntry const*> candidates;
@@ -802,6 +875,7 @@ void ItemScoreAffix::RerollLine(Player* owner, Item* item, uint32 index)
     if (!chosen)
         return;
 
-    item->SetEnchantment(AFFIX_SLOTS[index], chosen->Ench, 0, budget);
+    item->SetEnchantment(AFFIX_SLOTS[index], chosen->Ench, 0, 0);
+    SetLineBudget(item, index, budget);
     item->SetState(ITEM_CHANGED, owner);
 }

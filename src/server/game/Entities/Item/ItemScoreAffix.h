@@ -44,6 +44,10 @@ namespace ItemScoreAffix
     // 当前评分（0 = 没有评分行）
     uint32 GetScore(Item const* item);
 
+    // 单条词条预算（存在 characters.item_score_affix_budget）
+    uint32 GetLineBudget(Item* item, uint32 index);
+    void SetLineBudget(Item* item, uint32 index, uint32 budget);
+
     // 评分上限
     uint32 GetBudget(Player* owner, Item const* item);
 }

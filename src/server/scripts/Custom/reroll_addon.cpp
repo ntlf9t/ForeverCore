@@ -121,18 +121,8 @@ namespace
                 continue;
             }
 
-            uint32 charges = item->GetEnchantmentCharges(affixSlots[i]);
-            if (!charges)
-            {
-                // 兼容旧数据：之前把预算错存在 duration 里
-                uint32 const duration = item->GetEnchantmentDuration(affixSlots[i]);
-                if (duration)
-                {
-                    item->SetEnchantment(affixSlots[i], item->GetEnchantmentId(affixSlots[i]), 0, duration);
-                    charges = duration;
-                }
-            }
-            oss << (charges ? charges : score);
+            uint32 const budget = ItemScoreAffix::GetLineBudget(item, i);
+            oss << (budget ? budget : score);
         }
     }
 
@@ -211,7 +201,11 @@ namespace
             }
 
             for (uint32 s = 0; s < 5; ++s)
-                item->SetEnchantment(slots[s], bestIds[s], 0, s == 0 ? 0 : bestScore);
+            {
+                item->SetEnchantment(slots[s], bestIds[s], 0, 0);
+                if (s > 0)
+                    ItemScoreAffix::SetLineBudget(item, s - 1, bestScore);
+            }
         }
 
         item->SetState(ITEM_CHANGED, player);
