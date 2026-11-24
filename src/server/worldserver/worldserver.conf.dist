@@ -3693,7 +3693,8 @@ CongratsPerLevel.Enable = 1
 #
 #    StarterGuild.Enable
 #    StarterGuild.Announce
-#        Description: Automatically add eligible characters to their faction's starter guild.
+#        Description: Automatically add eligible player characters to their faction's starter guild.
+#                     Bot sessions are always excluded.
 #                     Announce the feature on login when enabled.
 #        Default:     0 - (Disabled)
 #                     1 - (Enabled)

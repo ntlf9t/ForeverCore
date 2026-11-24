@@ -1,9 +1,11 @@
 #include "PlayerMode.h"
 #include "Bag.h"
+#include "CalendarMgr.h"
 #include "Chat.h"
 #include "DB2Stores.h"
 #include "DatabaseEnv.h"
 #include "Item.h"
+#include "Guild.h"
 #include "Log.h"
 #include "Player.h"
 #include "Random.h"
@@ -161,7 +163,21 @@ namespace PlayerMode
 
     void HandleLoneDeath(Player* player)
     {
-        if (!player || !IsLone(player) || player->GetLevel() >= 60)
+        if (!player || !IsLone(player))
+            return;
+
+        if (Guild* guild = player->GetGuild())
+        {
+            std::string const guildName = guild->GetName();
+            sCalendarMgr->RemovePlayerGuildEventsAndSignups(player->GetGUID(), guild->GetId());
+
+            CharacterDatabaseTransaction trans(nullptr);
+            guild->DeleteMember(trans, player->GetGUID(), false, false);
+            ChatHandler(player->GetSession()).PSendSysMessage(
+                "孤勇角色死亡，已自动退出公会 <%s>。", guildName.c_str());
+        }
+
+        if (player->GetLevel() >= 60)
             return;
 
         Data data = Get(player);

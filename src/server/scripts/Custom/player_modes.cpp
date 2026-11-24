@@ -106,7 +106,7 @@ namespace
                 return false;
             }
 
-            handler->SendSysMessage("孤勇模式已开启。禁止组队/交易/邮件/拍卖行，60 级前死亡无法复活。");
+            handler->SendSysMessage("孤勇模式已开启。禁止组队/交易/邮件/拍卖行，死亡自动退出公会，60 级前死亡无法复活。");
             SendModeBuffData(player);
             return true;
         }

@@ -27,6 +27,9 @@ public:
 
     void OnLogin(Player* player, bool firstLogin) override
     {
+        if (player->GetSession()->IsBot())
+            return;
+
         if (!sConfigMgr->GetBoolDefault("StarterGuild.Enable", false, true))
             return;
 
@@ -43,7 +46,8 @@ public:
 
     void OnLevelChanged(Player* player, uint8 oldLevel) override
     {
-        if (!sConfigMgr->GetBoolDefault("StarterGuild.Enable", false, true) || player->GetGuildId())
+        if (player->GetSession()->IsBot() ||
+            !sConfigMgr->GetBoolDefault("StarterGuild.Enable", false, true) || player->GetGuildId())
             return;
 
         int32 level = GetRequiredLevel();
