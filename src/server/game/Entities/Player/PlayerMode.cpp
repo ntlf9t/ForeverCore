@@ -587,9 +587,13 @@ namespace PlayerMode
         ApplyAuras(player);
         SyncTalentPoints(player);
 
+        // 每次重生额外奖励 10000 金，普通/孤勇都有
+        player->ModifyMoney(int64(10000) * GOLD);
+
         reason = "重生完成：等级已回到 1 级，装备/背包/专业保留。";
+        reason += " 本次奖励：10000金";
         if (!rewardText.empty())
-            reason += " 本次奖励：" + rewardText;
+            reason += " + " + rewardText;
         return true;
     }
 }
