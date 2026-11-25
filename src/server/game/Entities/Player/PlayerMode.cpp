@@ -166,6 +166,9 @@ namespace PlayerMode
         if (!player || !IsLone(player))
             return;
 
+        if (player->GetLevel() >= 60)
+            return;
+
         if (Guild* guild = player->GetGuild())
         {
             std::string const guildName = guild->GetName();
@@ -176,9 +179,6 @@ namespace PlayerMode
             ChatHandler(player->GetSession()).PSendSysMessage(
                 "孤勇角色死亡，已自动退出公会 <%s>。", guildName.c_str());
         }
-
-        if (player->GetLevel() >= 60)
-            return;
 
         Data data = Get(player);
         if (data.legacyGiven)

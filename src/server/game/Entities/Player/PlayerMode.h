@@ -48,7 +48,7 @@ namespace PlayerMode
     // 60 级前死亡无法复活（孤勇 / 重生流程中）
     bool IsDeathLocked(Player* player);
 
-    // 孤勇 60 级前永久死亡：全服公告 + 随机遗产
+    // 孤勇 60 级前永久死亡：退出公会、全服公告 + 随机遗产
     void HandleLoneDeath(Player* player);
 
     // 等级变化：孤勇首次到 60 级发奖励（36 格包 + 1 万金）
