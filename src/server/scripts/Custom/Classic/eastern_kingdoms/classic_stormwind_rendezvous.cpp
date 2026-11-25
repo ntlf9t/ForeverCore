@@ -284,6 +284,9 @@ struct classic_npc_squire_rowe : public ScriptedAI
 
     bool OnGossipHello(Player* player) override
     {
+        if (player->GetQuestStatus(QUEST_STORMWIND_RENDEZVOUS) == QUEST_STATUS_INCOMPLETE)
+            player->AreaExploredOrEventHappens(QUEST_STORMWIND_RENDEZVOUS);
+
         if (ClassicIsQuestDone(player, QUEST_STORMWIND_RENDEZVOUS) && !ClassicIsQuestDone(player, QUEST_THE_GREAT_MASQUERADE))
         {
             if (!m_bWindsorUp)
