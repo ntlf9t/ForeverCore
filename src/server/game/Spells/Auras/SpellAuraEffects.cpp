@@ -1603,16 +1603,17 @@ void AuraEffect::HandleShapeshiftBoosts(Unit* target, bool apply) const
 
     if (apply)
     {
-        if (spellId)
+        Difficulty const difficulty = target->GetMap()->GetDifficultyID();
+        if (spellId && sSpellMgr->GetSpellInfo(spellId, difficulty))
             target->CastSpell(target, spellId, this);
 
-        if (spellId2)
+        if (spellId2 && sSpellMgr->GetSpellInfo(spellId2, difficulty))
             target->CastSpell(target, spellId2, this);
 
-        if (spellId3)
+        if (spellId3 && sSpellMgr->GetSpellInfo(spellId3, difficulty))
             target->CastSpell(target, spellId3, this);
 
-        if (spellId4)
+        if (spellId4 && sSpellMgr->GetSpellInfo(spellId4, difficulty))
             target->CastSpell(target, spellId4, this);
 
         if (target->GetTypeId() == TYPEID_PLAYER)

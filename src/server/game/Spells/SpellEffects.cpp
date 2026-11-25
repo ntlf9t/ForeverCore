@@ -612,6 +612,23 @@ void Spell::EffectTriggerSpell()
 
     uint32 triggered_spell_id = effectInfo->TriggerSpell;
 
+    // Spell 3286 ("Bind") from the Classic client now references a retail-only
+    // trigger that is absent from this DB2 set. Reproduce the bind effect here
+    // instead of dropping the cast when that trigger cannot be resolved.
+    if (m_spellInfo->Id == 3286 && triggered_spell_id == 368736 &&
+        effectHandleMode == SPELL_EFFECT_HANDLE_LAUNCH_TARGET &&
+        unitTarget && unitTarget->IsPlayer())
+    {
+        Player* player = unitTarget->ToPlayer();
+        WorldLocation const homeLoc = player->GetWorldLocation();
+        uint32 const areaId = player->GetAreaId();
+
+        player->SetHomebind(homeLoc, areaId);
+        player->SendBindPointUpdate();
+        player->SendPlayerBound(m_caster->GetGUID(), areaId);
+        return;
+    }
+
     /// @todo move those to spell scripts
     if (effectInfo->Effect == SPELL_EFFECT_TRIGGER_SPELL
         && effectHandleMode == SPELL_EFFECT_HANDLE_LAUNCH_TARGET)
