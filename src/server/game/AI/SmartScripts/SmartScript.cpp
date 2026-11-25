@@ -171,9 +171,20 @@ uint32 SmartScript::GetCounterValue(uint32 id) const
     return 0;
 }
 
-GameObject* SmartScript::FindGameObjectNear(WorldObject* searchObject, ObjectGuid::LowType guid) const
+GameObject* SmartScript::FindGameObjectNear(WorldObject* searchObject, ObjectGuid::LowType guid, bool loadGrid) const
 {
-    auto bounds = searchObject->GetMap()->GetGameObjectBySpawnIdStore().equal_range(guid);
+    Map* map = searchObject->GetMap();
+    auto bounds = map->GetGameObjectBySpawnIdStore().equal_range(guid);
+    if (loadGrid && bounds.first == bounds.second)
+    {
+        if (GameObjectData const* data = sObjectMgr->GetGameObjectData(guid);
+            data && data->mapId == map->GetId())
+        {
+            map->LoadGrid(data->spawnPoint.GetPositionX(), data->spawnPoint.GetPositionY());
+            bounds = map->GetGameObjectBySpawnIdStore().equal_range(guid);
+        }
+    }
+
     if (bounds.first == bounds.second)
         return nullptr;
 
@@ -3041,7 +3052,7 @@ void SmartScript::GetTargets(ObjectVector& targets, SmartScriptHolder const& e, 
                 break;
             }
 
-            if (GameObject* target = FindGameObjectNear(scriptTrigger ? scriptTrigger : baseObject, e.target.goGUID.dbGuid))
+            if (GameObject* target = FindGameObjectNear(scriptTrigger ? scriptTrigger : baseObject, e.target.goGUID.dbGuid, true))
                 if (!e.target.goGUID.entry || target->GetEntry() == e.target.goGUID.entry)
                     targets.push_back(target);
             break;

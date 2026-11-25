@@ -88,7 +88,7 @@ class TC_GAME_API SmartScript
         void StoreCounter(uint32 id, uint32 value, uint32 reset);
         uint32 GetCounterValue(uint32 id) const;
 
-        GameObject* FindGameObjectNear(WorldObject* searchObject, ObjectGuid::LowType guid) const;
+        GameObject* FindGameObjectNear(WorldObject* searchObject, ObjectGuid::LowType guid, bool loadGrid = false) const;
         Creature* FindCreatureNear(WorldObject* searchObject, ObjectGuid::LowType guid) const;
 
         void OnReset();
