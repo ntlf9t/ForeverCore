@@ -27276,7 +27276,7 @@ void Player::SendAurasForTarget(Unit* target) const
         uint32 spellId = auraApp->GetBase()->GetId();
         if (spellId == 6673 || spellId >= 930000)
         {
-            TC_LOG_INFO("server.loading",
+            TC_LOG_TRACE("server.loading",
                 ">> AURA send player={} target={} entry={} total={} spell={} flags={} dur={} maxdur={}",
                 GetName(), target->GetName(), target->GetEntry(), uint32(visibleAuras.size()), spellId,
                 uint32(auraApp->GetFlags()), auraApp->GetBase()->GetDuration(), auraApp->GetBase()->GetMaxDuration());

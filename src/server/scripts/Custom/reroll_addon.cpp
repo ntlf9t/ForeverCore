@@ -419,10 +419,10 @@ namespace
             for (uint8 s = INVENTORY_SLOT_ITEM_START; s < INVENTORY_SLOT_ITEM_END; ++s)
             {
                 if (Item* it = player->GetItemByPos(INVENTORY_SLOT_BAG_0, s))
-                    TC_LOG_INFO("server.loading", "   backpack slot={} entry={} guid={}", s, it->GetEntry(), it->GetGUID().ToString());
+                    TC_LOG_TRACE("server.loading", "   backpack slot={} entry={} guid={}", s, it->GetEntry(), it->GetGUID().ToString());
             }
         }
-        TC_LOG_INFO("server.loading", ">> REROLL cmd={} bag={} slot={} item={}", cmd, bag, slot, item ? item->GetEntry() : 0);
+        TC_LOG_TRACE("server.loading", ">> REROLL cmd={} bag={} slot={} item={}", cmd, bag, slot, item ? item->GetEntry() : 0);
         if (!item)
         {
             Reply(player, "err;noitem");
@@ -469,12 +469,12 @@ public:
 
     void OnChat(Player* player, uint32 /*type*/, uint32 /*lang*/, std::string& msg) override
     {
-        TC_LOG_INFO("server.loading", ">> CHAT hook: {}", msg);
+        TC_LOG_TRACE("server.loading", ">> CHAT hook: {}", msg);
 
         if (msg.rfind(PROTOCOL_PREFIX, 0) != 0)
             return;
 
-        TC_LOG_INFO("server.loading", ">> REROLL protocol recv: {}", msg);
+        TC_LOG_TRACE("server.loading", ">> REROLL protocol recv: {}", msg);
 
         HandleProtocol(player, msg);
         msg.clear();   // 不广播给其他人

@@ -361,7 +361,7 @@ namespace CreatureRandomBuff
 
         if (map->IsDungeon() || info.treasure || HasNearbyPlayer(creature, 100.0f))
         {
-            TC_LOG_INFO("server.loading",
+            TC_LOG_TRACE("server.loading",
                 ">> CRB apply entry={} name={} buffs=[{}] count={} percent={} mult={:.2f} treasure={} visible={}",
                 creature->GetEntry(), creature->GetName(), pickedNames, uint32(info.count), info.percentSum,
                 info.lootMultiplier, info.treasure ? 1 : 0, uint32(creature->GetVisibleAuras().size()));
