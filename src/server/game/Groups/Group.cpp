@@ -399,11 +399,11 @@ bool Group::AddInvite(Player* player)
     if (!player || player->GetGroupInvite())
         return false;
 
-    // 孤勇模式：不能邀请别人，也不能被别人邀请
-    if (PlayerMode::IsLone(player))
+    // 孤勇模式：不能组普通小队；但允许加入已经是团队（raid）的队伍，方便进团本
+    if (PlayerMode::IsLone(player) && !isRaidGroup())
         return false;
     if (Player* leader = ObjectAccessor::FindConnectedPlayer(GetLeaderGUID()))
-        if (PlayerMode::IsLone(leader))
+        if (PlayerMode::IsLone(leader) && !isRaidGroup())
             return false;
 
     Group* group = player->GetGroup();
@@ -474,11 +474,11 @@ Player* Group::GetInvited(const std::string& name) const
 
 bool Group::AddMember(Player* player)
 {
-    // 孤勇模式：不能被任何途径加进队伍（包括机器人/脚本/GM 强制）
-    if (PlayerMode::IsLone(player))
+    // 孤勇模式：不能被加进普通小队；但可以加入已经是团队（raid）的队伍
+    if (PlayerMode::IsLone(player) && !isRaidGroup())
         return false;
     if (Player* leader = ObjectAccessor::FindConnectedPlayer(GetLeaderGUID()))
-        if (PlayerMode::IsLone(leader))
+        if (PlayerMode::IsLone(leader) && !isRaidGroup())
             return false;
 
     // Get first not-full group
