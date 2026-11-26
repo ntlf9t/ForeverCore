@@ -50,6 +50,7 @@
 #include "ObjectMgr.h"
 #include "Pet.h"
 #include "PhasingHandler.h"
+#include "PlayerMode.h"
 #include "PoolMgr.h"
 #include "ScriptMgr.h"
 #include "SpellAuras.h"
@@ -2003,7 +2004,7 @@ TransferAbortParams Map::PlayerCannotEnter(uint32 mapid, Player* player)
     }
 
     if (entry->IsRaid() && entry->Expansion() >= sWorld->getIntConfig(CONFIG_EXPANSION)) // can only enter in a raid group but raids from old expansion don't need a group
-        if ((!group || !group->isRaidGroup()) && !sWorld->getBoolConfig(CONFIG_INSTANCE_IGNORE_RAID))
+        if ((!group || !group->isRaidGroup()) && !sWorld->getBoolConfig(CONFIG_INSTANCE_IGNORE_RAID) && !PlayerMode::IsLone(player))
             return TRANSFER_ABORT_NEED_GROUP;
 
     if (entry->Instanceable())
