@@ -51,7 +51,7 @@ inline ::Playerbot::V2::BotGuildMgr::Faction FactionOf(BotSnapshotView const& s)
 }
 
 // ---------- Shared "guildless + quiet" outer gate ----------
-bool GuildlessQuietGate(BotSnapshotView const& s, BotAI&, GroupSnapshotView const& g, uint32)
+bool GuildlessQuietGate(BotSnapshotView const& s, BotAI&, GroupSnapshotView const&, uint32)
 {
     if (s.raw().guild.id != 0) return false;
     if (s.in_combat() || s.is_casting()) return false;
@@ -69,7 +69,7 @@ bool CharterDriveGate(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView con
     return Services::Guilds().ActiveFounderLow(kFaction) == me_low;
 }
 
-bool CharterDriveFire(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const& g, BotIntentEmitter& emit, uint32)
+bool CharterDriveFire(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const&, BotIntentEmitter& emit, uint32)
 {
     const auto kFaction = FactionOf(s);
     const uint32 now_ms = GameTime::GetGameTimeMS();
@@ -306,7 +306,7 @@ bool CharterSignGate(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView cons
     return founder_low != 0 && founder_low != me_low;
 }
 
-bool CharterSignFire(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const& g, BotIntentEmitter& emit, uint32)
+bool CharterSignFire(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const&, BotIntentEmitter& emit, uint32)
 {
     const auto kFaction = FactionOf(s);
     const uint64 founder_low = Services::Guilds().ActiveFounderLow(kFaction);
@@ -335,7 +335,7 @@ bool CharterSignFire(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView cons
 }
 
 // ---------- idle:guild_recruit_nearby ----------
-bool RecruitNearbyGate(BotSnapshotView const& s, BotAI&, GroupSnapshotView const& g, uint32)
+bool RecruitNearbyGate(BotSnapshotView const& s, BotAI&, GroupSnapshotView const&, uint32)
 {
     if (s.raw().guild.id == 0) return false;
     // #4C: snapshot-resolved flag (builder ran IsBotManaged world-thread)
@@ -363,7 +363,7 @@ inline bool RecruitArchetypeBiasPasses(BotSnapshotView const& s, BotAI& ai)
     return ai.rng().int_range(0, 3) == 0;
 }
 
-bool RecruitNearbyFire(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const& g, BotIntentEmitter& emit, uint32)
+bool RecruitNearbyFire(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const&, BotIntentEmitter& emit, uint32)
 {
     const uint32 rec_now_ms = GameTime::GetGameTimeMS();
     const uint64 rec_self_key = uint64(0xDEAD'BEEF'0000'0000ULL)
@@ -412,7 +412,7 @@ bool RecruitNearbyFire(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView co
 }
 
 // ---------- Shared guild-chat outer gate ----------
-bool GuildChatQuietGate(BotSnapshotView const& s, BotAI&, GroupSnapshotView const& g, uint32)
+bool GuildChatQuietGate(BotSnapshotView const& s, BotAI&, GroupSnapshotView const&, uint32)
 {
     if (s.guild_id() == 0) return false;
     // #4C: snapshot-resolved flag replaces the per-tick worker-thread lookup.
@@ -430,7 +430,7 @@ bool ChatDingGate(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const& 
     return s.level() > ai.guild_chat_last_ding_level();
 }
 
-bool ChatDingFire(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const& g, BotIntentEmitter& emit, uint32)
+bool ChatDingFire(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const&, BotIntentEmitter& emit, uint32)
 {
     if (ai.guild_chat_last_ding_level() == 0)
     {
@@ -459,7 +459,7 @@ bool ChatLoginGreetGate(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView c
            s.guild_online_member_count() >= 2;
 }
 
-bool ChatLoginGreetFire(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const& g, BotIntentEmitter& emit, uint32)
+bool ChatLoginGreetFire(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const&, BotIntentEmitter& emit, uint32)
 {
     static constexpr char const* kGreetVariants[] = {
         "hi all", "hey :)", "o/", "hello!", "evening", "yo",
@@ -491,7 +491,7 @@ bool ChatSmalltalkGate(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView co
     return ai.rng().int_range(0, 100) == 0;
 }
 
-bool ChatSmalltalkFire(BotSnapshotView const&, BotAI& ai, GroupSnapshotView const& g, BotIntentEmitter& emit, uint32)
+bool ChatSmalltalkFire(BotSnapshotView const&, BotAI& ai, GroupSnapshotView const&, BotIntentEmitter& emit, uint32)
 {
     static constexpr char const* kSmalltalkVariants[] = {
         "anyone need help with anything?", "what's good tonight folks",
@@ -542,7 +542,7 @@ bool ChatTavernHangoutGate(BotSnapshotView const& s, BotAI& ai, GroupSnapshotVie
     return cluster >= 2 && ai.rng().int_range(0, 50) == 0;
 }
 
-bool ChatTavernHangoutFire(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const& g, BotIntentEmitter& emit, uint32)
+bool ChatTavernHangoutFire(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const&, BotIntentEmitter& emit, uint32)
 {
     const auto kHFaction = FactionOf(s);
     char const* venue = (kHFaction == ::Playerbot::V2::BotGuildMgr::FACTION_ALLIANCE)
@@ -571,7 +571,7 @@ bool ChatRivalBanterGate(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView 
     return false;
 }
 
-bool ChatRivalBanterFire(BotSnapshotView const&, BotAI& ai, GroupSnapshotView const& g, BotIntentEmitter& emit, uint32)
+bool ChatRivalBanterFire(BotSnapshotView const&, BotAI& ai, GroupSnapshotView const&, BotIntentEmitter& emit, uint32)
 {
     static constexpr char const* kRivalLines[] = {
         "rival guild spotted", "show them how it's done",
@@ -614,7 +614,7 @@ bool ChatQuestBragGate(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView co
     return true;
 }
 
-bool ChatQuestBragFire(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const& g, BotIntentEmitter& emit, uint32)
+bool ChatQuestBragFire(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const&, BotIntentEmitter& emit, uint32)
 {
     ai.set_guild_chat_last_seen_quest_count(s.completed_quest_count());
     static constexpr char const* kBragVariants[] = {
@@ -654,7 +654,7 @@ bool ChatLfmPulseGate(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView con
     return over_threshold && cooldown_ok;
 }
 
-bool ChatLfmPulseFire(BotSnapshotView const&, BotAI& ai, GroupSnapshotView const& g, BotIntentEmitter& emit, uint32)
+bool ChatLfmPulseFire(BotSnapshotView const&, BotAI& ai, GroupSnapshotView const&, BotIntentEmitter& emit, uint32)
 {
     emit.guild_chat("LFM for a dungeon, anyone?");
     ai.note_guild_chat_lfm(GameTime::GetGameTimeMS());
@@ -669,7 +669,7 @@ bool EventAnnounceGate(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView co
     return s.guild_has_pending_callout() && s.guild_rank_id() <= 1;
 }
 
-bool EventAnnounceFire(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const& g, BotIntentEmitter& emit, uint32)
+bool EventAnnounceFire(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const&, BotIntentEmitter& emit, uint32)
 {
     ::Playerbot::V2::GuildEventKind k = ::Playerbot::V2::GuildEventKind::None;
     uint16_t mins_until = 0;
@@ -878,7 +878,7 @@ bool RecruitChannelGate(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView c
     return ai.rng().int_range(0, 20) == 0;
 }
 
-bool RecruitChannelFire(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const& g, BotIntentEmitter& emit, uint32)
+bool RecruitChannelFire(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const&, BotIntentEmitter& emit, uint32)
 {
     const uint32 chan_now_ms = GameTime::GetGameTimeMS();
     if (!Services::Guilds().TryClaimRecruitChannelPost(s.guild_id(), chan_now_ms))
@@ -889,7 +889,7 @@ bool RecruitChannelFire(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView c
 }
 
 // ---------- idle:guild_chat_babble ----------
-bool ChatBabbleGate(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const& g, uint32)
+bool ChatBabbleGate(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const&, uint32)
 {
     if (!s.in_guild()) return false;
     // SC-P3c: babble is the lowest-value self-initiated ambient guild
@@ -917,7 +917,7 @@ bool ChatBabbleGate(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const
            (now_ms - last_babble) >= kBabbleThrottleMs;
 }
 
-bool ChatBabbleFire(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const& g, BotIntentEmitter& emit, uint32)
+bool ChatBabbleFire(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const&, BotIntentEmitter& emit, uint32)
 {
     constexpr uint32 kBabbleThrottleMs = 30u * 60u * 1000u;
     const uint32 now_ms = s.published_at_ms();

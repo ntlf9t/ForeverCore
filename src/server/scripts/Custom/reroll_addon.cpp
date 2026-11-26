@@ -189,7 +189,6 @@ namespace
 
     void DoScore(Player* player, Item* item, bool batch)
     {
-        ItemTemplate const* proto = item->GetTemplate();
         uint32 const cost = CostForItem(player, item) * (batch ? BATCH_TIMES : 1);
 
         if (player->GetMoney() < cost)
@@ -257,7 +256,6 @@ namespace
             return;
         }
 
-        ItemTemplate const* proto = item->GetTemplate();
         uint32 const cost = CostForItem(player, item);
 
         if (player->GetMoney() < cost)

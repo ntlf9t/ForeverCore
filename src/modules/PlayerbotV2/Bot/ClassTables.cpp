@@ -189,7 +189,7 @@ uint32 ClassInterrupt(uint8 cls, uint32 spec)
     }
 }
 
-uint32 ClassCC(uint8 cls, uint32 spec)
+uint32 ClassCC(uint8 cls, uint32 /*spec*/)
 {
     // Single canonical CC per class. Many classes have multiple CCs
     // (Mage Poly + Frost Nova; Hunter Trap + Sleep Dart) — we pick

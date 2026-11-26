@@ -1366,7 +1366,7 @@ bool EdgeUsable(Player const* bot,
     // Source-node faction gate: flight masters / portals tagged Alliance
     // or Horde aren't usable by the opposing team. Neutral (faction=0)
     // is fine for anyone.
-    if (bot && src_node.faction != 0 && src_node.faction != bot->GetTeam())
+    if (bot && src_node.faction != 0 && uint32(src_node.faction) != uint32(bot->GetTeam()))
         return false;
     // T-P1b: Taxi edges may only be taken to a flight master the bot has
     // already DISCOVERED. The server refuses CMSG_ACTIVATE_TAXI for an

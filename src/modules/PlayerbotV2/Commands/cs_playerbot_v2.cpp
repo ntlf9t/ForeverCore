@@ -6817,17 +6817,18 @@ public:
                     || !c->CanHaveLoot() || c->IsInCombat())
                     continue;
                 CreatureDifficulty const* difficulty = c->GetCreatureDifficulty();
-                if (!difficulty || difficulty->GetRequiredLootSkill() != skill || !LootTemplates_Skinning.HaveLootFor(difficulty->SkinLootID))
+                if (!difficulty || uint32(difficulty->GetRequiredLootSkill()) != skill ||
+                    !LootTemplates_Skinning.HaveLootFor(difficulty->SkinLootID))
                     continue;
                 float const d = p->GetDistance(c);
                 if (d <= 150.0f)
                     candidates.emplace_back(d, c);
             }
             std::ranges::sort(candidates, {}, &std::pair<float, Creature*>::first);
-            if (candidates.size() > beasts)
+            if (candidates.size() > std::size_t(beasts))
                 candidates.resize(beasts);
             uint32 const spawned = uint32(candidates.size());
-            if (beastEntry && candidates.size() < beasts)
+            if (beastEntry && candidates.size() < std::size_t(beasts))
             {
                 if (!sObjectMgr->GetCreatureTemplate(*beastEntry))
                     say(Trinity::StringFormat("{}: no creature template {}, nothing summoned", label, *beastEntry));

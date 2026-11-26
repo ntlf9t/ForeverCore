@@ -9435,7 +9435,8 @@ Result API::apply_classic_talents()
                 break;
             if (std::ranges::find(path, int32(edge->LeftTraitNodeID)) != path.end())
                 continue;
-            auto info = std::ranges::find(configNodes, edge->LeftTraitNodeID, &TraitMgr::NodeEntryInfo::TraitNodeID);
+            auto info = std::ranges::find(configNodes, int32(edge->LeftTraitNodeID),
+                                          &TraitMgr::NodeEntryInfo::TraitNodeID);
             if (info == configNodes.end())
                 continue;
 
@@ -9748,7 +9749,8 @@ Result API::apply_classic_talents()
                 std::string parents;
                 for (TraitEdgeEntry const* edge : TraitEdgesInto(node->TraitNodeID))
                 {
-                    auto info = std::ranges::find(configNodes, edge->LeftTraitNodeID, &TraitMgr::NodeEntryInfo::TraitNodeID);
+                    auto info = std::ranges::find(configNodes, int32(edge->LeftTraitNodeID),
+                                                  &TraitMgr::NodeEntryInfo::TraitNodeID);
                     int32 held = 0;
                     for (WorldPackets::Traits::TraitEntry const& e : cfg.Entries)
                         if (info != configNodes.end() && e.TraitNodeID == info->TraitNodeID && e.TraitNodeEntryID == info->TraitNodeEntryID)

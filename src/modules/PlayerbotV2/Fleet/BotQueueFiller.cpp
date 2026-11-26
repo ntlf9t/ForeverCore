@@ -385,8 +385,6 @@ void BotQueueFiller::Fill(FillRequest const& req)
         // LFG → matcher never picks them as a healer. Fix: prefer scarce
         // roles (T > H > D) for hybrid classes in pass 1 itself, doing the
         // respec inline. Lockout still gates churn.
-        bool const has_tank_path   = TankSpecForClass(cls) != 0;
-        bool const has_healer_path = HealerSpecForClass(cls) != 0;
         BotAI* respec_ai_p1 = Services::Registry().ai(id);
         uint32 const lockout_now_ms = getMSTime();
         auto inline_respec = [&](uint32 target_spec) -> bool

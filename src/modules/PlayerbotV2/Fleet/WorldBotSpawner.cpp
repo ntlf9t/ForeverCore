@@ -3400,7 +3400,7 @@ void WorldBotSpawner::DriveTravelSoak(uint32 now_ms)
         GraphNode const* n = graph.GetNode(NodeId(urand(0, uint32(nodes - 1))));
         if (!n) continue;
         if (n->kind != NodeKind::FlightMaster && n->kind != NodeKind::Capital && n->kind != NodeKind::QuestHub && n->kind != NodeKind::Dock) continue;
-        if (n->faction != 0 && n->faction != bot->GetTeam()) continue;
+        if (n->faction != 0 && uint32(n->faction) != uint32(bot->GetTeam())) continue;
         if (n->map_id == bot->GetMapId() && Dist2D(n->x, n->y, bot->GetPositionX(), bot->GetPositionY()) < 300.0f) continue;
         dest = n;
     }

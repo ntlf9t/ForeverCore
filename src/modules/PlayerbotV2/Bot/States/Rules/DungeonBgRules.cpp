@@ -20,7 +20,7 @@ namespace Playerbot {
 
 namespace {
 
-bool DungeonDispatchGate(BotSnapshotView const& s, BotAI& ai,
+bool DungeonDispatchGate(BotSnapshotView const&, BotAI& ai,
                          GroupSnapshotView const&, uint32)
 {
     return ai.dungeon_active();

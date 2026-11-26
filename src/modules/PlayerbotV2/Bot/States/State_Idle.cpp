@@ -1595,7 +1595,7 @@ static void DungeonStepHoldDiag(BotSnapshotView const& s, char const* rule_tag,
 // destination and must NOT claim the tick for it — fall through so the
 // next rule/candidate gets tried instead. Gated on the same kill switch as
 // the step-hold family (one concept: spline/emit protection, no new key).
-static bool DungeonStepRefused(BotSnapshotView const& s, BotAI& ai,
+static bool DungeonStepRefused(BotSnapshotView const&, BotAI& ai,
                                float tx, float ty, float tz, uint32 now_ms)
 {
     if (!Services::Config().move_step_hold_enabled())
@@ -7511,7 +7511,7 @@ bool BgTryUseObjectiveGo(BotSnapshotView const& s, BotAI& ai,
 bool BgPushThroughNodes(BotSnapshotView const& s, BotAI& ai,
                         BotIntentEmitter& emit,
                         BattlegroundAdvice const& bg_advice,
-                        float tx, float ty, float tz, uint32 now_ms)
+                        float tx, float ty, float tz, uint32 /*now_ms*/)
 {
     float bx = 0.f, by = 0.f, bz = 0.f; s.position(bx, by, bz);
     const float gdx = tx - bx, gdy = ty - by;
@@ -9872,7 +9872,7 @@ bool DungeonDispatch(BotSnapshotView const& s, BotAI& ai,
             // The two position holds (a healer out of range, too few of the group near the tank) wait for the group to walk up, for at
             // most kPullPositionHoldCapMs per hold, so a straggler that cannot get there never freezes the run (same clock idiom as above).
             // A dead member still holds without a cap: the dead are rezzed, not left behind.
-            constexpr uint32 kPullPositionHoldCapMs = 30000;
+            enum : uint32 { kPullPositionHoldCapMs = 30000 };
             static std::mutex position_hold_mu;
             static std::unordered_map<uint64, std::pair<uint32, uint32>> far_holds, cohesion_holds;   // tank -> {since, last asked}
             auto still_held = [&](std::unordered_map<uint64, std::pair<uint32, uint32>>& holds, bool cond, char const* why) -> bool
@@ -11342,7 +11342,6 @@ bool DungeonDispatch(BotSnapshotView const& s, BotAI& ai,
                                 // advance, so a self-looping corridor cannot ping-pong us.
                                 if (!wp_found && advice.route_waypoints.size() >= 2)
                                 {
-                                    const int n = static_cast<int>(advice.route_waypoints.size());
                                     auto crumb_d = [&](int i) -> float {
                                         auto const& rw = advice.route_waypoints[i];
                                         const float dx = rw.x - bx_adv, dy = rw.y - by_adv,
@@ -17773,7 +17772,7 @@ bool DriveRecommendedTaxi(BotSnapshotView const& s, BotAI& ai, BotIntentEmitter&
 // (depth >= 1 inside nested `[&](...)` bodies) are preserved.
 // Falls through to `return false;` when no sub-rule fired.
 bool AutoactDispatch(BotSnapshotView const& s, BotAI& ai,
-                    GroupSnapshotView const& g,
+                    GroupSnapshotView const&,
                     BotIntentEmitter& emit)
 {
     // can_autoact gate, replicating the original inline guard — with one

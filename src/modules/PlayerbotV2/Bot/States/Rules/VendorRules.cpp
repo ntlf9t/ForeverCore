@@ -898,7 +898,7 @@ bool CapitalBagRunFire(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView co
 // does is hearth to the town they are bound in, sell, and come back. Once per full-bag episode; the hearthstone's own cooldown bounds it.
 constexpr float kBagHearthMinYards = 1200.0f;   // nearer than this the walk to the bound town is the better way
 
-bool BagHearthGate(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const&, uint32 now_ms)
+bool BagHearthGate(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const&, uint32 /*now_ms*/)
 {
     constexpr uint8 kVvBagFull = 1u << 1;
     if ((s.vendor_visit_phases_pending() & kVvBagFull) == 0) return false;

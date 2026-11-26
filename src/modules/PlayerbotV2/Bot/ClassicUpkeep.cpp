@@ -452,7 +452,8 @@ uint32 OwnerTotem(BotSnapshotView const& s, Element e, uint32 pin)
 
 uint32 DesiredTotem(BotSnapshotView const& s, GroupSnapshotView const& g, Element e)
 {
-    if (uint32 const pin = s.owner_pick(OwnerPicks::Slot(OwnerPicks::TotemEarth + e)); pin && s.knows_spell(pin))
+    if (uint32 const pin = s.owner_pick(OwnerPicks::Slot(
+            static_cast<uint8>(OwnerPicks::TotemEarth) + static_cast<uint8>(e))); pin && s.knows_spell(pin))
         return OwnerTotem(s, e, pin);
     bool const self_melee = !ShamanIsCaster(s.spec());
     auto const melee_mate = [](GroupMemberSummary const& m) { return m.role == Role::Tank || IsMeleeSpec(m.cls, m.spec); };
