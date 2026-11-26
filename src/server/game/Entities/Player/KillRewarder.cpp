@@ -17,6 +17,7 @@
 
 #include "KillRewarder.h"
 #include "Creature.h"
+#include "CreatureRandomBuff.h"
 #include "DB2Stores.h"
 #include "FlatSet.h"
 #include "Formulas.h"
@@ -169,6 +170,9 @@ inline void KillRewarder::_RewardXP(Player* player, float rate)
         // 4.2.2. Apply auras modifying rewarded XP (SPELL_AURA_MOD_XP_PCT and SPELL_AURA_MOD_XP_FROM_CREATURE_TYPE).
         xp *= player->GetTotalAuraMultiplier(SPELL_AURA_MOD_XP_PCT);
         xp *= player->GetTotalAuraMultiplierByMiscValue(SPELL_AURA_MOD_XP_FROM_CREATURE_TYPE, int32(_victim->GetCreatureType()));
+
+        // 怪物随机 Buff：经验与掉落、金币使用同一个风险倍率
+        xp = uint32(float(xp) * CreatureRandomBuff::GetLootMultiplier(_victim->GetGUID()));
 
         // 4.2.3. Give XP to player.
         player->GiveXP(xp, _victim, _groupRate);

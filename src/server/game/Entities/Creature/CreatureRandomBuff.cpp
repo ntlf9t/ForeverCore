@@ -24,7 +24,7 @@
 namespace
 {
     constexpr uint8 MAX_BUFFS = 3;
-    constexpr float MAX_LOOT_MULTIPLIER = 16.0f;
+    constexpr float MAX_LOOT_MULTIPLIER = 46.0f;
 
     struct BuffRow
     {
@@ -301,8 +301,21 @@ namespace CreatureRandomBuff
         if (has80Reduction)
             state.info.dangerPercent = std::max(state.info.dangerPercent, 300);
 
-        state.info.lootMultiplier = 1.0f + float(state.info.percentSum) / 100.0f
-            + (state.info.treasure ? 9.0f : 0.0f);
+        // 奖励 = 80%减伤固定10 + 宝藏固定10 + 其它Buff百分比
+        // 总和达到300%后整体再×2，上限46
+        float reward = 0.0f;
+        if (has80Reduction)
+            reward += 10.0f;
+        if (state.info.treasure)
+            reward += 10.0f;
+
+        uint32 const otherPercent = state.info.percentSum - (has80Reduction ? 80 : 0);
+        reward += float(otherPercent) / 100.0f;
+
+        if (state.info.percentSum >= 300)
+            reward *= 2.0f;
+
+        state.info.lootMultiplier = std::max(1.0f, reward);
         if (state.info.lootMultiplier > MAX_LOOT_MULTIPLIER)
             state.info.lootMultiplier = MAX_LOOT_MULTIPLIER;
         state.info.buffs = pickedNames;
