@@ -23,6 +23,7 @@ namespace PlayerMode
     {
         bool chosen = false;        // 是否已选择过模式
         bool lone = false;          // 孤勇
+        bool loneExited = false;    // 已退出孤勇，保留固定的 +30% 伤害/生命
         uint32 loneDamage = 0;      // 孤勇增伤 %
         uint32 loneHealth = 0;      // 孤勇生命 %
         uint32 loneTaken = 0;       // 孤勇承伤 %（负面）
@@ -60,6 +61,10 @@ namespace PlayerMode
     // 选择孤勇：校验等级/金币/银行/物品绑定
     bool CanChooseLone(Player* player, std::string& reason);
     bool ChooseLone(Player* player, std::string& reason);
+
+    // 60 级退出孤勇：解除组队/交易等限制，保留固定 +30% 伤害和 +30% 生命
+    bool CanExitLone(Player* player, std::string& reason);
+    bool ExitLone(Player* player, std::string& reason);
 
     // 重生（后续阶段实现）
     bool CanRebirth(Player* player, std::string& reason);
