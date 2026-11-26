@@ -9304,8 +9304,14 @@ void Player::ApplyEquipSpell(SpellInfo const* spellInfo, Item* item, bool apply,
 
         SpellCastResult const castResult = CastSpell(this, spellInfo->Id, item);
         if (castResult != SPELL_CAST_OK)
-            TC_LOG_ERROR("spells", "Player::ApplyEquipSpell: {} ({}) equip spell {} of item {} was not applied: cast result {}",
-                GetName(), GetGUID().ToString(), spellInfo->Id, item ? item->GetEntry() : 0, uint32(castResult));
+        {
+            if (castResult == SPELL_FAILED_BAD_IMPLICIT_TARGETS || castResult == SPELL_FAILED_INCORRECT_AREA)
+                TC_LOG_DEBUG("spells", "Player::ApplyEquipSpell: {} ({}) equip spell {} of item {} skipped: cast result {}",
+                    GetName(), GetGUID().ToString(), spellInfo->Id, item ? item->GetEntry() : 0, uint32(castResult));
+            else
+                TC_LOG_ERROR("spells", "Player::ApplyEquipSpell: {} ({}) equip spell {} of item {} was not applied: cast result {}",
+                    GetName(), GetGUID().ToString(), spellInfo->Id, item ? item->GetEntry() : 0, uint32(castResult));
+        }
     }
     else
     {

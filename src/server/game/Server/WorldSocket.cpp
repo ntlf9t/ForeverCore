@@ -480,7 +480,10 @@ WorldSocket::ReadDataHandlerResult WorldSocket::ReadDataHandler()
 
             if (!opcodeTable[opcode])
             {
-                TC_LOG_ERROR("network.opcode", "WorldSocket::ReadDataHandler: No defined handler for opcode {} sent by {}", GetOpcodeNameForLogging(opcode), _worldSession->GetPlayerInfo());
+                if (uint32(opcode) == 0x3D013D)
+                    TC_LOG_DEBUG("network.opcode", "WorldSocket::ReadDataHandler: Ignoring unsupported Classic opcode 0x3D013D sent by {}", _worldSession->GetPlayerInfo());
+                else
+                    TC_LOG_ERROR("network.opcode", "WorldSocket::ReadDataHandler: No defined handler for opcode {} sent by {}", GetOpcodeNameForLogging(opcode), _worldSession->GetPlayerInfo());
                 break;
             }
 

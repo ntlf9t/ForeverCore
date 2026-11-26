@@ -970,7 +970,7 @@ class classic_spell_warr_execute : public SpellScript
         SpellCastResult result = warrior->CastSpell(target, SPELL_WARRIOR_EXECUTE_DAMAGE, CastSpellExtraArgs(TRIGGERED_FULL_MASK)
             .SetTriggeringSpell(GetSpell())
             .AddSpellBP0(damage));
-        TC_LOG_ERROR("scripts.classic", "Execute {}: damage spell {} on {} for {} (extra rage {}) -> cast result {}",
+        TC_LOG_DEBUG("scripts.classic", "Execute {}: damage spell {} on {} for {} (extra rage {}) -> cast result {}",
             GetSpellInfo()->Id, SPELL_WARRIOR_EXECUTE_DAMAGE, target->GetGUID().ToString(), damage, extraRage, uint32(result));
         warrior->SetPower(POWER_RAGE, 0);
     }
@@ -989,7 +989,7 @@ class classic_spell_warr_overpower_probe : public SpellScript
     SpellCastResult CheckCastProbe()
     {
         Unit* warrior = GetCaster();
-        TC_LOG_ERROR("scripts.classic", "Overpower {}: combo points held {}, combo cost in the cast {}, rage {}, triggered {}",
+        TC_LOG_DEBUG("scripts.classic", "Overpower {}: combo points held {}, combo cost in the cast {}, rage {}, triggered {}",
             GetSpellInfo()->Id, warrior->GetPower(POWER_COMBO_POINTS), GetSpell()->GetPowerTypeCostAmount(POWER_COMBO_POINTS).value_or(-1),
             warrior->GetPower(POWER_RAGE), GetSpell()->IsTriggered());
         return SPELL_CAST_OK;
@@ -1007,19 +1007,19 @@ class classic_spell_warr_execute_damage_probe : public SpellScript
 {
     SpellCastResult CheckCastProbe()
     {
-        TC_LOG_ERROR("scripts.classic", "Execute damage 20647: check cast, triggered {}, explicit target {}", GetSpell()->IsTriggered(),
+        TC_LOG_DEBUG("scripts.classic", "Execute damage 20647: check cast, triggered {}, explicit target {}", GetSpell()->IsTriggered(),
             GetExplTargetUnit() ? GetExplTargetUnit()->GetName() : "none");
         return SPELL_CAST_OK;
     }
 
     void LaunchProbe(SpellEffIndex /*effIndex*/)
     {
-        TC_LOG_ERROR("scripts.classic", "Execute damage 20647: effect launch on {}, effect value {}", GetHitUnit() ? GetHitUnit()->GetName() : "none", GetEffectValue());
+        TC_LOG_DEBUG("scripts.classic", "Execute damage 20647: effect launch on {}, effect value {}", GetHitUnit() ? GetHitUnit()->GetName() : "none", GetEffectValue());
     }
 
     void HitProbe()
     {
-        TC_LOG_ERROR("scripts.classic", "Execute damage 20647: hit {}, damage {}", GetHitUnit() ? GetHitUnit()->GetName() : "none", GetHitDamage());
+        TC_LOG_DEBUG("scripts.classic", "Execute damage 20647: hit {}, damage {}", GetHitUnit() ? GetHitUnit()->GetName() : "none", GetHitDamage());
     }
 
     void Register() override

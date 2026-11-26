@@ -19,6 +19,7 @@
 #include "Errors.h"
 #include "Log.h"
 #include <google/protobuf/message.h>
+#include <string_view>
 
 void ServiceBase::LogDisallowedMethod(uint32 methodId)
 {
@@ -40,7 +41,13 @@ void ServiceBase::LogCallServerMethod(char const* methodName, char const* inputT
 
 void ServiceBase::LogUnimplementedServerMethod(char const* methodName, google::protobuf::Message const* request)
 {
-    TC_LOG_ERROR("service.protobuf", "{} Client tried to call not implemented method {}({{ {} }})",
+    std::string_view method(methodName);
+    if (method == "ResourcesService.GetTitleIcons" || method == "ClubService.GetStreamHistory" ||
+        method == "ClubService.Unsubscribe")
+        TC_LOG_DEBUG("service.protobuf", "{} Client requested unsupported Classic method {}({{ {} }})",
+            GetCallerInfo(), methodName, request->ShortDebugString());
+    else
+        TC_LOG_ERROR("service.protobuf", "{} Client tried to call not implemented method {}({{ {} }})",
             GetCallerInfo(), methodName, request->ShortDebugString());
 }
 

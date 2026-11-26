@@ -684,7 +684,11 @@ void Spell::EffectTriggerSpell()
     SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(triggered_spell_id, GetCastDifficulty());
     if (!spellInfo)
     {
-        TC_LOG_ERROR("spells.effect.nospell", "Spell::EffectTriggerSpell spell {} tried to trigger unknown spell {}", m_spellInfo->Id, triggered_spell_id);
+        if (m_spellInfo->Id == 3286 && triggered_spell_id == 368736)
+            TC_LOG_DEBUG("spells.effect.nospell", "Spell::EffectTriggerSpell ignored unavailable Classic trigger {} from {}",
+                triggered_spell_id, m_spellInfo->Id);
+        else
+            TC_LOG_ERROR("spells.effect.nospell", "Spell::EffectTriggerSpell spell {} tried to trigger unknown spell {}", m_spellInfo->Id, triggered_spell_id);
         return;
     }
 
