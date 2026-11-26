@@ -422,9 +422,13 @@ WorldSocket::ReadDataHandlerResult WorldSocket::ReadDataHandler()
     OpcodeClient opcode = OpcodeClient(ClassicOpcodes::TranslateClientOpcode(rawOpcode, _clientBuild));
     if (!opcodeTable.IsValid(opcode))
     {
-        TC_LOG_ERROR("network", "WorldSocket::ReadHeaderHandler(): client {} sent wrong opcode (opcode: 0x{:06X} = {}, size: {}) data: {}",
-            GetRemoteIpAddress(), rawOpcode, rawOpcode, packet.size() - packet.rpos(),
-            Trinity::Impl::ByteArrayToHexStr(packet.data() + packet.rpos(), std::min<std::size_t>(packet.size() - packet.rpos(), 256)));
+        if (rawOpcode == 0x4401B5 && packet.size() == packet.rpos())
+            TC_LOG_DEBUG("network.opcode", "WorldSocket::ReadDataHandler(): client {} sent unsupported zero-length opcode 0x4401B5",
+                GetRemoteIpAddress());
+        else
+            TC_LOG_ERROR("network", "WorldSocket::ReadHeaderHandler(): client {} sent wrong opcode (opcode: 0x{:06X} = {}, size: {}) data: {}",
+                GetRemoteIpAddress(), rawOpcode, rawOpcode, packet.size() - packet.rpos(),
+                Trinity::Impl::ByteArrayToHexStr(packet.data() + packet.rpos(), std::min<std::size_t>(packet.size() - packet.rpos(), 256)));
         // Classic 1.60.1.70009: many client opcodes are not mapped yet, skip them instead of dropping the connection
         return ReadDataHandlerResult::Ok;
     }
