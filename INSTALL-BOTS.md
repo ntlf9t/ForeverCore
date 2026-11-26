@@ -24,6 +24,9 @@ The bots are part of the server program, so you need a `worldserver.exe` that wa
    then `cmake --build build --config RelWithDebInfo --target worldserver`. Needs the usual
    TrinityCore requirements (Visual Studio 2022 or newer on Windows, Boost, OpenSSL, MySQL
    8 client). Without `-DBUILD_PLAYERBOT_V2=1` you get the unchanged server and no bots.
+   Playerbot compilation batches its dungeon and battleground scripts by default. To trade clean
+   rebuild speed for fully independent translation units, configure with
+   `-DPLAYERBOT_V2_UNITY_BUILD=0`.
 2. The build puts `playerbot.conf.dist` into `worldserver.conf.d`. Run `cmake --install` or copy
    the files from `build\...\worldserver.conf.d` next to your `worldserver.exe`.
    Keep `SourceDirectory` in `worldserver.conf` pointing at this checkout: on first start the

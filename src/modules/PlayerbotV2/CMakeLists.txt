@@ -17,6 +17,8 @@ if(NOT BUILD_PLAYERBOT_V2)
   return()
 endif()
 
+option(PLAYERBOT_V2_UNITY_BUILD "Batch Playerbot V2 sources into unity translation units for faster builds" 1)
+
 # ---------------------------------------------------------------------------
 # Helper: apply the shared compile/link settings to a sub-library. Keeps the
 # per-subsystem section short and ensures every lib has identical compile
@@ -67,7 +69,24 @@ function(playerbot_v2_configure_sublib target_name)
     endif()
   endif()
   if(USE_COREPCH)
-    target_precompile_headers(${target_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/PCH.h)
+    if(target_name STREQUAL "playerbot-v2-bot")
+      target_precompile_headers(${target_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/PCH.h)
+    else()
+      target_precompile_headers(${target_name} REUSE_FROM playerbot-v2-bot)
+    endif()
+  endif()
+  if(PLAYERBOT_V2_UNITY_BUILD AND target_name STREQUAL "playerbot-v2-bot")
+    get_target_property(target_sources ${target_name} SOURCES)
+    foreach(source ${target_sources})
+      set_source_files_properties(${source} PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)
+      if(source MATCHES "/Bot/(Dungeon|Battleground)/Scripts/.*\\.cpp$")
+        set_source_files_properties(${source} PROPERTIES SKIP_UNITY_BUILD_INCLUSION OFF)
+      endif()
+    endforeach()
+    set_target_properties(${target_name} PROPERTIES
+      UNITY_BUILD ON
+      UNITY_BUILD_BATCH_SIZE 8
+    )
   endif()
 endfunction()
 
@@ -214,7 +233,8 @@ target_sources(playerbot-v2-core
 )
 playerbot_v2_configure_sublib(playerbot-v2-core)
 if(PLAYERBOT_V2_HIRE)
-  target_compile_definitions(playerbot-v2-core PRIVATE PLAYERBOT_V2_HIRE=1)
+  set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/PlayerbotV2Scripts.cpp APPEND
+    PROPERTY COMPILE_DEFINITIONS PLAYERBOT_V2_HIRE=1)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -297,4 +317,4 @@ if(COPY_CONF)
   endif()
 endif()
 
-message(STATUS "Playerbot V2 module enabled (multi-library: 13 sub-libs; hired bots: ${PLAYERBOT_V2_HIRE})")
+message(STATUS "Playerbot V2 module enabled (multi-library: 13 sub-libs; hired bots: ${PLAYERBOT_V2_HIRE}; unity build: ${PLAYERBOT_V2_UNITY_BUILD})")
