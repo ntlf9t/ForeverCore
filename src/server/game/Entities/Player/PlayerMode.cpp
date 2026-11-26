@@ -115,8 +115,23 @@ namespace PlayerMode
         player->RemoveAurasDueToSpell(SPELL_LONE_TAKEN);
         player->RemoveAurasDueToSpell(SPELL_LONE_HEALTH);
 
-        if (!IsLone(player))
+        Data data = Get(player);
+
+        if (!data.lone && !data.loneExited)
             return;
+
+        // 退出孤勇后只保留固定的 +30% 伤害 / +30% 生命
+        if (data.loneExited)
+        {
+            if (Aura* aura = player->AddAura(SPELL_LONE_DAMAGE, player))
+                if (AuraEffect* effect = aura->GetEffect(EFFECT_0))
+                    effect->ChangeAmount(30.0);
+
+            if (Aura* aura = player->AddAura(SPELL_LONE_HEALTH, player))
+                if (AuraEffect* effect = aura->GetEffect(EFFECT_0))
+                    effect->ChangeAmount(30.0);
+            return;
+        }
 
         // 玻璃大炮：只在 1~59 级存在，60 级自动消失
         if (player->GetLevel() < 60)
@@ -131,8 +146,6 @@ namespace PlayerMode
         }
 
         // 孤勇永久属性（60 级也保留，靠重生叠加）
-        Data data = Get(player);
-
         if (data.loneDamage > 0)
             if (Aura* aura = player->AddAura(SPELL_LONE_DAMAGE, player))
                 if (AuraEffect* effect = aura->GetEffect(EFFECT_0))
@@ -298,7 +311,7 @@ namespace PlayerMode
 
         Data data;
 
-        std::string sql = "SELECT chosen, lone, lone_damage, lone_health, lone_taken, rebirths, rebirth_active, legacy_given, lone_reward_given "
+        std::string sql = "SELECT chosen, lone, lone_exited, lone_damage, lone_health, lone_taken, rebirths, rebirth_active, legacy_given, lone_reward_given "
             "FROM character_modes WHERE guid = " + std::to_string(player->GetGUID().GetCounter());
 
         if (QueryResult result = CharacterDatabase.Query(sql.c_str()))
@@ -306,13 +319,14 @@ namespace PlayerMode
             Field* fields = result->Fetch();
             data.chosen = fields[0].GetUInt8() != 0;
             data.lone = fields[1].GetUInt8() != 0;
-            data.loneDamage = fields[2].GetUInt32();
-            data.loneHealth = fields[3].GetUInt32();
-            data.loneTaken = fields[4].GetUInt32();
-            data.rebirths = fields[5].GetUInt32();
-            data.rebirthActive = fields[6].GetUInt8() != 0;
-            data.legacyGiven = fields[7].GetUInt8() != 0;
-            data.loneRewardGiven = fields[8].GetUInt8() != 0;
+            data.loneExited = fields[2].GetUInt8() != 0;
+            data.loneDamage = fields[3].GetUInt32();
+            data.loneHealth = fields[4].GetUInt32();
+            data.loneTaken = fields[5].GetUInt32();
+            data.rebirths = fields[6].GetUInt32();
+            data.rebirthActive = fields[7].GetUInt8() != 0;
+            data.legacyGiven = fields[8].GetUInt8() != 0;
+            data.loneRewardGiven = fields[9].GetUInt8() != 0;
         }
 
         {
@@ -339,10 +353,11 @@ namespace PlayerMode
         }
 
         std::string sql = "REPLACE INTO character_modes "
-            "(guid, chosen, lone, lone_damage, lone_health, lone_taken, rebirths, rebirth_active, legacy_given, lone_reward_given) VALUES ("
+            "(guid, chosen, lone, lone_exited, lone_damage, lone_health, lone_taken, rebirths, rebirth_active, legacy_given, lone_reward_given) VALUES ("
             + std::to_string(player->GetGUID().GetCounter()) + ","
             + (data.chosen ? "1" : "0") + ","
             + (data.lone ? "1" : "0") + ","
+            + (data.loneExited ? "1" : "0") + ","
             + std::to_string(data.loneDamage) + ","
             + std::to_string(data.loneHealth) + ","
             + std::to_string(data.loneTaken) + ","
@@ -445,6 +460,56 @@ namespace PlayerMode
 
         Save(player);
         ApplyAuras(player);
+        return true;
+    }
+
+    bool CanExitLone(Player* player, std::string& reason)
+    {
+        if (!player)
+            return false;
+
+        Data data = Get(player);
+        if (!data.lone)
+        {
+            reason = "当前不是孤勇模式";
+            return false;
+        }
+
+        if (player->GetLevel() < 60)
+        {
+            reason = "只有达到 60 级才能退出孤勇";
+            return false;
+        }
+
+        if (player->IsInCombat())
+        {
+            reason = "战斗中不能退出孤勇";
+            return false;
+        }
+
+        return true;
+    }
+
+    bool ExitLone(Player* player, std::string& reason)
+    {
+        if (!CanExitLone(player, reason))
+            return false;
+
+        {
+            std::lock_guard<std::mutex> lock(_modeMutex);
+            Data& data = _modes[player->GetGUID()];
+            data.chosen = true;
+            data.lone = false;
+            data.loneExited = true;
+            // 只保留固定的 +30% 伤害 / +30% 生命，之后重生不再增加
+            data.loneDamage = 30;
+            data.loneHealth = 30;
+            data.loneTaken = 0;
+        }
+
+        Save(player);
+        ApplyAuras(player);
+        reason = "已退出孤勇模式：可以组队和交易，永久保留孤勇增伤 +30%、孤勇生命 +30%，之后重生不再增加。";
         return true;
     }
 

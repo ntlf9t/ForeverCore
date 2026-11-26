@@ -21,7 +21,7 @@ using namespace Trinity::ChatCommands;
 
 namespace
 {
-    char const* ModeUsage = "用法：.mode lone | rebirth | info";
+    char const* ModeUsage = "用法：.mode lone | leave | rebirth | info";
 
     void SendModeBuffData(Player* player)
     {
@@ -29,25 +29,35 @@ namespace
             return;
 
         PlayerMode::Data data = PlayerMode::Get(player);
+        ChatHandler handler(player->GetSession());
 
-        if (!data.lone)
+        if (!data.lone && !data.loneExited)
         {
-            ChatHandler(player->GetSession()).SendSysMessage("CM;0;");
+            handler.SendSysMessage("CM;0;");
+            handler.SendSysMessage("CMX;0");
             return;
         }
 
         std::vector<std::pair<uint32, std::string>> list;
 
-        if (player->GetLevel() < 60)
+        if (data.lone)
         {
-            list.emplace_back(1, "玻璃大炮-伤害 +30%");
-            list.emplace_back(3, "玻璃大炮-承伤 +30%");
-        }
+            if (player->GetLevel() < 60)
+            {
+                list.emplace_back(1, "玻璃大炮-伤害 +30%");
+                list.emplace_back(3, "玻璃大炮-承伤 +30%");
+            }
 
-        // 孤勇三项永久属性始终显示（初始 +0%）
-        list.emplace_back(1, "孤勇-伤害 +" + std::to_string(data.loneDamage) + "%");
-        list.emplace_back(4, "孤勇-生命 +" + std::to_string(data.loneHealth) + "%");
-        list.emplace_back(3, "孤勇-承伤 +" + std::to_string(data.loneTaken) + "%");
+            list.emplace_back(1, "孤勇-伤害 +" + std::to_string(data.loneDamage) + "%");
+            list.emplace_back(4, "孤勇-生命 +" + std::to_string(data.loneHealth) + "%");
+            list.emplace_back(3, "孤勇-承伤 +" + std::to_string(data.loneTaken) + "%");
+        }
+        else
+        {
+            // 退出孤勇后的固定传承
+            list.emplace_back(1, "孤勇传承-伤害 +30%");
+            list.emplace_back(4, "孤勇传承-生命 +30%");
+        }
 
         std::string msg = "CM;" + std::to_string(list.size()) + ";";
         bool first = true;
@@ -59,17 +69,22 @@ namespace
             first = false;
         }
 
-        ChatHandler(player->GetSession()).SendSysMessage(msg);
+        handler.SendSysMessage(msg);
+        handler.SendSysMessage(data.lone && player->GetLevel() >= 60 ? "CMX;1" : "CMX;0");
     }
 
     void ShowMode(ChatHandler* handler, Player* player)
     {
         PlayerMode::Data data = PlayerMode::Get(player);
 
-        handler->PSendSysMessage("模式：%s", data.lone ? "孤勇" : (data.chosen ? "重生" : "未选择"));
+        char const* modeName = data.lone ? "孤勇" : (data.loneExited ? "孤勇已退出" : (data.chosen ? "重生" : "未选择"));
+        handler->PSendSysMessage("模式：%s", modeName);
         handler->PSendSysMessage("重生次数：%u", data.rebirths);
-        handler->PSendSysMessage("孤勇增伤 +%u%% / 孤勇生命 +%u%% / 孤勇承伤 +%u%%",
-            data.loneDamage, data.loneHealth, data.loneTaken);
+        if (data.loneExited)
+            handler->SendSysMessage("孤勇传承：伤害 +30% / 生命 +30%（永久，重生不再增加）");
+        else
+            handler->PSendSysMessage("孤勇增伤 +%u%% / 孤勇生命 +%u%% / 孤勇承伤 +%u%%",
+                data.loneDamage, data.loneHealth, data.loneTaken);
         handler->PSendSysMessage("重生流程中：%s", data.rebirthActive ? "是" : "否");
     }
 
@@ -107,6 +122,20 @@ namespace
             }
 
             handler->SendSysMessage("孤勇模式已开启。禁止组队/交易/邮件/拍卖行，60 级前死亡自动退出公会且无法复活。");
+            SendModeBuffData(player);
+            return true;
+        }
+
+        if (value == "leave" || value == "退出孤勇")
+        {
+            if (!PlayerMode::ExitLone(player, reason))
+            {
+                handler->PSendSysMessage("无法退出孤勇：%s", reason.c_str());
+                handler->SetSentErrorMessage(true);
+                return false;
+            }
+
+            handler->SendSysMessage(reason);
             SendModeBuffData(player);
             return true;
         }

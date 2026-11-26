@@ -35,16 +35,47 @@ namespace
 
     constexpr uint32 BATCH_TIMES = 100;
 
-    uint32 CostForQuality(uint32 quality)
+    constexpr uint32 COPPER_PER_SILVER = 100;
+    constexpr uint32 COPPER_PER_GOLD   = 10000;
+
+    uint32 BaseCostForItemLevel(uint32 itemLevel)
     {
-        switch (quality)
+        if (itemLevel <= 20)
+            return 5 * COPPER_PER_SILVER;
+        if (itemLevel <= 40)
+            return 10 * COPPER_PER_SILVER;
+        if (itemLevel <= 60)
+            return 15 * COPPER_PER_SILVER;
+        return 20 * COPPER_PER_SILVER;
+    }
+
+    uint32 CostForItem(Player* player, Item* item)
+    {
+        if (!player || !item)
+            return 0;
+
+        ItemTemplate const* proto = item->GetTemplate();
+        if (!proto)
+            return 0;
+
+        uint32 multiplier = 0;
+        switch (proto->GetQuality())
         {
-            case ITEM_QUALITY_UNCOMMON:  return 20 * 100;        // 绿 20 银
-            case ITEM_QUALITY_RARE:      return 1 * 10000;        // 蓝 1 金
-            case ITEM_QUALITY_EPIC:      return 5 * 10000;        // 紫 5 金
-            case ITEM_QUALITY_LEGENDARY: return 50 * 10000;       // 橙 50 金
+            case ITEM_QUALITY_UNCOMMON:  multiplier = 1;   break; // 绿
+            case ITEM_QUALITY_RARE:      multiplier = 5;   break; // 蓝
+            case ITEM_QUALITY_EPIC:      multiplier = 25;  break; // 紫
+            case ITEM_QUALITY_ARTIFACT:  multiplier = 25;  break;
+            case ITEM_QUALITY_LEGENDARY: multiplier = 100; break; // 橙
             default:                     return 0;
         }
+
+        uint64 cost = uint64(BaseCostForItemLevel(item->GetItemLevel(player))) * multiplier;
+
+        // 紫色会出现 1.25 / 2.5 / 3.75 金，按整金四舍五入
+        if (proto->GetQuality() == ITEM_QUALITY_EPIC || proto->GetQuality() == ITEM_QUALITY_ARTIFACT)
+            cost = ((cost + COPPER_PER_GOLD / 2) / COPPER_PER_GOLD) * COPPER_PER_GOLD;
+
+        return uint32(cost);
     }
 
     uint32 QualityOf(ItemTemplate const* proto)
@@ -129,7 +160,7 @@ namespace
         return player->GetItemByPos(uint8(bag), uint8(slot));
     }
 
-    bool CanReroll(Player*, Item* item)
+    bool CanReroll(Player* player, Item* item)
     {
         ItemTemplate const* proto = item->GetTemplate();
         if (!proto)
@@ -138,8 +169,7 @@ namespace
         if (proto->GetClass() != ITEM_CLASS_WEAPON && proto->GetClass() != ITEM_CLASS_ARMOR)
             return false;
 
-        uint32 const quality = QualityOf(proto);
-        return CostForQuality(quality) != 0;
+        return CostForItem(player, item) != 0;
     }
 
     void DoInfo(Player* player, Item* item)
@@ -150,7 +180,8 @@ namespace
 
         std::ostringstream oss;
         oss << "info;" << item->GetEntry() << ';' << score << ';' << budget << ';'
-            << QualityOf(proto) << ';' << player->GetMoney();
+            << QualityOf(proto) << ';' << player->GetMoney()
+            << ";c:" << CostForItem(player, item);
         AppendBudgets(item, oss);
         AppendAffixes(item, oss);
         Reply(player, oss.str());
@@ -159,7 +190,7 @@ namespace
     void DoScore(Player* player, Item* item, bool batch)
     {
         ItemTemplate const* proto = item->GetTemplate();
-        uint32 const cost = CostForQuality(QualityOf(proto)) * (batch ? BATCH_TIMES : 1);
+        uint32 const cost = CostForItem(player, item) * (batch ? BATCH_TIMES : 1);
 
         if (player->GetMoney() < cost)
         {
@@ -227,7 +258,7 @@ namespace
         }
 
         ItemTemplate const* proto = item->GetTemplate();
-        uint32 const cost = CostForQuality(QualityOf(proto));
+        uint32 const cost = CostForItem(player, item);
 
         if (player->GetMoney() < cost)
         {
@@ -251,9 +282,9 @@ namespace
 
     void DoSpecial(Player* player, Item* item, bool chaos)
     {
-        constexpr uint32 SPECIAL_COST = 5 * GOLD;
+        uint32 const cost = CostForItem(player, item);
 
-        if (player->GetMoney() < SPECIAL_COST)
+        if (player->GetMoney() < cost)
         {
             Reply(player, "err;nomoney");
             return;
@@ -269,14 +300,14 @@ namespace
             return;
         }
 
-        player->ModifyMoney(-int64(SPECIAL_COST));
+        player->ModifyMoney(-int64(cost));
         item->SetState(ITEM_CHANGED, player);
 
         uint32 const score = ItemScoreAffix::GetScore(item);
         uint32 const budget = ItemScoreAffix::GetBudget(player, item);
 
         std::ostringstream oss;
-        oss << "done;" << item->GetEntry() << ';' << score << ';' << budget << ';' << SPECIAL_COST;
+        oss << "done;" << item->GetEntry() << ';' << score << ';' << budget << ';' << cost;
         AppendBudgets(item, oss);
         AppendAffixes(item, oss);
         Reply(player, oss.str());
