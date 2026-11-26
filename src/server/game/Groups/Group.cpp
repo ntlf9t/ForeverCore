@@ -474,6 +474,9 @@ Player* Group::GetInvited(const std::string& name) const
 
 bool Group::AddMember(Player* player)
 {
+    if (!player || IsMember(player->GetGUID()))
+        return false;
+
     // 孤勇模式：不能被任何途径加进队伍（包括机器人/脚本/GM 强制）
     if (PlayerMode::IsLone(player))
         return false;

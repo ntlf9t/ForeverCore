@@ -69,9 +69,7 @@ void GroupMgr::FreeGroupDbStoreId(Group* group)
 {
     uint32 storageId = group->GetDbStoreId();
 
-    if (storageId < NextGroupDbStoreId)
-        NextGroupDbStoreId = storageId;
-
+    // Async group writes may still be pending; never recycle an ID during this process lifetime.
     GroupDbStore[storageId] = nullptr;
 }
 
