@@ -17,14 +17,19 @@
 
 #include "tc_catch2.h"
 
+#include "DatabaseWorkerPool.h"
 #include "Field.h"
+#include "LoginDatabase.h"
 #include "MySQLConnection.h"
 #include "MySQLPreparedStatement.h"
 #include "PreparedStatement.h"
 #include "QueryResult.h"
+#include <atomic>
 #include <cstdlib>
 #include <fstream>
 #include <memory>
+#include <thread>
+#include <vector>
 
 namespace
 {
@@ -103,4 +108,62 @@ TEST_CASE("MySQL reconnects and recreates prepared statements", "[MySQLReconnect
     }
 
     REQUIRE(ConnectionId(connection) != oldId);
+}
+
+TEST_CASE("MySQL pool serializes concurrent escaping and queries", "[MySQLReconnect]")
+{
+    char const* connectionFile = std::getenv("TC_TEST_MYSQL_RECONNECT_FILE");
+    if (!connectionFile)
+        SKIP("TC_TEST_MYSQL_RECONNECT_FILE is not set");
+
+    std::ifstream input(connectionFile);
+    REQUIRE(input.is_open());
+    std::string connectionString;
+    REQUIRE(static_cast<bool>(std::getline(input, connectionString)));
+    MySQLConnectionInfo info(connectionString);
+    REQUIRE(info.host == "127.0.0.1");
+    REQUIRE(info.database == "forevercore_reconnect_test");
+
+    DatabaseWorkerPool<LoginDatabaseConnection> pool;
+    pool.SetConnectionInfo(connectionString, 0, 1);
+    REQUIRE(pool.Open() == 0);
+
+    constexpr unsigned threadCount = 6;
+    constexpr unsigned iterations = 200;
+    std::atomic<unsigned> ready{ 0 };
+    std::atomic<unsigned> failures{ 0 };
+    std::atomic<bool> start{ false };
+    std::vector<std::thread> threads;
+    threads.reserve(threadCount);
+    for (unsigned threadIndex = 0; threadIndex < threadCount; ++threadIndex)
+    {
+        threads.emplace_back([&, threadIndex]
+        {
+            ++ready;
+            while (!start.load())
+                std::this_thread::yield();
+
+            for (unsigned i = 0; i < iterations; ++i)
+            {
+                std::string original = "quote ' slash \\ newline \n";
+                original.push_back('\0');
+                original += std::to_string(threadIndex) + ":" + std::to_string(i);
+                std::string escaped = original;
+                pool.EscapeString(escaped);
+                std::string const sql = "SELECT '" + escaped + "'";
+                QueryResult result = pool.Query(sql.c_str());
+                if (!result || result->Fetch()[0].GetString() != original)
+                    ++failures;
+            }
+        });
+    }
+
+    while (ready.load() != threadCount)
+        std::this_thread::yield();
+    start = true;
+    for (std::thread& thread : threads)
+        thread.join();
+    pool.Close();
+
+    REQUIRE(failures.load() == 0);
 }
