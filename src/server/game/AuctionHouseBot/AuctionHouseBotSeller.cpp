@@ -143,6 +143,16 @@ bool AuctionBotSeller::Initialize()
     TC_LOG_DEBUG("ahbot", "Sorting and cleaning items for AHBot seller...");
 
     uint32 itemsAdded = 0;
+    auto addToPool = [&](ItemTemplate const* prototype)
+    {
+        uint32 const itemId = prototype->GetId();
+        _itemPool[prototype->GetQuality()][prototype->GetClass()].push_back(itemId);
+        if (craftedItems.count(itemId))
+            _craftedStock.push_back(itemId);
+        if (AuctionBotVanilla::IsProfessionMaterial(prototype, unlimitedVendorItems.count(itemId) != 0))
+            _materialStock.push_back(itemId);
+        ++itemsAdded;
+    };
 
     for (uint32 itemId = 0; itemId < sItemStore.GetNumRows(); ++itemId)
     {
@@ -161,8 +171,7 @@ bool AuctionBotSeller::Initialize()
         // forced include filter
         if (includeItems.count(itemId))
         {
-            _itemPool[prototype->GetQuality()][prototype->GetClass()].push_back(itemId);
-            ++itemsAdded;
+            addToPool(prototype);
             continue;
         }
 
@@ -379,12 +388,7 @@ bool AuctionBotSeller::Initialize()
             }
         }
 
-        _itemPool[prototype->GetQuality()][prototype->GetClass()].push_back(itemId);
-        if (craftedItems.count(itemId))
-            _craftedStock.push_back(itemId);
-        if (AuctionBotVanilla::IsProfessionMaterial(prototype, unlimitedVendorItems.count(itemId) != 0))
-            _materialStock.push_back(itemId);
-        ++itemsAdded;
+        addToPool(prototype);
     }
 
     if (!itemsAdded)
