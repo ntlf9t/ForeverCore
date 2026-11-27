@@ -13781,13 +13781,17 @@ void Player::SwapItem(uint16 src, uint16 dst)
     }
 
     // prevent put equipped/bank bag in self
+    // (note: the modern client renders nothing for EQUIP_ERR_BAG_IN_BAG, keep EQUIP_ERR_CANT_SWAP here)
     if (IsBagPos(src) && srcslot == dstbag)
     {
-        SendEquipError(EQUIP_ERR_BAG_IN_BAG, pSrcItem, pDstItem);
+        SendEquipError(EQUIP_ERR_CANT_SWAP, pSrcItem, pDstItem);
         return;
     }
 
     // prevent equipping bag in the same slot from its inside
+    // (the 1.60 client can swallow this exact drag locally without sending an opcode;
+    // keep the server-side guard for scripted/modified clients and internal callers)
+    // (note: the modern client renders nothing for EQUIP_ERR_BAG_IN_BAG, keep EQUIP_ERR_CANT_SWAP here)
     if (IsBagPos(dst) && srcbag == dstslot)
     {
         SendEquipError(EQUIP_ERR_CANT_SWAP, pSrcItem, pDstItem);
@@ -13921,6 +13925,91 @@ void Player::SwapItem(uint16 src, uint16 dst)
     // impossible merge/fill, do real swap
     InventoryResult msg = EQUIP_ERR_OK;
 
+    // Bag swap with items exchange: a bag in a bag position replaced by an empty bag from storage
+    // hands its contents over to the new bag. The transfer has to happen before the move checks
+    // below, because a non-empty bag validates only into a bag position - the old bag fits its
+    // storage destination only once it is empty. If the swap cannot be completed the items move back.
+    std::vector<std::pair<Item*, uint8>> exchangedItems;
+    Bag* emptyBag = nullptr;
+    Bag* fullBag = nullptr;
+    if (Bag* srcBag = pSrcItem->ToBag())
+    {
+        if (Bag* dstBag = pDstItem->ToBag())
+        {
+            if (srcBag->IsEmpty() && !IsBagPos(src) && !dstBag->IsEmpty())
+            {
+                emptyBag = srcBag;
+                fullBag  = dstBag;
+            }
+            else if (dstBag->IsEmpty() && !IsBagPos(dst) && !srcBag->IsEmpty())
+            {
+                emptyBag = dstBag;
+                fullBag  = srcBag;
+            }
+        }
+    }
+
+    if (emptyBag && fullBag)
+    {
+        ItemTemplate const* emptyProto = emptyBag->GetTemplate();
+
+        uint32 count = 0;
+
+        for (uint32 i = 0; i < fullBag->GetBagSize(); ++i)
+        {
+            Item* bagItem = fullBag->GetItemByPos(i);
+            if (!bagItem)
+                continue;
+
+            ItemTemplate const* bagItemProto = bagItem->GetTemplate();
+            if (bagItem->IsNotEmptyBag() || !bagItemProto || !ItemCanGoIntoBag(bagItemProto, emptyProto))
+            {
+                // one from items not go to empty target bag
+                SendEquipError(EQUIP_ERR_BAG_IN_BAG, pSrcItem, pDstItem);
+                return;
+            }
+
+            ++count;
+        }
+
+        if (count > emptyBag->GetBagSize())
+        {
+            // too small targeted bag
+            SendEquipError(EQUIP_ERR_CANT_SWAP, pSrcItem, pDstItem);
+            return;
+        }
+
+        // Items exchange, packed at the start of the new bag (official behavior - and slot indices
+        // mean little to the player anyway, since the combined-bag view reflows with the interface)
+        count = 0;                                      // will pos in new bag
+        for (uint32 i = 0; i < fullBag->GetBagSize(); ++i)
+        {
+            Item* bagItem = fullBag->GetItemByPos(i);
+            if (!bagItem)
+                continue;
+
+            fullBag->RemoveItem(i, true);
+            emptyBag->StoreItem(count, bagItem, true);
+            bagItem->SetState(ITEM_CHANGED, this);
+            exchangedItems.emplace_back(bagItem, i);
+
+            ++count;
+        }
+    }
+
+    auto rollbackItemsExchange = [&]()
+    {
+        for (std::pair<Item*, uint8> const& exchanged : exchangedItems)
+        {
+            uint8 newBagSlot = emptyBag->GetSlotByItemGUID(exchanged.first->GetGUID());
+            if (newBagSlot != NULL_SLOT)
+                emptyBag->RemoveItem(newBagSlot, true);
+            fullBag->StoreItem(exchanged.second, exchanged.first, true);
+            exchanged.first->SetState(ITEM_CHANGED, this);
+        }
+        exchangedItems.clear();
+    };
+
     // check src->dest move possibility
     ItemPosCountVec sDest;
     uint16 eDest = 0;
@@ -13937,6 +14026,7 @@ void Player::SwapItem(uint16 src, uint16 dst)
 
     if (msg != EQUIP_ERR_OK)
     {
+        rollbackItemsExchange();
         SendEquipError(msg, pSrcItem, pDstItem);
         return;
     }
@@ -13960,75 +14050,9 @@ void Player::SwapItem(uint16 src, uint16 dst)
 
     if (msg != EQUIP_ERR_OK)
     {
+        rollbackItemsExchange();
         SendEquipError(msg, pDstItem, pSrcItem);
         return;
-    }
-
-    // Check bag swap with item exchange (one from empty in not bag possition (equipped (not possible in fact) or store)
-    if (Bag* srcBag = pSrcItem->ToBag())
-    {
-        if (Bag* dstBag = pDstItem->ToBag())
-        {
-            Bag* emptyBag = nullptr;
-            Bag* fullBag = nullptr;
-            if (srcBag->IsEmpty() && !IsBagPos(src))
-            {
-                emptyBag = srcBag;
-                fullBag  = dstBag;
-            }
-            else if (dstBag->IsEmpty() && !IsBagPos(dst))
-            {
-                emptyBag = dstBag;
-                fullBag  = srcBag;
-            }
-
-            // bag swap (with items exchange) case
-            if (emptyBag && fullBag)
-            {
-                ItemTemplate const* emptyProto = emptyBag->GetTemplate();
-
-                uint32 count = 0;
-
-                for (uint32 i=0; i < fullBag->GetBagSize(); ++i)
-                {
-                    Item* bagItem = fullBag->GetItemByPos(i);
-                    if (!bagItem)
-                        continue;
-
-                    ItemTemplate const* bagItemProto = bagItem->GetTemplate();
-                    if (!bagItemProto || !ItemCanGoIntoBag(bagItemProto, emptyProto))
-                    {
-                        // one from items not go to empty target bag
-                        SendEquipError(EQUIP_ERR_BAG_IN_BAG, pSrcItem, pDstItem);
-                        return;
-                    }
-
-                    ++count;
-                }
-
-                if (count > emptyBag->GetBagSize())
-                {
-                    // too small targeted bag
-                    SendEquipError(EQUIP_ERR_CANT_SWAP, pSrcItem, pDstItem);
-                    return;
-                }
-
-                // Items swap
-                count = 0;                                      // will pos in new bag
-                for (uint32 i = 0; i< fullBag->GetBagSize(); ++i)
-                {
-                    Item* bagItem = fullBag->GetItemByPos(i);
-                    if (!bagItem)
-                        continue;
-
-                    fullBag->RemoveItem(i, true);
-                    emptyBag->StoreItem(count, bagItem, true);
-                    bagItem->SetState(ITEM_CHANGED, this);
-
-                    ++count;
-                }
-            }
-        }
     }
 
     // now do moves, remove...
@@ -14092,8 +14116,22 @@ void Player::SwapItem(uint16 src, uint16 dst)
                     if (GetLootByWorldObjectGUID(bagItem->GetGUID()))
                     {
                         m_session->DoLootReleaseAll();
+                        released = true;
                         break;
                     }
+                }
+            }
+        }
+
+        // items handed over in a bag swap with items exchange sit in neither scan above
+        if (!released)
+        {
+            for (std::pair<Item*, uint8> const& exchanged : exchangedItems)
+            {
+                if (GetLootByWorldObjectGUID(exchanged.first->GetGUID()))
+                {
+                    m_session->DoLootReleaseAll();
+                    break;
                 }
             }
         }
