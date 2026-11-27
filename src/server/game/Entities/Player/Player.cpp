@@ -3034,7 +3034,8 @@ bool Player::AddSpell(uint32 spellId, bool active, bool learning, bool dependent
     // Rebuild the account collection during login even when the spell takes the
     // PLAYERSPELL_UNCHANGED early-return path below.
     if (loading && sDB2Manager.GetMount(spellId))
-        GetSession()->GetCollectionMgr()->AddMount(spellId, MOUNT_STATUS_NONE, false, true);
+        if (CollectionMgr* collectionMgr = GetSession()->GetCollectionMgr())
+            collectionMgr->AddMount(spellId, MOUNT_STATUS_NONE, false, true);
 
     PlayerSpellState state = learning ? PLAYERSPELL_NEW : PLAYERSPELL_UNCHANGED;
 
