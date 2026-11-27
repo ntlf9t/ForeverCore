@@ -1308,6 +1308,18 @@ bool Player::TeleportTo(WorldLocation const& loc, TeleportToOptions options, Opt
     return TeleportTo({ .Location = loc, .InstanceId = instanceId }, options, teleportSpellId);
 }
 
+static Optional<Position> ResolveNearTeleportPosition(Map* map, TeleportLocation const& destination)
+{
+    if (!destination.TransportGuid)
+        return destination.Location;
+
+    if (GameObject* object = map->GetGameObject(*destination.TransportGuid))
+        if (TransportBase* transport = object->ToTransportBase())
+            return transport->GetPositionWithOffset(destination.Location);
+
+    return std::nullopt;
+}
+
 bool Player::TeleportTo(TeleportLocation const& teleportLocation, TeleportToOptions options /*= TELE_TO_NONE*/, uint32 teleportSpellId)
 {
     if (!MapManager::IsValidMapCoord(teleportLocation.Location))
@@ -1356,6 +1368,22 @@ bool Player::TeleportTo(TeleportLocation const& teleportLocation, TeleportToOpti
     else
         TC_LOG_DEBUG("maps", "Player {} ({}) is being teleported to map (MapID: {})", GetName(), GetGUID().ToString(), teleportLocation.Location.GetMapId());
 
+    // A player out of the world can still report its old map after a failed far teleport.
+    bool const nearTeleport = IsInWorld() && GetMapId() == teleportLocation.Location.GetMapId() &&
+        (!teleportLocation.InstanceId || GetInstanceId() == teleportLocation.InstanceId);
+    Optional<Position> worldDestination;
+    if (nearTeleport)
+    {
+        // The packet keeps its transport offset. Server-side placement needs world coordinates.
+        worldDestination = ResolveNearTeleportPosition(GetMap(), teleportLocation);
+        if (!worldDestination)
+        {
+            TC_LOG_WARN("maps", "Player {} cannot teleport: transport {} is unavailable on map {}.",
+                GetGUID().ToString(), teleportLocation.TransportGuid->ToString(), GetMapId());
+            return false;
+        }
+    }
+
     if (m_vehicle)
         ExitVehicle();
 
@@ -1376,8 +1404,7 @@ bool Player::TeleportTo(TeleportLocation const& teleportLocation, TeleportToOpti
     if (duel && GetMapId() != teleportLocation.Location.GetMapId() && GetMap()->GetGameObject(m_playerData->DuelArbiter))
         DuelComplete(DUEL_FLED);
 
-    // a player out of the world (after a failed far teleport) still reports its old map id but is in no grid: take the far path
-    if (IsInWorld() && GetMapId() == teleportLocation.Location.GetMapId() && (!teleportLocation.InstanceId || GetInstanceId() == teleportLocation.InstanceId))
+    if (nearTeleport)
     {
         SetTeleportState(TeleportState::Initiated);
         //if teleport spell is cast in Unit::Update() func
@@ -1395,7 +1422,7 @@ bool Player::TeleportTo(TeleportLocation const& teleportLocation, TeleportToOpti
         if (!(options & TELE_TO_NOT_UNSUMMON_PET))
         {
             //same map, only remove pet if out of range for new position
-            if (pet && !pet->IsWithinDist3d(&teleportLocation.Location, GetMap()->GetVisibilityRange()))
+            if (pet && !pet->IsWithinDist3d(&*worldDestination, GetMap()->GetVisibilityRange()))
                 UnsummonPetTemporaryIfAny();
         }
 
@@ -1419,7 +1446,7 @@ bool Player::TeleportTo(TeleportLocation const& teleportLocation, TeleportToOpti
             SendTeleportPacket(m_teleport_dest);
 
         if (!IsBeingTeleportedNear()) // update position immediately if we will not be waiting for client ACK
-            UpdatePosition(m_teleport_dest.Location, true);
+            UpdatePosition(*worldDestination, true);
     }
     else
     {
@@ -22148,15 +22175,29 @@ void Player::SaveToDB(LoginDatabaseTransaction loginTransaction, CharacterDataba
         }
         else
         {
-            stmt->setUInt16(index++, (uint16)GetTeleportDest().Location.GetMapId());
+            TeleportLocation const& destination = GetTeleportDest();
+            Position worldPosition = destination.Location;
+            if (IsBeingTeleportedNear() && destination.TransportGuid)
+            {
+                if (Optional<Position> resolved = ResolveNearTeleportPosition(GetMap(), destination))
+                    worldPosition = *resolved;
+                else
+                {
+                    TC_LOG_WARN("maps", "Player {} is being saved at their current position: transport {} is unavailable.",
+                        GetGUID().ToString(), destination.TransportGuid->ToString());
+                    worldPosition = GetPosition();
+                }
+            }
+
+            stmt->setUInt16(index++, (uint16)destination.Location.GetMapId());
             stmt->setUInt32(index++, (uint32)0);
             stmt->setUInt8(index++, uint8(GetDungeonDifficultyID()));
             stmt->setUInt8(index++, uint8(GetRaidDifficultyID()));
             stmt->setUInt8(index++, uint8(GetLegacyRaidDifficultyID()));
-            stmt->setFloat(index++, finiteAlways(GetTeleportDest().Location.GetPositionX()));
-            stmt->setFloat(index++, finiteAlways(GetTeleportDest().Location.GetPositionY()));
-            stmt->setFloat(index++, finiteAlways(GetTeleportDest().Location.GetPositionZ()));
-            stmt->setFloat(index++, finiteAlways(GetTeleportDest().Location.GetOrientation()));
+            stmt->setFloat(index++, finiteAlways(worldPosition.GetPositionX()));
+            stmt->setFloat(index++, finiteAlways(worldPosition.GetPositionY()));
+            stmt->setFloat(index++, finiteAlways(worldPosition.GetPositionZ()));
+            stmt->setFloat(index++, finiteAlways(worldPosition.GetOrientation()));
         }
 
         stmt->setFloat(index++, finiteAlways(GetTransOffsetX()));

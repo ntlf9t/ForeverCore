@@ -609,14 +609,17 @@ bool Transport::TeleportTransport(uint32 oldMapId, uint32 newMapId, float x, flo
         // Teleport players, they need to know it
         for (PassengerSet::iterator itr = _passengers.begin(); itr != _passengers.end(); ++itr)
         {
-            if ((*itr)->GetTypeId() == TYPEID_PLAYER)
+            if (Player* player = (*itr)->ToPlayer())
             {
                 // will be relocated in UpdatePosition of the vehicle
-                if (Unit* veh = (*itr)->ToUnit()->GetVehicleBase())
+                if (Unit* veh = player->GetVehicleBase())
                     if (veh->GetTransport() == this)
                         continue;
 
-                (*itr)->ToUnit()->NearTeleportTo(GetPositionWithOffset((*itr)->m_movementInfo.transport.pos));
+                player->NearTeleportTo(TeleportLocation{
+                    .Location = { newMapId, player->m_movementInfo.transport.pos },
+                    .TransportGuid = GetTransportGUID()
+                });
             }
         }
 
