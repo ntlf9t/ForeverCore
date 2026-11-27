@@ -195,4 +195,15 @@ uint64 UnitValue(ItemTemplate const* proto)
         curve *= double(itemLevel) / double(_fullValueItemLevel);
     return std::max<uint64>(vendor, uint64(curve));
 }
+
+bool IsProfessionMaterial(ItemTemplate const* proto, bool soldUnlimitedByVendor)
+{
+    return proto->GetClass() == ITEM_CLASS_TRADE_GOODS && proto->GetQuality() <= ITEM_QUALITY_RARE && !soldUnlimitedByVendor;
+}
+
+uint32 MaterialStackSize(uint32 maxStack)
+{
+    // GetMaxStackSize uses INT32_MAX - 1 as the sentinel for unlimited stacks.
+    return maxStack >= 0x7FFFFFFEu ? 20 : std::max<uint32>(maxStack, 1);
+}
 }

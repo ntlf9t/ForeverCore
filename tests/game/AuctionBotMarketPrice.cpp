@@ -104,3 +104,25 @@ TEST_CASE("Items without a row, and prices switched off, give no market price", 
     AuctionBotVanilla::SetMarketPrices({});
     REQUIRE(AuctionBotVanilla::MarketUnitPrice(&linen.proto) == 0);
 }
+
+TEST_CASE("Material stocking excludes unlimited vendors and non-materials", "[AuctionBotMarketPrice]")
+{
+    TestItem material(2589, ITEM_CLASS_TRADE_GOODS, 13, 55);
+    material.sparse.OverallQualityID = ITEM_QUALITY_RARE;
+    REQUIRE(AuctionBotVanilla::IsProfessionMaterial(&material.proto, false));
+    REQUIRE_FALSE(AuctionBotVanilla::IsProfessionMaterial(&material.proto, true));
+
+    material.sparse.OverallQualityID = ITEM_QUALITY_EPIC;
+    REQUIRE_FALSE(AuctionBotVanilla::IsProfessionMaterial(&material.proto, false));
+    material.basic.ClassID = ITEM_CLASS_WEAPON;
+    material.sparse.OverallQualityID = ITEM_QUALITY_NORMAL;
+    REQUIRE_FALSE(AuctionBotVanilla::IsProfessionMaterial(&material.proto, false));
+}
+
+TEST_CASE("Material stacks respect finite limits and bound unlimited stacks", "[AuctionBotMarketPrice]")
+{
+    REQUIRE(AuctionBotVanilla::MaterialStackSize(5) == 5);
+    REQUIRE(AuctionBotVanilla::MaterialStackSize(20) == 20);
+    REQUIRE(AuctionBotVanilla::MaterialStackSize(200) == 200);
+    REQUIRE(AuctionBotVanilla::MaterialStackSize(0x7FFFFFFE) == 20);
+}

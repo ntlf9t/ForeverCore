@@ -4211,6 +4211,13 @@ AuctionHouseBot.Items.Crafted = 0
 
 AuctionHouseBot.Items.Crafted.MinStock = 0
 
+#    AuctionHouseBot.Items.TradeGoods.MinStock
+#       Description: Keep this many full-stack listings for each eligible trade good in the seller pool.
+#                    Unlimited vendor goods are excluded. Unlimited stack sizes use stacks of 20.
+#       Default:     0 - (Disabled)
+
+AuctionHouseBot.Items.TradeGoods.MinStock = 0
+
 #
 #    AuctionHouseBot.Bind.*
 #       Description: Indicates which bonding types to allow the bot to put up for auction

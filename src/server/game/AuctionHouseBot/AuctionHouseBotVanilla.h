@@ -47,6 +47,9 @@ namespace AuctionBotVanilla
     // AuctionHouseBot.Vanilla.ValueCurve = 1, from item level, quality and class, never below the vendor price.
     // 0 when neither applies (callers keep the vendor price).
     uint64 UnitValue(ItemTemplate const* proto);
+
+    bool IsProfessionMaterial(ItemTemplate const* proto, bool soldUnlimitedByVendor);
+    uint32 MaterialStackSize(uint32 maxStack);
 }
 
 #endif
