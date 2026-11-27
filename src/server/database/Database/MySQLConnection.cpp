@@ -421,6 +421,12 @@ size_t MySQLConnection::EscapeString(char* to, const char* from, size_t length)
 
 void MySQLConnection::Ping()
 {
+    if (!m_Mysql)
+    {
+        _HandleMySQLErrno(CR_CONN_HOST_ERROR);
+        return;
+    }
+
     mysql_ping(m_Mysql);
 }
 
@@ -523,7 +529,7 @@ PreparedResultSet* MySQLConnection::Query(PreparedStatementBase* stmt)
     return new PreparedResultSet(mysqlStmt->GetSTMT(), result, rowCount, fieldCount);
 }
 
-bool MySQLConnection::_HandleMySQLErrno(uint32 errNo, uint8 attempts /*= 5*/)
+bool MySQLConnection::_HandleMySQLErrno(uint32 errNo, uint8 attempts /*= 15*/)
 {
     switch (errNo)
     {
@@ -578,10 +584,9 @@ bool MySQLConnection::_HandleMySQLErrno(uint32 errNo, uint8 attempts /*= 5*/)
             }
             else
             {
-                // It's possible this attempted reconnect throws 2006 at us.
-                // To prevent crazy recursive calls, sleep here.
+                TC_LOG_ERROR("sql.sql", "Reconnect attempt failed with MySQL errno {}, {} attempt(s) left.", lErrno, uint32(attempts));
                 std::this_thread::sleep_for(std::chrono::seconds(3)); // Sleep 3 seconds
-                return _HandleMySQLErrno(lErrno, attempts); // Call self (recursive)
+                return _HandleMySQLErrno(CR_CONN_HOST_ERROR, attempts);
             }
         }
 

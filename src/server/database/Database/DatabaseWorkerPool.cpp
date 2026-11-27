@@ -502,7 +502,10 @@ unsigned long DatabaseWorkerPool<T>::EscapeString(char* to, char const* from, un
     if (!to || !from || !length)
         return 0;
 
-    return _connections[IDX_SYNCH].front()->EscapeString(to, from, length);
+    T* connection = GetFreeConnection();
+    unsigned long result = connection->EscapeString(to, from, length);
+    connection->Unlock();
+    return result;
 }
 
 template <class T>
