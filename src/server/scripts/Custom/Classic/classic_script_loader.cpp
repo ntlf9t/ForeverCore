@@ -232,7 +232,6 @@ void AddSC_classic_silverpine_forest();
 void AddSC_classic_searing_gorge();
 void AddSC_classic_loch_modan();
 void AddSC_classic_hinterlands();
-void AddSC_classic_rogue_dead_drop();
 
 void AddClassicScripts()
 {
@@ -450,5 +449,4 @@ void AddClassicScripts()
     AddSC_classic_searing_gorge();
     AddSC_classic_loch_modan();
     AddSC_classic_hinterlands();
-    AddSC_classic_rogue_dead_drop();
 }
