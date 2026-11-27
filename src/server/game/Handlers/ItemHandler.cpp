@@ -17,6 +17,7 @@
 
 #include "WorldSession.h"
 #include "Bag.h"
+#include "BagSortAssignment.h"
 #include "BattlePetMgr.h"
 #include "CollectionMgr.h"
 #include <algorithm>
@@ -1318,7 +1319,7 @@ enum class BagSortCategory : uint8
 };
 
 constexpr std::size_t BagSortCategoryCount = std::size_t(BagSortCategory::Max);
-constexpr std::size_t BagSortNoOwner = std::size_t(-1);
+constexpr std::size_t BagSortNoOwner = BagSorting::NoOwner;
 
 BagSortCategory GetBagSortCategory(ItemTemplate const* proto)
 {
@@ -1412,7 +1413,6 @@ protected:
 private:
     void BuildPreference(std::size_t categoryIndex);
     bool BuildPlan();
-    bool TryAssign(std::size_t itemIndex, std::vector<bool>& visited);
     void ApplyPlan();
 
     uint32 GetSlotRank(BagSortSlot const& slot, BagSortCategory category) const;
@@ -1553,57 +1553,38 @@ bool BagSorter::CanGoIntoSlot(ItemTemplate const* proto, BagSortSlot const& slot
 
 bool BagSorter::BuildPlan()
 {
-    _slotOwner.assign(_slots.size(), BagSortNoOwner);
-
-    // Classic assignment problem: every item prefers the lowest ranked slot it fits into (priority bags and family
-    // bags first, then the backpack, then the rest), earlier items win by being assigned first.
-    std::vector<bool> visited(_slots.size());
-    for (std::size_t itemIndex = 0; itemIndex < _items.size(); ++itemIndex)
+    std::vector<Item*> items;
+    items.reserve(_items.size());
+    for (BagSortItem const& item : _items)
     {
-        std::fill(visited.begin(), visited.end(), false);
-        if (!TryAssign(itemIndex, visited))
+        Item* itemObject = _player->GetItemByGuid(item.Guid);
+        if (!itemObject)
         {
-            // each item always fits the slot it is in, so this is only reachable with a broken item prototype
-            TC_LOG_ERROR("network", "BagSorter: no slot found for item {} ({})", _items[itemIndex].Entry, _items[itemIndex].Guid.ToString());
+            TC_LOG_ERROR("network", "BagSorter: item {} ({}) is no longer available", item.Entry, item.Guid.ToString());
             return false;
         }
+        items.push_back(itemObject);
     }
 
-    return true;
-}
-
-bool BagSorter::TryAssign(std::size_t itemIndex, std::vector<bool>& visited)
-{
-    BagSortItem const& item = _items[itemIndex];
-
-    Item* itemObject = _player->GetItemByGuid(item.Guid);
-    if (!itemObject)
-        return false;
-
-    for (uint32 slotIndex : _preferences[std::size_t(item.Category)])
-    {
-        if (visited[slotIndex])
-            continue;
-
-        BagSortSlot const& slot = _slots[slotIndex];
-
-        if (!item.MayLeaveBag && slot.BagSlot != itemObject->GetBagSlot())
-            continue;
-
-        if (!CanGoIntoSlot(itemObject->GetTemplate(), slot))
-            continue;
-
-        visited[slotIndex] = true;
-
-        std::size_t const ownerIndex = _slotOwner[slotIndex];
-        if (ownerIndex == BagSortNoOwner || TryAssign(ownerIndex, visited))
+    bool const assigned = BagSorting::AssignSlots(_items.size(), _slots.size(),
+        [this](std::size_t itemIndex) -> std::vector<uint32> const&
         {
-            _slotOwner[slotIndex] = itemIndex;
-            return true;
-        }
+            return _preferences[std::size_t(_items[itemIndex].Category)];
+        },
+        [this, &items](std::size_t itemIndex, std::size_t slotIndex)
+        {
+            BagSortItem const& item = _items[itemIndex];
+            Item* itemObject = items[itemIndex];
+            BagSortSlot const& slot = _slots[slotIndex];
+            return (item.MayLeaveBag || slot.BagSlot == itemObject->GetBagSlot())
+                && CanGoIntoSlot(itemObject->GetTemplate(), slot);
+        }, _slotOwner);
+    if (!assigned)
+    {
+        TC_LOG_ERROR("network", "BagSorter: could not assign every item to a valid slot");
+        return false;
     }
-
-    return false;
+    return true;
 }
 
 void BagSorter::ApplyPlan()
