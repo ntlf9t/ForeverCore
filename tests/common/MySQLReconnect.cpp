@@ -37,8 +37,9 @@ namespace
         void DoPrepareStatements() override
         {
             if (!m_reconnecting)
-                m_stmts.resize(1);
-            PrepareStatement(0, "SELECT ?", CONNECTION_SYNCH);
+                m_stmts.resize(2);
+            PrepareStatement(0, "DO ?", CONNECTION_SYNCH);
+            PrepareStatement(1, "SELECT ?", CONNECTION_SYNCH);
         }
     };
 
@@ -51,7 +52,7 @@ namespace
     }
 }
 
-TEST_CASE("MySQL ping reconnects and recreates prepared statements", "[MySQLReconnect]")
+TEST_CASE("MySQL reconnects and recreates prepared statements", "[MySQLReconnect]")
 {
     // The file contains host;port;user;password;database for an isolated local test instance.
     char const* connectionFile = std::getenv("TC_TEST_MYSQL_RECONNECT_FILE");
@@ -76,10 +77,30 @@ TEST_CASE("MySQL ping reconnects and recreates prepared statements", "[MySQLReco
     std::string const killQuery = "KILL CONNECTION " + std::to_string(oldId);
     REQUIRE(control.Execute(killQuery.c_str()));
 
-    connection.Ping();
-    REQUIRE(connection.GetLastError() == 0);
+    SECTION("Ping reconnects before the next statement")
+    {
+        connection.Ping();
+        REQUIRE(connection.GetLastError() == 0);
+        PreparedStatementBase statement(0, 1);
+        statement.setUInt32(0, 42);
+        REQUIRE(connection.Execute(&statement));
+    }
+
+    SECTION("A failed prepared execution reconnects and retries")
+    {
+        PreparedStatementBase statement(0, 1);
+        statement.setUInt32(0, 42);
+        REQUIRE(connection.Execute(&statement));
+    }
+
+    SECTION("A failed prepared query reconnects and retries")
+    {
+        PreparedStatementBase statement(1, 1);
+        statement.setUInt32(0, 42);
+        std::unique_ptr<PreparedResultSet> result(connection.Query(&statement));
+        REQUIRE(result);
+        REQUIRE(result->Fetch()[0].GetUInt32() == 42);
+    }
+
     REQUIRE(ConnectionId(connection) != oldId);
-    PreparedStatementBase statement(0, 1);
-    statement.setUInt32(0, 42);
-    REQUIRE(connection.Execute(&statement));
 }
