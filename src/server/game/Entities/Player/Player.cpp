@@ -16050,13 +16050,15 @@ void Player::AddQuestAndCheckCompletion(Quest const* quest, Object* questGiver)
             sScriptMgr->OnQuestAccept(this, item, quest);
 
             // There are two cases where the source item is not destroyed when the quest is accepted:
-            // - It is required to finish the quest, and is an unique item
+            // - It is required to finish the quest
             // - It is the same item present in the source item field (item that would be given on quest accept)
+            // Everlake: an objective item is kept even when it is not unique, as on live: the Advertising License
+            // Application (270887/270888, MaxCount 0) starts Sign Me Up! and is one of its objectives
             bool destroyItem = true;
 
             for (QuestObjective const& obj : quest->GetObjectives())
             {
-                if (obj.Type == QUEST_OBJECTIVE_ITEM && uint32(obj.ObjectID) == item->GetEntry() && item->GetTemplate()->GetMaxCount() > 0)
+                if (obj.Type == QUEST_OBJECTIVE_ITEM && uint32(obj.ObjectID) == item->GetEntry())
                 {
                     destroyItem = false;
                     break;
