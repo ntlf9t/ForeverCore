@@ -711,8 +711,12 @@ void Pet::Update(uint32 diff)
             {
                 if (owner->GetPetGUID() != GetGUID())
                 {
-                    TC_LOG_ERROR("entities.pet", "Pet {} is not pet of owner {}, removed", GetEntry(), GetOwner()->GetName());
-                    ASSERT(getPetType() != HUNTER_PET, "Unexpected unlinked pet found for owner %s", owner->GetSession()->GetPlayerInfo().c_str());
+                    // An owner points at one pet at a time; this one is not it. Remove() below puts it away cleanly, so log it rather
+                    // than take the whole server down for a hunter pet (Karrz1/ForeverCore crashed here on 26 Nov after a change to
+                    // how pets load; our load path does not do that, but any other way to strand a pet should not crash either).
+                    TC_LOG_ERROR("entities.pet", "Pet {} ({}) of {} is not its owner's pet ({}), removed; {}", GetEntry(),
+                        getPetType() == HUNTER_PET ? "hunter pet" : "summon", GetOwner()->GetName(), owner->GetPetGUID().ToString(),
+                        owner->GetSession()->GetPlayerInfo());
                     Remove(PET_SAVE_NOT_IN_SLOT);
                     return;
                 }
