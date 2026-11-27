@@ -19,6 +19,7 @@
 #define _MAP_UPDATER_H_INCLUDED
 
 #include "Define.h"
+#include "LargeStackThread.h"
 #include "ProducerConsumerQueue.h"
 #include <condition_variable>
 #include <mutex>
@@ -51,7 +52,7 @@ class TC_GAME_API MapUpdater
 
         ProducerConsumerQueue<MapUpdateRequest*> _queue;
 
-        std::vector<std::thread> _workerThreads;
+        std::vector<Trinity::LargeStackThread> _workerThreads;   // 8 MB stack on macOS too (std::thread gets 512 KB there)
         std::atomic<bool> _cancelationToken;
 
         std::mutex _lock;

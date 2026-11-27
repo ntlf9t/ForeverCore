@@ -30,7 +30,7 @@ void UnitTestDataLoader::InitializeSpellSpecificInfo(SpellInfo& spellInfo)
 
 namespace
 {
-    constexpr uint32 AuraRanks[] = { 465, 10290, 643, 10291, 1032, 10292, 10293, 20218,
+    constexpr uint32 AuraRanks[] = { 465, 10290, 643, 10291, 1032, 10292, 10293,
         7294, 10298, 10299, 10300, 10301, 19746,
         19876, 19895, 19896, 19888, 19897, 19898, 19891, 19899, 19900 };
 
@@ -48,7 +48,7 @@ namespace
             bool native = true, uint32 family = SPELLFAMILY_PALADIN)
         {
             Name.ID = id;
-            Misc.Attributes[15] = native ? SPELL_ATTR15_UNK13 : 0;
+            Misc.Attributes[15] = native ? int32(SPELL_ATTR15_UNK13) : 0;
             ClassOptions.SpellClassSet = family;
             Effect.Effect = effect;
             Effect.EffectAura = SPELL_AURA_MOD_RESISTANCE;

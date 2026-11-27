@@ -33,6 +33,7 @@ enum CharacterDatabaseStatements : uint32
     CHAR_DEL_NONEXISTENT_GUILD_BANK_ITEM,
     CHAR_DEL_EXPIRED_BANS,
     CHAR_SEL_CHECK_NAME,
+    CHAR_SEL_CHECK_NAME_SURNAME,
     CHAR_SEL_CHECK_GUID,
     CHAR_SEL_SUM_CHARS,
     CHAR_SEL_CHAR_CREATE_INFO,
@@ -56,6 +57,7 @@ enum CharacterDatabaseStatements : uint32
     CHAR_SEL_CHAR_ZONE,
     CHAR_SEL_CHAR_POSITION_XYZ,
     CHAR_SEL_CHAR_POSITION,
+    CHAR_SEL_ACCOUNT_CHARACTER_LIST,
 
     CHAR_DEL_BATTLEGROUND_RANDOM_ALL,
     CHAR_DEL_BATTLEGROUND_RANDOM,
@@ -690,7 +692,7 @@ class TC_DATABASE_API CharacterDatabaseConnection : public MySQLConnection
 public:
     typedef CharacterDatabaseStatements Statements;
 
-    CharacterDatabaseConnection(MySQLConnectionInfo& connInfo, ConnectionFlags connectionFlags);
+    CharacterDatabaseConnection(MySQLConnectionInfo const& connInfo, ConnectionFlags connectionFlags);
     ~CharacterDatabaseConnection();
 
     //- Loads database type specific prepared statements

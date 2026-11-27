@@ -530,6 +530,9 @@ class TC_GAME_API WorldObject : public Object, public WorldLocation
         void SetIsStoredInWorldObjectGridContainer(bool apply);
         bool IsAlwaysStoredInWorldObjectGridContainer() const { return m_isStoredInWorldObjectGridContainer; }
         bool IsStoredInWorldObjectGridContainer() const;
+        // Everlake: true while a Creature is moved into the world object grid container (Map::SwitchGridContainers, e.g.
+        // when possessed). Kept here rather than on Creature so ~WorldObject can read it after ~Creature has run.
+        bool m_isTempWorldObject = false;
 
         uint32  LastUsedScriptID;
 

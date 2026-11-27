@@ -1,0 +1,46 @@
+# Everlake: keep the mirror branches level with their upstreams, once a day. Fast-forward only: a branch upstream
+# rewrote (force-pushed) fails here instead of being overwritten.
+# Branch moves made with GitHub's own token start no workflows, so nothing is built on the mirrors. That token may not
+# move a branch to commits that change files in .github/workflows, so when an upstream does that, this job fails for
+# that branch and it is moved by hand. A move by a person (or a personal token) starts the mirror's own upstream
+# workflows, which build on every branch: cancel those runs. Don't add a personal token here for the same reason.
+name: Everlake mirrors
+
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    if: github.repository == 'buildthehomelab/wow-trinitycore-everlake'
+    runs-on: ubuntu-latest
+    steps:
+    - name: Fast-forward the mirror branches
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        failed=0
+        while read -r branch source; do
+          want=$(gh api "repos/$source/git/ref/heads/$branch" --jq .object.sha) || { echo "::error::$source $branch not found"; failed=1; continue; }
+          have=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$branch" --jq .object.sha) || { echo "::error::$branch missing here"; failed=1; continue; }
+          if [ "$want" = "$have" ]; then
+            echo "- \`$branch\`: up to date with $source" >> "$GITHUB_STEP_SUMMARY"
+          elif gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/heads/$branch" -f sha="$want" -F force=false > /dev/null; then
+            echo "- \`$branch\`: ${have:0:10} to ${want:0:10} from $source" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::error::$branch could not be fast-forwarded to $source ${want:0:10}"
+            echo "- \`$branch\`: NOT moved, $source is at ${want:0:10}" >> "$GITHUB_STEP_SUMMARY"
+            failed=1
+          fi
+        done <<'EOF'
+        forever advocaite/TrinityCore
+        forever-bots advocaite/TrinityCore
+        master TrinityCore/TrinityCore
+        wotlk_classic TrinityCore/TrinityCore
+        cata_classic TrinityCore/TrinityCore
+        EOF
+        exit $failed

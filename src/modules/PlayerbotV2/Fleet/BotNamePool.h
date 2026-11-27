@@ -63,6 +63,9 @@ public:
     // same bucket order without consuming.
     static std::string PreviewName(uint8 gender, uint8 race);
 
+    // Full-name allocation: excludes local characters and player reservations on every realm.
+    static std::string AcquireSurname(std::string const& name, uint8 race);
+
     // Bind a previously-acquired name to a created character. Stores
     // the character's guid in used_by_guid so the row can be reverse-
     // looked-up from `.playerbot wipe` and from ReconcileOnBoot.
@@ -78,6 +81,10 @@ public:
     // wipe case where the DBA bypassed the C++ delete path. Cheap;
     // one JOIN scan per boot. Also loads the surname tables.
     static void ReconcileOnBoot();
+
+    // Bots do not reserve names for themselves, but must yield full names held for human players.
+    static void RegisterNameReservationHooks();
+    static uint32 RenameBotsHoldingReservedNames();
 
     // Diagnostic — returns (available, total) for /popstats. `available`
     // counts both name pools; `surnames` counts whole surnames loaded.

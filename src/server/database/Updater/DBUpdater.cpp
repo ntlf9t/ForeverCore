@@ -24,6 +24,7 @@
 #include "Log.h"
 #include "QueryResult.h"
 #include "StartProcess.h"
+#include "SqlStatementSplitter.h"
 #include "UpdateFetcher.h"
 #include "MySQLWorkaround.h"
 #include "StringConvert.h"
@@ -484,88 +485,8 @@ void DBUpdater<T>::ApplyFile(DatabaseWorkerPool<T>& pool, Path const& path)
     boost::filesystem::remove(temp, ec);
 }
 
-// Classic 1.60 fork: the files are run over our own MySQL connection (multi statements), not through the mysql command line client.
-// The client silently stopped reading some files (quotes in `--` comments) and, started from the worldserver, sometimes ran nothing
-// at all while exiting with success (2026-10-05). The file is cut into chunks at statement ends (outside strings and comments).
-namespace
-{
-    // splits SQL text at the `;` that end statements, skipping strings, quoted names and comments; whole statements only
-    std::vector<std::string> SplitSqlStatements(std::string const& text)
-    {
-        std::vector<std::string> statements;
-        std::string current;
-        size_t i = 0;
-        size_t const n = text.size();
-        auto flush = [&]()
-        {
-            if (current.find_first_not_of(" \t\r\n") != std::string::npos)
-                statements.push_back(current);
-            current.clear();
-        };
-        auto isSpace = [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; };
-        while (i < n)
-        {
-            char const c = text[i];
-            // comments: `-- ` (or `--` at the end of the text), `#`, `/* */` (`/*!` version comments are kept as code)
-            if (c == '-' && i + 1 < n && text[i + 1] == '-' && (i + 2 >= n || isSpace(text[i + 2])))
-            {
-                while (i < n && text[i] != '\n')
-                    ++i;
-                continue;
-            }
-            if (c == '#')
-            {
-                while (i < n && text[i] != '\n')
-                    ++i;
-                continue;
-            }
-            if (c == '/' && i + 1 < n && text[i + 1] == '*' && !(i + 2 < n && text[i + 2] == '!'))
-            {
-                i += 2;
-                while (i + 1 < n && !(text[i] == '*' && text[i + 1] == '/'))
-                    ++i;
-                i += 2;
-                continue;
-            }
-            if (c == '\'' || c == '"' || c == '`')
-            {
-                char const quote = c;
-                current += c;
-                ++i;
-                while (i < n)
-                {
-                    char const d = text[i];
-                    current += d;
-                    ++i;
-                    if (d == '\\' && quote != '`' && i < n)
-                    {
-                        current += text[i];
-                        ++i;
-                        continue;
-                    }
-                    if (d == quote)
-                    {
-                        if (i < n && text[i] == quote)      // doubled quote inside the string
-                        {
-                            current += text[i];
-                            ++i;
-                            continue;
-                        }
-                        break;
-                    }
-                }
-                continue;
-            }
-            current += c;
-            ++i;
-            if (c == ';')
-                flush();
-        }
-        flush();
-        return statements;
-    }
-}
-
+// Classic 1.60 fork: the files are run over our own MySQL connection, cut into statements by DBUpdaterSql::SplitStatements
+// (SqlStatementSplitter.h says why).
 template<class T>
 void DBUpdater<T>::ApplyFile(DatabaseWorkerPool<T>& pool, std::string const& host, std::string const& user,
     std::string const& password, std::string const& port_or_socket, std::string const& database, std::string const& ssl,
@@ -584,7 +505,7 @@ void DBUpdater<T>::ApplyFile(DatabaseWorkerPool<T>& pool, std::string const& hos
     if (!in.is_open())
         fail("the file can not be read");
     std::string const text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    std::vector<std::string> const statements = SplitSqlStatements(text);
+    std::vector<std::string> const statements = DBUpdaterSql::SplitStatements(text);
 
     mysql = mysql_init(nullptr);
     if (!mysql)

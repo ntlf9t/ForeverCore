@@ -17,7 +17,7 @@
 
 // Classic 1.60 port of VMaNGOS src/scripts/kalimdor/desolace/desolace.cpp (ScriptDev2 lineage, GPL-2)
 // Ported: go_hand_of_iruxos_crystal (5381), npc_melizza_brimbuzzle (6132), npc_dalinda_malem (1440),
-//         npc_cork_gizelton (Gizelton Caravan, 5821 / 5943)
+//         npc_cork_gizelton (Gizelton Caravan, 5821 / 5943), go_ghost_magnet (Ghost-o-plasm Round Up, 6134: the Magrami Spectres)
 
 #include "ScriptMgr.h"
 #include "GameObject.h"
@@ -28,6 +28,7 @@
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
 #include "Player.h"
+#include "QuaternionData.h"
 #include "QuestDef.h"
 #include "ScriptedCreature.h"
 #include "ScriptedEscortAI.h"
@@ -35,6 +36,7 @@
 #include "SpellScript.h"
 #include "TemporarySummon.h"
 #include "classic_script_text.h"
+#include <vector>
 
 namespace
 {
@@ -1290,6 +1292,135 @@ public:
     }
 };
 
+/*#####
+ ## go_ghost_magnet (Ghost-o-plasm Round Up, 6134)
+ ######*/
+
+// A placed Ghost Magnet (spell 19588) calls eight Magrami Spectres from up to 40 yards around it over two minutes. They
+// come in blue and neutral; at the magnet they turn green and hostile, and the quest's Ghost-o-plasm drops from them.
+// One killed while the magnet still pulls brings another 20 seconds later. A magnet placed where another one already
+// pulls (its aura object within 30 yards) calls nothing. VMaNGOS go_ghost_magnetAI + npc_magrami_spetreAI; the
+// spectre's fighting stays its SmartAI (Curse of the Fallen Magram, Chilling Touch).
+namespace GhostMagnet
+{
+enum : uint32
+{
+    NPC_MAGRAMI_SPECTRE     = 11560,
+    GO_GHOST_MAGNET_AURA    = 177749,
+    SPELL_BLUE_AURA         = 17327,    // on the way: neutral
+    SPELL_GREEN_AURA        = 18951,    // at the magnet: hostile
+    FACTION_NEUTRAL         = 634,
+    FACTION_HOSTILE         = 16,
+    POINT_MAGNET            = 2,
+    SPECTRES                = 8
+};
+
+constexpr Milliseconds Pull = 120s;
+constexpr Milliseconds Replace = 20s;
+constexpr float CallRadius = 40.0f;
+constexpr float OtherMagnetRadius = 30.0f;
+constexpr float ArrivedDistance = 4.0f;
+}
+
+struct classic_go_ghost_magnet : public GameObjectAI
+{
+    classic_go_ghost_magnet(GameObject* go) : GameObjectAI(go) { }
+
+    void UpdateAI(uint32 diff) override
+    {
+        if (!_started)
+        {
+            _started = true;
+            if (me->FindNearestGameObject(GhostMagnet::GO_GHOST_MAGNET_AURA, GhostMagnet::OtherMagnetRadius))
+                return;     // another magnet already pulls here
+            _pulling = true;
+            me->SummonGameObject(GhostMagnet::GO_GHOST_MAGNET_AURA, me->GetPosition(), QuaternionData::fromEulerAnglesZYX(me->GetOrientation(), 0.0f, 0.0f),
+                std::chrono::duration_cast<Seconds>(GhostMagnet::Pull));
+        }
+        if (!_pulling)
+            return;
+
+        Milliseconds const elapsed(diff);
+        _pullLeft -= elapsed;
+        if (_pullLeft <= 0s)
+        {
+            _pulling = false;
+            return;
+        }
+
+        if (_toCall > 0)
+        {
+            _callTimer -= elapsed;
+            if (_callTimer <= 0s)
+            {
+                CallSpectre();
+                --_toCall;
+                _callTimer = randtime(3s, 8s);
+            }
+        }
+
+        _checkTimer -= elapsed;
+        if (_checkTimer > 0s)
+            return;
+        _checkTimer = 1s;
+        for (auto itr = _spectres.begin(); itr != _spectres.end();)
+        {
+            Creature* spectre = ObjectAccessor::GetCreature(*me, itr->first);
+            if (!spectre || !spectre->IsAlive())
+            {
+                // VMaNGOS: the corpse calls the next one 20 seconds after the kill
+                _replacements.push_back(GhostMagnet::Replace);
+                itr = _spectres.erase(itr);
+                continue;
+            }
+            if (!itr->second && spectre->GetExactDist2d(me) <= GhostMagnet::ArrivedDistance)
+            {
+                spectre->RemoveAurasDueToSpell(GhostMagnet::SPELL_BLUE_AURA);
+                spectre->AddAura(GhostMagnet::SPELL_GREEN_AURA, spectre);
+                spectre->SetFaction(GhostMagnet::FACTION_HOSTILE);
+                itr->second = true;
+            }
+            ++itr;
+        }
+        for (auto itr = _replacements.begin(); itr != _replacements.end();)
+        {
+            *itr -= 1s;
+            if (*itr <= 0s)
+            {
+                CallSpectre();
+                itr = _replacements.erase(itr);
+            }
+            else
+                ++itr;
+        }
+    }
+
+private:
+    bool _started = false;
+    bool _pulling = false;
+    uint8 _toCall = GhostMagnet::SPECTRES;
+    Milliseconds _pullLeft = GhostMagnet::Pull;
+    Milliseconds _callTimer = 5s;
+    Milliseconds _checkTimer = 1s;
+    std::vector<std::pair<ObjectGuid, bool>> _spectres;     // guid, turned green
+    std::vector<Milliseconds> _replacements;
+
+    void CallSpectre()
+    {
+        Position const from = me->GetRandomPoint(me->GetPosition(), GhostMagnet::CallRadius);
+        TempSummon* spectre = me->SummonCreature(GhostMagnet::NPC_MAGRAMI_SPECTRE, from, TEMPSUMMON_TIMED_OR_DEAD_DESPAWN, GhostMagnet::Pull);
+        if (!spectre)
+            return;
+        spectre->SetFaction(GhostMagnet::FACTION_NEUTRAL);
+        spectre->AddAura(GhostMagnet::SPELL_BLUE_AURA, spectre);
+        float x, y, z;
+        me->GetContactPoint(spectre, x, y, z, 1.0f);
+        spectre->SetHomePosition(x, y, z, spectre->GetOrientation());
+        spectre->GetMotionMaster()->MovePoint(GhostMagnet::POINT_MAGNET, x, y, z);
+        _spectres.emplace_back(spectre->GetGUID(), false);
+    }
+};
+
 void AddSC_classic_desolace()
 {
     RegisterSpellScript(classic_spell_hoof_shaped_foot_pedal);
@@ -1299,4 +1430,5 @@ void AddSC_classic_desolace()
     RegisterCreatureAI(classic_npc_dalinda_malem);
     RegisterCreatureAI(classic_npc_cork_gizelton);
     RegisterCreatureAI(classic_npc_rigger_gizelton);
+    RegisterGameObjectAI(classic_go_ghost_magnet);
 }

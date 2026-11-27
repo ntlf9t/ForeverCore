@@ -46,6 +46,9 @@ namespace
     // AuctionHouseBot.Vanilla.MarketPrices: per-unit market prices from the world table auctionhousebot_market_price
     bool _marketPrices = false;
     float _marketScale = 1.0f;
+    // AuctionHouseBot.Vanilla.MarketPrices.Only: list only items that have a market price (the prices come from what live
+    // players trade, so an item without one is out of era, raid-only or never traded); off while no prices are loaded
+    bool _marketOnly = false;
     std::unordered_map<uint32, uint64> _marketPrice;
 
     void LoadMarketPrices()
@@ -69,7 +72,8 @@ namespace
             _marketPrice[fields[0].GetUInt32()] = fields[1].GetUInt64();
         } while (result->NextRow());
 
-        TC_LOG_INFO("ahbot", "AHBot: loaded {} item market prices in {} ms", _marketPrice.size(), GetMSTimeDiffToNow(oldMSTime));
+        TC_LOG_INFO("ahbot", "AHBot: loaded {} item market prices in {} ms{}", _marketPrice.size(), GetMSTimeDiffToNow(oldMSTime),
+            _marketOnly ? "; only these items are listed (AuctionHouseBot.Vanilla.MarketPrices.Only)" : "");
     }
 }
 
@@ -88,6 +92,7 @@ void LoadConfig()
     _fullValueItemLevel = sConfigMgr->GetIntDefault("AuctionHouseBot.Vanilla.ValueCurve.FullValueItemLevel", 0);
     _marketPrices = sConfigMgr->GetBoolDefault("AuctionHouseBot.Vanilla.MarketPrices", false);
     _marketScale = std::clamp(sConfigMgr->GetFloatDefault("AuctionHouseBot.Vanilla.MarketPrices.Scale", 1.0f), 0.1f, 10.0f);
+    _marketOnly = sConfigMgr->GetBoolDefault("AuctionHouseBot.Vanilla.MarketPrices.Only", false);
     LoadMarketPrices();
 }
 
@@ -98,6 +103,10 @@ bool Enabled()
 
 bool IsAllowed(ItemTemplate const* proto)
 {
+    // with no prices loaded (MarketPrices off or an empty table) this filter is off: it would leave nothing to list
+    if (_marketOnly && !_marketPrice.empty() && !_marketPrice.contains(proto->GetId()))
+        return false;
+
     if (!_enabled)
         return true;
 
@@ -142,6 +151,11 @@ uint64 MarketUnitPrice(ItemTemplate const* proto)
     // with no known price; live players list most cloth, leather, herbs and ore well below them (Linen Cloth 24c a piece,
     // its stand-in 55c), so using them here would throw the market price away for more than half of the items.
     return std::max<uint64>({ uint64(double(itr->second) * _marketScale), uint64(proto->GetSellPrice()), 1 });
+}
+
+void SetMarketPricesOnly(bool only)
+{
+    _marketOnly = only;
 }
 
 void SetMarketPrices(std::unordered_map<uint32, uint64> prices, float scale)
@@ -205,5 +219,13 @@ uint32 MaterialStackSize(uint32 maxStack)
 {
     // GetMaxStackSize uses INT32_MAX - 1 as the sentinel for unlimited stacks.
     return maxStack >= 0x7FFFFFFEu ? 20 : std::max<uint32>(maxStack, 1);
+}
+
+uint32 MaterialStackSize(uint32 quality, uint32 stockStack, uint32 serverMaxStack, uint32 blueStack)
+{
+    uint32 const stock = std::max<uint32>(stockStack, 1);
+    if (quality != ITEM_QUALITY_RARE || blueStack <= stock)
+        return stock;
+    return std::max(stock, std::min(blueStack, serverMaxStack));
 }
 }

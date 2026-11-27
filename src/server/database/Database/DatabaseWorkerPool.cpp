@@ -31,6 +31,7 @@
 #include "QueryCallback.h"
 #include "QueryHolder.h"
 #include "QueryResult.h"
+#include "QueueDrain.h"
 #include "Transaction.h"
 #include "MySQLWorkaround.h"
 #include <boost/asio/use_future.hpp>
@@ -199,7 +200,20 @@ void DatabaseWorkerPool<T>::Close()
     TC_LOG_INFO("sql.driver", "Closing down DatabasePool '{}'.", GetDatabaseName());
 
     if (_ioContext)
+    {
+        // stop() drops queued work: let the async workers finish it first. At shutdown this queue holds the character
+        // saves of every player World::KickAll just logged out; stopping without waiting rolled them back.
+        if (size_t queued = QueueSize())
+        {
+            TC_LOG_INFO("sql.driver", "DatabasePool '{}': waiting for {} queued queries to finish.", GetDatabaseName(), queued);
+            Trinity::Database::WaitForEmptyQueue([this] { return QueueSize(); }, [this](size_t remaining)
+            {
+                TC_LOG_INFO("sql.driver", "DatabasePool '{}': still {} queued queries.", GetDatabaseName(), remaining);
+            });
+        }
+
         _ioContext->stop();
+    }
 
     //! Closes the actualy MySQL connection.
     _connections[IDX_ASYNC].clear();

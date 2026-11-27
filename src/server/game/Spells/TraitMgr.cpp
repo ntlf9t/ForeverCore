@@ -98,6 +98,38 @@ std::unordered_map<int32, std::vector<TraitTreeLoadoutEntryEntry const*>> _trait
 // show the old number. 1 = blizzlike (nothing is changed or sent). Points are handed out level by level, so 1.5 gives 1, 2,
 // 1, 2... and a level-60 character always ends with round-down(51 x rate). Lowering the rate below what a character has
 // spent makes its next talent change ask to reset first.
+std::vector<int32> ScaleClassicTalentLevelPoints(std::vector<int32> const& amounts, float rate)
+{
+    std::vector<int32> scaled;
+    scaled.reserve(amounts.size());
+    int32 baseTotal = 0;
+    int32 givenTotal = 0;
+    for (int32 amount : amounts)
+    {
+        baseTotal += amount;
+        int32 const wanted = int32(std::floor(float(baseTotal) * rate + 0.0001f));
+        int32 const given = std::max(0, wanted - givenTotal);
+        givenTotal += given;
+        scaled.push_back(given);
+    }
+    return scaled;
+}
+
+ClassicTalentRateRow GetClassicTalentRateRow(TraitCurrencySourceEntry const& source)
+{
+    // The rows the Legacy perk Talented opens (37163-37167: one point at each level 9..5 behind a Talented node) stay as they
+    // are: the server does not count them (the node is in the Legacy config, not the talent config being checked) but adds
+    // Talented's points itself, one a level (FillOwnedCurrenciesMap, GetClassicTalentedStartLevel). Scaled for the client only,
+    // the talent window offered more points than the server allowed and Apply Changes failed, as in advocaite/TrinityCore#150.
+    if (source.TraitNodeEntryID)
+        return ClassicTalentRateRow::Unchanged;
+
+    if (source.PlayerLevel > 0 && !source.QuestID && !source.AchievementID)
+        return ClassicTalentRateRow::Level;
+
+    return ClassicTalentRateRow::Scaled;
+}
+
 static void ApplyClassicTalentRate()
 {
     static constexpr uint32 ClassicTalentCurrencyID = 3820;
@@ -113,10 +145,17 @@ static void ApplyClassicTalentRate()
         if (source->TraitCurrencyID != ClassicTalentCurrencyID || source->Amount <= 0)
             continue;
 
-        if (source->PlayerLevel > 0 && !source->QuestID && !source->AchievementID && !source->TraitNodeEntryID)
-            levelSources.push_back(source);
-        else
-            otherSources.push_back(source->ID);
+        switch (GetClassicTalentRateRow(*source))
+        {
+            case ClassicTalentRateRow::Level:
+                levelSources.push_back(source);
+                break;
+            case ClassicTalentRateRow::Scaled:
+                otherSources.push_back(source->ID);
+                break;
+            case ClassicTalentRateRow::Unchanged:
+                break;
+        }
     }
 
     if (levelSources.empty())
@@ -127,18 +166,23 @@ static void ApplyClassicTalentRate()
 
     std::ranges::sort(levelSources, {}, &TraitCurrencySourceEntry::PlayerLevel);
 
+    std::vector<int32> amounts;
+    amounts.reserve(levelSources.size());
+    for (TraitCurrencySourceEntry const* source : levelSources)
+        amounts.push_back(source->Amount);
+
+    std::vector<int32> const scaled = ScaleClassicTalentLevelPoints(amounts, rate);
+
     uint32 changed = 0;
     int32 baseTotal = 0;
     int32 givenTotal = 0;
-    for (TraitCurrencySourceEntry const* source : levelSources)
+    for (std::size_t i = 0; i < levelSources.size(); ++i)
     {
-        baseTotal += source->Amount;
-        int32 const wanted = int32(std::floor(float(baseTotal) * rate + 0.0001f));
-        int32 const amount = std::max(0, wanted - givenTotal);
-        givenTotal += amount;
+        baseTotal += amounts[i];
+        givenTotal += scaled[i];
 
-        const_cast<TraitCurrencySourceEntry*>(source)->Amount = amount;
-        DB2HotfixGeneratorBase::AddClientHotfix(sTraitCurrencySourceStore.GetTableHash(), source->ID);
+        const_cast<TraitCurrencySourceEntry*>(levelSources[i])->Amount = scaled[i];
+        DB2HotfixGeneratorBase::AddClientHotfix(sTraitCurrencySourceStore.GetTableHash(), levelSources[i]->ID);
         ++changed;
     }
 

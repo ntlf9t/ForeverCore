@@ -884,7 +884,7 @@ void WorldSession::StartShopPurchase(uint32 clientToken, uint32 productId, Objec
         return;
     }
 
-    ShopPendingPurchase& pending = _shopPendingPurchase.emplace();
+    ShopPendingPurchase& pending = _shopPendingPurchase.emplace(ShopPendingPurchase{});
     pending.PurchaseID = response.PurchaseID;
     pending.ProductID = product->ID;
     pending.ServerToken = urand(1, std::numeric_limits<int32>::max());

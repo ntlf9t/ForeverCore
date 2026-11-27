@@ -35,6 +35,17 @@ if(MSVC)
   target_compile_options(proto PRIVATE /FS)
 endif()
 
+# Everlake: the generated .pb.cc files find field offsets through a made-up object at address 16, which UBSan's vptr
+# check reads and crashes on at start-up (see dep/protobuf/CMakeLists.txt).
+# Set on the source files, not the target: target options come before the -fsanitize=undefined it inherits, which
+# would turn the check back on.
+if (UBSAN AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  get_target_property(proto_sources proto SOURCES)
+  set_source_files_properties(${proto_sources}
+    PROPERTIES
+      COMPILE_OPTIONS -fno-sanitize=vptr)
+endif()
+
 set_target_properties(proto
   PROPERTIES
     COMPILE_WARNING_AS_ERROR ${WITH_WARNINGS_AS_ERRORS}

@@ -232,6 +232,7 @@ std::unique_ptr<BattlegroundScript> MakeTolViron3ArenaScript();
 std::unique_ptr<BattlegroundScript> MakeBlackRookHold3ArenaScript();
 std::unique_ptr<BattlegroundScript> MakeRobodromeArenaScript();
 std::unique_ptr<BattlegroundScript> MakeEmpyreanDomainArenaScript();
+std::unique_ptr<BattlegroundScript> MakeMakgoraArenaScript();
 }
 #include "Session/BotSessionMgr.h"
 #include "Travel/QuestHubDatabase.h"
@@ -582,6 +583,7 @@ void Init()
     h->battlegrounds->Register(MakeBlackRookHold3ArenaScript());
     h->battlegrounds->Register(MakeRobodromeArenaScript());
     h->battlegrounds->Register(MakeEmpyreanDomainArenaScript());
+    h->battlegrounds->Register(MakeMakgoraArenaScript());
     // Team-level BG coordinator (BG audit N60). Driven from
     // Module::OnWorldUpdate ahead of the snapshot pass.
     h->bg_coordinator = std::make_unique<BgTeamCoordinator>();

@@ -27,6 +27,9 @@
 
 void WorldSession::HandleAddToy(WorldPackets::Toy::AddToy& packet)
 {
+    if (!_collectionMgr) // a bot session has none (DropClientOnlyManagers)
+        return;
+
     if (!packet.Guid)
         return;
 
@@ -53,6 +56,9 @@ void WorldSession::HandleAddToy(WorldPackets::Toy::AddToy& packet)
 
 void WorldSession::HandleUseToy(WorldPackets::Toy::UseToy& packet)
 {
+    if (!_collectionMgr) // a bot session has none (DropClientOnlyManagers)
+        return;
+
     uint32 itemId = packet.Cast.Misc[0];
     ItemTemplate const* item = sObjectMgr->GetItemTemplate(itemId);
     if (!item)
@@ -97,5 +103,8 @@ void WorldSession::HandleUseToy(WorldPackets::Toy::UseToy& packet)
 
 void WorldSession::HandleToyClearFanfare(WorldPackets::Toy::ToyClearFanfare& toyClearFanfare)
 {
+    if (!_collectionMgr) // a bot session has none (DropClientOnlyManagers)
+        return;
+
     _collectionMgr->ToyClearFanfare(toyClearFanfare.ItemID);
 }

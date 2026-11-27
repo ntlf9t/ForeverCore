@@ -121,12 +121,13 @@ void AuctionsBucketData::BuildBucketInfo(WorldPackets::AuctionHouse::BucketInfo*
     }
 
     bucketInfo->ContainsOnlyCollectedAppearances = true;
+    CollectionMgr const* collectionMgr = player->GetSession()->GetCollectionMgr();
     for (std::pair<uint32, uint32> appearance : ItemModifiedAppearanceId)
     {
         if (appearance.first)
         {
             bucketInfo->ItemModifiedAppearanceIDs.push_back(appearance.first);
-            if (!player->GetSession()->GetCollectionMgr()->HasItemAppearance(appearance.first).first)
+            if (!collectionMgr || !collectionMgr->HasItemAppearance(appearance.first).first)
                 bucketInfo->ContainsOnlyCollectedAppearances = false;
         }
     }
@@ -1184,7 +1185,8 @@ void AuctionHouseObject::BuildListBuckets(WorldPackets::AuctionHouse::AuctionLis
     // prepare uncollected filter for more efficient searches
     if (filters.HasFlag(AuctionHouseFilterMask::UncollectedOnly))
     {
-        knownAppearanceIds = player->GetSession()->GetCollectionMgr()->GetAppearanceIds();
+        if (CollectionMgr const* collectionMgr = player->GetSession()->GetCollectionMgr())
+            knownAppearanceIds = collectionMgr->GetAppearanceIds();
         knownPetSpecies.resize(std::max(knownPetSpecies.size() * 32, std::size_t(sBattlePetSpeciesStore.GetNumRows())));
         boost::from_block_range(knownPetBits.begin(), knownPetBits.end(), knownPetSpecies);
     }
@@ -1268,7 +1270,7 @@ void AuctionHouseObject::BuildListBuckets(WorldPackets::AuctionHouse::AuctionLis
             // toys
             else if (sDB2Manager.IsToyItem(bucket.first.ItemId))
             {
-                if (player->GetSession()->GetCollectionMgr()->HasToy(bucket.first.ItemId))
+                if (player->GetSession()->GetCollectionMgr() && player->GetSession()->GetCollectionMgr()->HasToy(bucket.first.ItemId))
                     continue;
             }
             // mounts

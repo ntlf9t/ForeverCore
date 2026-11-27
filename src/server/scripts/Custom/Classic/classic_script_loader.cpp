@@ -171,14 +171,14 @@ void AddSC_classic_deadmines();
 void AddSC_classic_instance_deadmines();
 void AddSC_classic_instance_ragefire_chasm();
 void AddSC_classic_instance_ruins_of_lordaeron();
+void AddSC_classic_instance_alcaz_prison();
+void AddSC_classic_instance_shapers_terrace();
 void AddSC_classic_instance_hall_of_thanes();
 void AddSC_classic_instance_excavation_site_wetlands();
 void AddSC_classic_instance_city_of_dalaran();
 void AddSC_classic_instance_the_drowned_city();
 void AddSC_classic_instance_kroldok_stronghold();
-void AddSC_classic_instance_alcaz_prison();
 void AddSC_classic_instance_blackmaw_hold();
-void AddSC_classic_instance_shapers_terrace();
 void AddSC_classic_instance_the_stockade();
 void AddSC_classic_moonglade();
 void AddSC_classic_feralas();
@@ -203,6 +203,7 @@ void AddSC_classic_stonetalon_mountains();
 void AddSC_classic_silithus();
 void AddSC_classic_world_event_wareffort();
 void AddSC_classic_world_event_dragons_of_nightmare();
+void AddSC_classic_world_buffs();
 void AddSC_classic_world_event_scourge_invasion();
 void AddSC_classic_npcs_special();
 void AddSC_classic_go_scripts();
@@ -211,6 +212,8 @@ void AddSC_classic_spell_scripts();
 void AddSC_classic_dbscript_spells();
 void AddSC_classic_talents_mage_shaman();
 void AddSC_classic_talents_warrior_rogue_hunter();
+void AddSC_classic_hunter_pet_scaling();
+void AddSC_classic_warlock_pet_scaling();
 void AddSC_classic_rogue_abilities();
 void AddSC_classic_talents_priest_paladin();
 void AddSC_classic_talents_warlock_druid();
@@ -229,6 +232,7 @@ void AddSC_classic_silverpine_forest();
 void AddSC_classic_searing_gorge();
 void AddSC_classic_loch_modan();
 void AddSC_classic_hinterlands();
+void AddSC_classic_rogue_dead_drop();
 
 void AddClassicScripts()
 {
@@ -385,14 +389,14 @@ void AddClassicScripts()
     AddSC_classic_instance_deadmines();
     AddSC_classic_instance_ragefire_chasm();
     AddSC_classic_instance_ruins_of_lordaeron();
+    AddSC_classic_instance_alcaz_prison();
+    AddSC_classic_instance_shapers_terrace();
     AddSC_classic_instance_hall_of_thanes();
     AddSC_classic_instance_excavation_site_wetlands();
     AddSC_classic_instance_city_of_dalaran();
     AddSC_classic_instance_the_drowned_city();
     AddSC_classic_instance_kroldok_stronghold();
-    AddSC_classic_instance_alcaz_prison();
     AddSC_classic_instance_blackmaw_hold();
-    AddSC_classic_instance_shapers_terrace();
     AddSC_classic_instance_the_stockade();
     AddSC_classic_moonglade();
     AddSC_classic_feralas();
@@ -417,6 +421,7 @@ void AddClassicScripts()
     AddSC_classic_silithus();
     AddSC_classic_world_event_wareffort();
     AddSC_classic_world_event_dragons_of_nightmare();
+    AddSC_classic_world_buffs();
     AddSC_classic_world_event_scourge_invasion();
     AddSC_classic_npcs_special();
     AddSC_classic_go_scripts();
@@ -425,6 +430,8 @@ void AddClassicScripts()
     AddSC_classic_dbscript_spells();
     AddSC_classic_talents_mage_shaman();
     AddSC_classic_talents_warrior_rogue_hunter();
+    AddSC_classic_hunter_pet_scaling();
+    AddSC_classic_warlock_pet_scaling();
     AddSC_classic_rogue_abilities();
     AddSC_classic_talents_priest_paladin();
     AddSC_classic_talents_warlock_druid();
@@ -443,4 +450,5 @@ void AddClassicScripts()
     AddSC_classic_searing_gorge();
     AddSC_classic_loch_modan();
     AddSC_classic_hinterlands();
+    AddSC_classic_rogue_dead_drop();
 }

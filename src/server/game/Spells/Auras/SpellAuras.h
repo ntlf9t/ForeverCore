@@ -120,6 +120,7 @@ struct TC_GAME_API AuraCreateInfo
     AuraCreateInfo& SetStackAmount(int32 stackAmount) { StackAmount = stackAmount > 0 ? stackAmount : 1; return *this; }
     AuraCreateInfo& SetOwnerEffectMask(uint32 effMask) { _targetEffectMask = effMask; return *this; }
     AuraCreateInfo& SetSpellVisual(SpellCastVisual const& spellVisual) { _spellVisual = spellVisual; return *this; }
+    AuraCreateInfo& SetDst(WorldLocation const* dst) { Dst = dst; return *this; }
 
     SpellInfo const* GetSpellInfo() const { return _spellInfo; }
     uint32 GetAuraEffectMask() const { return _auraEffectMask; }
@@ -133,6 +134,7 @@ struct TC_GAME_API AuraCreateInfo
     bool* IsRefresh = nullptr;
     int32 StackAmount = 1;
     bool ResetPeriodicTimer = true;
+    WorldLocation const* Dst = nullptr;
 
 private:
     ObjectGuid _castId;
@@ -162,6 +164,14 @@ struct AuraLoadEffectInfo
 {
     std::array<SpellEffectValue, MAX_SPELL_EFFECTS> Amounts;
     std::array<SpellEffectValue, MAX_SPELL_EFFECTS> BaseAmounts;
+};
+
+struct AuraStackDropInfo
+{
+    TimePoint DropTime;
+    int32 StackAmount;
+
+    friend std::strong_ordering operator<=>(AuraStackDropInfo const& left, AuraStackDropInfo const& right) { return left.DropTime <=> right.DropTime; }
 };
 
 class TC_GAME_API Aura
@@ -226,6 +236,10 @@ class TC_GAME_API Aura
         bool IsExpired() const { return !GetDuration() && !m_dropEvent; }
         bool IsPermanent() const { return GetMaxDuration() == -1; }
 
+        void AddStackDropTime(TimePoint dropTime, int32 stacks);
+        void RemoveStackDropTime(int32 stacksToRemove);
+        void SetLastStackDuration(int32 duration);
+
         uint8 GetCharges() const { return m_procCharges; }
         void SetCharges(uint8 charges);
         uint8 CalcMaxCharges(Unit* caster) const;
@@ -240,6 +254,8 @@ class TC_GAME_API Aura
         bool ModStackAmount(int32 num, AuraRemoveMode removeMode = AURA_REMOVE_BY_DEFAULT, bool resetPeriodicTimer = true);
         uint32 CalcMaxStackAmount() const;
         bool IsUsingStacks() const;
+
+        WorldLocation const& GetDst() const { return m_dst; }
 
         uint8 GetCasterLevel() const { return m_casterLevel; }
 
@@ -302,6 +318,7 @@ class TC_GAME_API Aura
         void SetUsingCharges(bool val) { m_isUsingCharges = val; }
         void PrepareProcToTrigger(AuraApplication* aurApp, ProcEventInfo& eventInfo, TimePoint now);
         void PrepareProcChargeDrop(SpellProcEntry const* procEntry, ProcEventInfo const& eventInfo);
+        bool ClassicReserveChannelCharge(ProcEventInfo const& eventInfo);
         void ConsumeProcCharges(SpellProcEntry const* procEntry);
         uint32 GetProcEffectMask(AuraApplication* aurApp, ProcEventInfo& eventInfo, TimePoint now) const;
         float CalcProcChance(SpellProcEntry const& procEntry, ProcEventInfo& eventInfo) const;
@@ -402,13 +419,16 @@ class TC_GAME_API Aura
 
         int32 m_maxDuration;                                // Max aura duration
         int32 m_duration;                                   // Current time
-        int32 m_timeCla;                                    // Timer for power per sec calcultion
+        Trinity::Containers::FlatSet<AuraStackDropInfo> m_stackDropTimes;
         std::vector<SpellPowerEntry const*> m_periodicCosts;// Periodic costs
+        int32 m_timeCla;                                    // Timer for power per sec calcultion
         int32 m_updateTargetMapInterval;                    // Timer for UpdateTargetMapOfEffect
 
         uint8 const m_casterLevel;                          // Aura level (store caster level for correct show level dep amount)
         uint8 m_procCharges;                                // Aura charges (0 for infinite)
         uint8 m_stackAmount;                                // Aura stack amount
+
+        WorldLocation m_dst;
 
         AuraEffectVector m_effects;
         ApplicationMap m_applications;
@@ -416,6 +436,7 @@ class TC_GAME_API Aura
         bool m_isRemoved;
         bool m_isSingleTarget;                              // true if it's a single target spell and registered at caster - can change at spell steal for example
         bool m_isUsingCharges;
+        bool m_classicChargeReserved = false;               // Classic 1.60: this proc's charge is held by the wearer's channel (R-0048)
 
         ChargeDropEvent* m_dropEvent;
 

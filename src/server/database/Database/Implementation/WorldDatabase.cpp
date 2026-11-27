@@ -109,7 +109,7 @@ void WorldDatabaseConnection::DoPrepareStatements()
         "UNION SELECT RewardChoiceItemID6 FROM quest_template WHERE RewardChoiceItemID6 >= ?", CONNECTION_SYNCH);
 }
 
-WorldDatabaseConnection::WorldDatabaseConnection(MySQLConnectionInfo& connInfo, ConnectionFlags connectionFlags) : MySQLConnection(connInfo, connectionFlags)
+WorldDatabaseConnection::WorldDatabaseConnection(MySQLConnectionInfo const& connInfo, ConnectionFlags connectionFlags) : MySQLConnection(connInfo, connectionFlags)
 {
 }
 

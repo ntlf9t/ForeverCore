@@ -48,14 +48,15 @@ void ChatMessageWhisper::Read()
     _worldPacket >> TargetGUID;
     _worldPacket >> TargetVirtualRealmAddress;
 
-    // Classic 1.60: a second 9 bit sized string sits between Target and Text (seen empty in every sniffed whisper)
-    std::string unknownName;
+    // Classic 1.60: a second 9 bit sized string sits between Target and Text: the surname, in the slot where retail packets
+    // carry the realm (as CMSG_PARTY_INVITE and CMSG_WHO do). Empty for a typed "/w Name"; the friends list and chat links
+    // whisper "Name-Surname" (UnitPopupSharedUtil.GetFullPlayerName), which the client splits into the two strings.
     _worldPacket >> SizedCString::BitsSize<9>(Target);
-    _worldPacket >> SizedCString::BitsSize<9>(unknownName);
+    _worldPacket >> SizedCString::BitsSize<9>(TargetSurname);
     _worldPacket >> SizedCString::BitsSize<11>(Text);
 
     _worldPacket >> SizedCString::Data(Target);
-    _worldPacket >> SizedCString::Data(unknownName);
+    _worldPacket >> SizedCString::Data(TargetSurname);
     _worldPacket >> SizedCString::Data(Text);
 }
 

@@ -737,9 +737,9 @@ void RunNavmeshAudit(boost::filesystem::path const& mmapsDir, int mapId)
                         float const* v = &ct->verts[cp->verts[vi] * 3];
                         float wx = v[2], wy = v[0], wz = v[1];
                         px += wx; py += wy; pz += wz;
-                        if (wx < isl.minx) isl.minx = wx; if (wx > isl.maxx) isl.maxx = wx;
-                        if (wy < isl.miny) isl.miny = wy; if (wy > isl.maxy) isl.maxy = wy;
-                        if (wz < isl.minz) isl.minz = wz; if (wz > isl.maxz) isl.maxz = wz;
+                        isl.minx = std::min(isl.minx, wx); isl.maxx = std::max(isl.maxx, wx);
+                        isl.miny = std::min(isl.miny, wy); isl.maxy = std::max(isl.maxy, wy);
+                        isl.minz = std::min(isl.minz, wz); isl.maxz = std::max(isl.maxz, wz);
                     }
                     px /= cp->vertCount; py /= cp->vertCount; pz /= cp->vertCount;
                     isl.cx += px; isl.cy += py; isl.cz += pz;

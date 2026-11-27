@@ -1041,20 +1041,20 @@ void SpellMgr::LoadSpellLearnSpells()
         node.Active      = fields[2].GetBool();
         node.AutoLearned = false;
 
-        SpellInfo const* spellInfo = GetSpellInfo(spell_id, DIFFICULTY_NONE);
-        if (!spellInfo)
+        if (!GetSpellInfo(spell_id, DIFFICULTY_NONE))
         {
             TC_LOG_ERROR("sql.sql", "The spell {} listed in `spell_learn_spell` does not exist.", spell_id);
             continue;
         }
 
-        if (!GetSpellInfo(node.Spell, DIFFICULTY_NONE))
+        SpellInfo const* learnedSpellInfo = GetSpellInfo(node.Spell, DIFFICULTY_NONE);
+        if (!learnedSpellInfo)
         {
             TC_LOG_ERROR("sql.sql", "The spell {} listed in `spell_learn_spell` learning non-existing spell {}.", spell_id, node.Spell);
             continue;
         }
 
-        if (spellInfo->HasAttribute(SPELL_ATTR0_CU_IS_TALENT))
+        if (learnedSpellInfo->HasAttribute(SPELL_ATTR0_CU_IS_TALENT))
         {
             TC_LOG_ERROR("sql.sql", "The spell {} listed in `spell_learn_spell` attempts learning talent spell {}, skipped.", spell_id, node.Spell);
             continue;
@@ -1501,6 +1501,11 @@ void SpellMgr::LoadSpellGroupStackRules()
                 TC_LOG_ERROR("sql.sql", "SpellId {} listed in `spell_group` with stack rule 3 does not share aura assigned for group {}", spellId, group_id);
         }
 
+        // Classic 1.60 (WoW Forever): the elixir crit group (sql 2026_11_18_03, R-0025) shares only the crit chance; its elixirs also
+        // carry a stat, which must keep stacking whatever the aura count picks
+        if (group_id == 1400910)
+            auraTypes = { SPELL_AURA_MOD_CRIT_PCT };
+
         mSpellSameEffectStack[SpellGroup(group_id)] = auraTypes;
         ++count;
     }
@@ -1549,7 +1554,7 @@ Optional<SpellProcEntry> SpellMgr::GenerateDefaultSpellProcEntry(SpellInfo const
             isTriggerAura[SPELL_AURA_DAMAGE_IMMUNITY] = true;
             isTriggerAura[SPELL_AURA_PROC_TRIGGER_SPELL] = true;
             isTriggerAura[SPELL_AURA_PROC_TRIGGER_DAMAGE] = true;
-            isTriggerAura[SPELL_AURA_MOD_CASTING_SPEED_NOT_STACK] = true;
+            isTriggerAura[SPELL_AURA_MOD_CASTING_SPEED] = true;
             isTriggerAura[SPELL_AURA_SCHOOL_ABSORB] = true; // Savage Defense untested
             isTriggerAura[SPELL_AURA_MOD_POWER_COST_SCHOOL_PCT] = true;
             isTriggerAura[SPELL_AURA_MOD_POWER_COST_SCHOOL] = true;
@@ -1564,7 +1569,7 @@ Optional<SpellProcEntry> SpellMgr::GenerateDefaultSpellProcEntry(SpellInfo const
             isTriggerAura[SPELL_AURA_MOD_MECHANIC_RESISTANCE] = true;
             isTriggerAura[SPELL_AURA_RANGED_ATTACK_POWER_ATTACKER_BONUS] = true;
             isTriggerAura[SPELL_AURA_MOD_MELEE_HASTE] = true;
-            isTriggerAura[SPELL_AURA_MOD_MELEE_HASTE_3] = true;
+            isTriggerAura[SPELL_AURA_MOD_MELEE_HASTE_NO_REGEN] = true;
             isTriggerAura[SPELL_AURA_MOD_ATTACKER_MELEE_HIT_CHANCE] = true;
             isTriggerAura[SPELL_AURA_PROC_TRIGGER_SPELL_WITH_VALUE] = true;
             isTriggerAura[SPELL_AURA_MOD_SCHOOL_MASK_DAMAGE_FROM_CASTER] = true;
@@ -3801,6 +3806,35 @@ void SpellMgr::LoadClassicSpellValues()
         mClassicSpellValues.size(), mismatched, GetMSTimeDiffToNow(oldMSTime));
 }
 
+// Only a player's magic spell that has a higher rank above it (rank chains from SkillLineAbility.SupercedesSpell) is a lower rank: the
+// top rank of a chain, single-rank spells, melee and ranged abilities (Blizzard's note speaks of spell ranks and Spell Damage / Spell
+// Healing), triggered spells and creature spells keep everything.
+float SpellMgr::GetClassicDownrankFactor(SpellInfo const* spellInfo, Unit const* caster) const
+{
+    if (!spellInfo || !caster || caster->GetTypeId() != TYPEID_PLAYER)
+        return 1.0f;
+    if (spellInfo->DmgClass != SPELL_DAMAGE_CLASS_MAGIC)
+        return 1.0f;
+    if (!GetNextSpellInChain(spellInfo->Id))
+        return 1.0f;
+    return ClassicSpellValue::DownrankFactor(int32(caster->GetLevel()), int32(spellInfo->SpellLevel));
+}
+
+// Blizzard, build 70755: "Various talents no longer have a penalty to their chance to trigger when casting spells of a low rank. This
+// penalty does still apply to Blizzard. Blizzard continues to have a reduced chance to trigger Arcane Concentration, Frostbite, and
+// Fingers of Frost when casting a rank learned more than 12 levels lower than the caster's current level." A lower rank of Blizzard
+// (the chain of 10) cast by a player (ClassicSpellValue::BlizzardProcDownrankFactor).
+float SpellMgr::GetClassicBlizzardProcDownrankFactor(SpellInfo const* spellInfo, Unit const* caster) const
+{
+    static constexpr uint32 SPELL_MAGE_BLIZZARD_RANK_1 = 10;
+
+    if (!spellInfo || !caster || caster->GetTypeId() != TYPEID_PLAYER)
+        return 1.0f;
+    if (GetFirstSpellInChain(spellInfo->Id) != SPELL_MAGE_BLIZZARD_RANK_1 || !GetNextSpellInChain(spellInfo->Id))
+        return 1.0f;
+    return ClassicSpellValue::BlizzardProcDownrankFactor(int32(caster->GetLevel()), int32(spellInfo->SpellLevel));
+}
+
 ClassicSpellValue::Value const* SpellMgr::GetClassicSpellValue(uint32 spellId, uint32 effectIndex) const
 {
     return Trinity::Containers::MapGetValuePtr(mClassicSpellValues, (uint64(spellId) << 8) | effectIndex);
@@ -3971,62 +4005,6 @@ void SpellMgr::LoadForeverVanillaAoe()
 // Classic 1.60 (Forever): the bundles a labeled Waylaid Crate takes. The client lists them only in the Stock Crate spell's text
 // ("$M3 Peacebloom ...") with the counts in its dummy effects, and offers the materials of its ItemSalvage list; the server needs
 // the pairs, so classic_crate_bundle holds them (one row per material, made from the client data).
-void SpellMgr::LoadClassicCrateBundles()
-{
-    uint32 oldMSTime = getMSTime();
-
-    mClassicCrateBundles.clear();
-
-    QueryResult result = WorldDatabase.Query("SELECT spell_id, item_id, count FROM classic_crate_bundle");
-    if (!result)
-    {
-        TC_LOG_INFO("server.loading", ">> Loaded 0 classic crate bundles. DB table `classic_crate_bundle` is empty.");
-        return;
-    }
-
-    uint32 count = 0;
-    do
-    {
-        Field* fields = result->Fetch();
-        uint32 spellId = fields[0].GetUInt32();
-        uint32 itemId = fields[1].GetUInt32();
-        uint32 itemCount = fields[2].GetUInt32();
-
-        SpellInfo const* spellInfo = GetSpellInfo(spellId, DIFFICULTY_NONE);
-        if (!spellInfo || !spellInfo->HasEffect(SPELL_EFFECT_SALVAGE_ITEM))
-        {
-            TC_LOG_ERROR("sql.sql", "Table `classic_crate_bundle`: spell {} does not exist or has no SPELL_EFFECT_SALVAGE_ITEM, skipped.", spellId);
-            continue;
-        }
-
-        if (!sObjectMgr->GetItemTemplate(itemId))
-        {
-            TC_LOG_ERROR("sql.sql", "Table `classic_crate_bundle`: item {} of spell {} does not exist, skipped.", itemId, spellId);
-            continue;
-        }
-
-        if (!itemCount)
-        {
-            TC_LOG_ERROR("sql.sql", "Table `classic_crate_bundle`: item {} of spell {} has count 0, skipped.", itemId, spellId);
-            continue;
-        }
-
-        mClassicCrateBundles[spellId].push_back({ itemId, itemCount });
-        ++count;
-    } while (result->NextRow());
-
-    TC_LOG_INFO("server.loading", ">> Loaded {} classic crate bundles of {} crates in {} ms", count, mClassicCrateBundles.size(), GetMSTimeDiffToNow(oldMSTime));
-}
-
-SpellMgr::ClassicCrateBundle const* SpellMgr::GetClassicCrateBundle(uint32 spellId, uint32 itemId) const
-{
-    std::vector<ClassicCrateBundle> const* bundles = Trinity::Containers::MapGetValuePtr(mClassicCrateBundles, spellId);
-    if (!bundles)
-        return nullptr;
-    auto itr = std::ranges::find(*bundles, itemId, &ClassicCrateBundle::ItemId);
-    return itr != bundles->end() ? &*itr : nullptr;
-}
-
 // Classic 1.60 (WoW Forever): item effects stronger against one kind of enemy (ClassicVersusBonus.h). spell_versus_bonus names the spell the factor
 // scales, the effect that holds the factor and the enemies; creature_versus_group puts creatures in the groups no creature field holds (Trolls,
 // Plants, Naga...), written by tools/classic_versus_groups from creature_template's names, types and families.
@@ -4149,6 +4127,65 @@ float SpellMgr::GetClassicVersusFactor(uint32 spellId, ClassicVersusBonus::Kind 
     return bonus->Factor;
 }
 
+void SpellMgr::LoadClassicCrateBundles()
+{
+    uint32 oldMSTime = getMSTime();
+
+    mClassicCrateBundles.clear();
+
+    QueryResult result = WorldDatabase.Query("SELECT spell_id, item_id, count FROM classic_crate_bundle");
+    if (!result)
+    {
+        TC_LOG_INFO("server.loading", ">> Loaded 0 classic crate bundles. DB table `classic_crate_bundle` is empty.");
+        return;
+    }
+
+    uint32 count = 0;
+    do
+    {
+        Field* fields = result->Fetch();
+        uint32 spellId = fields[0].GetUInt32();
+        uint32 itemId = fields[1].GetUInt32();
+        uint32 itemCount = fields[2].GetUInt32();
+
+        SpellInfo const* spellInfo = GetSpellInfo(spellId, DIFFICULTY_NONE);
+        if (!spellInfo || !spellInfo->HasEffect(SPELL_EFFECT_SALVAGE_ITEM))
+        {
+            TC_LOG_ERROR("sql.sql", "Table `classic_crate_bundle`: spell {} does not exist or has no SPELL_EFFECT_SALVAGE_ITEM, skipped.", spellId);
+            continue;
+        }
+
+        if (!sObjectMgr->GetItemTemplate(itemId))
+        {
+            TC_LOG_ERROR("sql.sql", "Table `classic_crate_bundle`: item {} of spell {} does not exist, skipped.", itemId, spellId);
+            continue;
+        }
+
+        if (!itemCount)
+        {
+            TC_LOG_ERROR("sql.sql", "Table `classic_crate_bundle`: item {} of spell {} has count 0, skipped.", itemId, spellId);
+            continue;
+        }
+
+        mClassicCrateBundles[spellId].push_back({ itemId, itemCount });
+        ++count;
+    } while (result->NextRow());
+
+    TC_LOG_INFO("server.loading", ">> Loaded {} classic crate bundles of {} crates in {} ms", count, mClassicCrateBundles.size(), GetMSTimeDiffToNow(oldMSTime));
+}
+
+SpellMgr::ClassicCrateBundle const* SpellMgr::GetClassicCrateBundle(uint32 spellId, uint32 itemId) const
+{
+    std::vector<ClassicCrateBundle> const* bundles = Trinity::Containers::MapGetValuePtr(mClassicCrateBundles, spellId);
+    if (!bundles)
+        return nullptr;
+    auto itr = std::ranges::find(*bundles, itemId, &ClassicCrateBundle::ItemId);
+    return itr != bundles->end() ? &*itr : nullptr;
+}
+
+// Classic 1.60 (WoW Forever): item effects stronger against one kind of enemy (ClassicVersusBonus.h). spell_versus_bonus names the spell the factor
+// scales, the effect that holds the factor and the enemies; creature_versus_group puts creatures in the groups no creature field holds (Trolls,
+// Plants, Naga...), written by tools/classic_versus_groups from creature_template's names, types and families.
 void SpellMgr::LoadSpellInfoCorrections()
 {
     uint32 oldMSTime = getMSTime();
@@ -4212,6 +4249,21 @@ void SpellMgr::LoadSpellInfoCorrections()
         spellInfo->AttributesEx |= SPELL_ATTR1_NO_THREAT;
     });
 
+    // WoW Forever 1.60.1.70755: "The Blood Craze and Gore Drinker talents no longer generate threat when restoring Health to the Warrior."
+    // Blood Craze regen 16488, Gore Drinker buff 1323969 and its heal 1323968. 1.60.1.70450: "Sanctified Judgement's Mana restore effect no
+    // longer generates threat." (1311077). 1.60.1.70291: Shield Specialization's mana (1310925) no longer generates threat.
+    ApplySpellFix({ 16488, 1323968, 1323969, 1311077, 1310925 }, [](SpellInfo* spellInfo)
+    {
+        spellInfo->AttributesEx |= SPELL_ATTR1_NO_THREAT;
+    });
+
+    // WoW Forever 1.60.1.71091 (24 November): "Judgement of Command no longer triggers your weapon enchantments and other chance-on-hit
+    // effects." The damage spells of the five ranks.
+    ApplySpellFix({ 20467, 20963, 20964, 20965, 20966 }, [](SpellInfo* spellInfo)
+    {
+        spellInfo->AttributesEx4 |= SPELL_ATTR4_SUPPRESS_WEAPON_PROCS;
+    });
+
     // Forever quest Testing the Wells: the Well Testing Kit's dummy (1258773) aims at a "nearby entry" that no data names; it hits the
     // caster, and classic_spell_quest_testing_the_wells gives the sample next to a well
     ApplySpellFix({ 1258773 }, [](SpellInfo* spellInfo)
@@ -4230,6 +4282,14 @@ void SpellMgr::LoadSpellInfoCorrections()
         spellInfo->Attributes |= SPELL_ATTR0_ALLOW_WHILE_MOUNTED;
     });
 
+    // WoW Forever 71139 (2026-11-25): "The Night Watchman's Torch can once again be used while mounted, casting spells, etc." Light the
+    // torch (1309410, item 280612) while mounted, and keep holding it through mounting and casting; entering combat still ends it.
+    ApplySpellFix({ 1309410 }, [](SpellInfo* spellInfo)
+    {
+        spellInfo->Attributes |= SPELL_ATTR0_ALLOW_WHILE_MOUNTED;
+        spellInfo->AuraInterruptFlags &= ~(SpellAuraInterruptFlags::Mount | SpellAuraInterruptFlags::Action | SpellAuraInterruptFlags::ActionDelayed);
+    });
+
     // Forever Skyborne racial buffs Elemental Blessing (Skysight) and Energized (Read Ley Line): next to an Elemental Convergence or a
     // ley line the buff is doubled (classic_spell_skyborne_racial_focus), so the aura sends its real amounts; without them the client
     // tooltip showed the single 15% / 50% from the client data
@@ -4243,6 +4303,46 @@ void SpellMgr::LoadSpellInfoCorrections()
     ApplySpellFix({ 1286814 }, [](SpellInfo* spellInfo)
     {
         spellInfo->AuraInterruptFlags &= ~SpellAuraInterruptFlags::EnteringCombat;
+    });
+
+    // Classic 1.60 rogue Sap: landing it does not put the rogue (or the target's pack) in combat (forever-bugs #199, fixed on live).
+    // The client data has no no-threat attribute on it, so SetInCombatWith / AtTargetAttacked engaged the target at once.
+    ApplySpellFix({ 2070, 6770, 11297 }, [](SpellInfo* spellInfo)
+    {
+        spellInfo->AttributesEx2 |= SPELL_ATTR2_NO_INITIAL_THREAT;
+    });
+
+    // Classic 1.60 paladin Light's Fury (1310927, the Seal of Fury shield): absorbs before other shields, so Power Word: Shield or Divine
+    // Aegis no longer keep it from breaking and returning Improved Seal of Fury's mana (forever-bugs #255, fixed on live 15 Oct). Absorb
+    // auras go lowest MiscValueB first (Trinity::AbsorbAuraOrderPred); Light's Fury, Power Word: Shield and Divine Aegis all have 0.
+    ApplySpellFix({ 1310927 }, [](SpellInfo* spellInfo)
+    {
+        ApplySpellEffectFix(spellInfo, EFFECT_0, [](SpellEffectInfo* spellEffectInfo)
+        {
+            spellEffectInfo->MiscValueB = -1;
+        });
+    });
+
+    // Nature's Bounty 27784 (Feralheart Raiment 4-piece, Wildheart Raiment): "Restores $o1 energy over $d", but its periodic energize names
+    // mana (misc 0), which live players report as the bonus restoring mana in Cat Form (forever-bugs #523). It restores energy.
+    ApplySpellFix({ 27784 }, [](SpellInfo* spellInfo)
+    {
+        ApplySpellEffectFix(spellInfo, EFFECT_0, [](SpellEffectInfo* spellEffectInfo)
+        {
+            spellEffectInfo->MiscValue = POWER_ENERGY;
+        });
+    });
+
+    // Classic 1.60 druid Thorns: each hit adds 6% of the druid's spell power (forever-bugs #117: the scaling is intended on live; wowsims
+    // EV-0067, the ratio Blizzard states for Retribution Aura). Every rank's damage shield effect states coefficient 0 and there is no
+    // vanilla value row, so it took none. The druid's current spell power is read per hit (damage shields in Unit::DealMeleeDamage),
+    // with the usual below-level-20 penalty for ranks 1 and 2 (ClassicSpellValue::BonusCoefficientWithLevelPenalty).
+    ApplySpellFix({ 467, 782, 1075, 8914, 9756, 9910 }, [](SpellInfo* spellInfo)
+    {
+        ApplySpellEffectFix(spellInfo, EFFECT_0, [](SpellEffectInfo* spellEffectInfo)
+        {
+            spellEffectInfo->BonusCoefficient = 0.06f;
+        });
     });
 
     // Classic 1.60 world buffs: the client's spells are dummy auras that only carry the numbers; live puts the effect on a hidden copy
@@ -4284,7 +4384,7 @@ void SpellMgr::LoadSpellInfoCorrections()
         });
         ApplySpellEffectFix(spellInfo, EFFECT_1, [](SpellEffectInfo* spellEffectInfo)
         {
-            spellEffectInfo->ApplyAuraName = SPELL_AURA_MELEE_SLOW;
+            spellEffectInfo->ApplyAuraName = SPELL_AURA_MOD_MELEE_RANGED_CASTING_HASTE;
         });
         ApplySpellEffectFix(spellInfo, EFFECT_2, [](SpellEffectInfo* spellEffectInfo)
         {
@@ -4299,6 +4399,18 @@ void SpellMgr::LoadSpellInfoCorrections()
         ApplySpellEffectFix(spellInfo, EFFECT_0, [](SpellEffectInfo* spellEffectInfo)
         {
             spellEffectInfo->ApplyAuraName = SPELL_AURA_MOD_CRIT_PCT;
+        });
+    });
+
+    // Classic 1.60 (WoW Forever): Ice Lance's damage effect states no spell power coefficient, though the spell scales with spell power in
+    // game. Measured 0.11 (wowsims/forever, MIT, docs/evidence EV-0171: one level 60 mage's logs of 20-21 Nov, 28 casts at 0 spell power
+    // and 255 geared casts at 228.5, 0.108 to 0.115; TBC's 1/7 sits four standard errors above). All six ranks; no vanilla row exists for
+    // this Forever spell.
+    ApplySpellFix({ 400640, 1240044, 1240045, 1240046, 1240047, 1312002 }, [](SpellInfo* spellInfo)
+    {
+        ApplySpellEffectFix(spellInfo, EFFECT_0, [](SpellEffectInfo* spellEffectInfo)
+        {
+            spellEffectInfo->BonusCoefficient = 0.11f;
         });
     });
 
@@ -4865,6 +4977,15 @@ void SpellMgr::LoadSpellInfoCorrections()
         {
             spellEffectInfo->TargetARadiusEntry = sSpellRadiusStore.LookupEntry(EFFECT_RADIUS_10_YARDS);
         });
+    });
+
+    // Without this auras 35173 and 35174 triggers no spell and are removed after first tick
+    ApplySpellFix({
+        35158, // Reflective Magic Shield
+        35159  // Reflective Damage Shield
+    }, [](SpellInfo* spellInfo)
+    {
+        spellInfo->RecoveryTime = 0;
     });
 
     ApplySpellFix({
@@ -6487,6 +6608,30 @@ void SpellMgr::LoadSpellInfoTargetCaps()
     ApplySpellFix({ 1261215 }, [](SpellInfo* spellInfo)
     {
         spellInfo->_LoadSqrtTargetLimit(8, 0, 1261193, EFFECT_1, {}, {});
+    });
+
+    // Bleak Powder
+    ApplySpellFix({ 467914, 472084 }, [](SpellInfo* spellInfo)
+    {
+        spellInfo->_LoadSqrtTargetLimit(8, 0, 467911, EFFECT_1, {}, {});
+    });
+
+    // Starfire
+    ApplySpellFix({ 194153 }, [](SpellInfo* spellInfo)
+    {
+        spellInfo->_LoadSqrtTargetLimit(8, 0, {}, EFFECT_4, {}, {});
+    });
+
+    // Frostscythe
+    ApplySpellFix({ 207230 }, [](SpellInfo* spellInfo)
+    {
+        spellInfo->_LoadSqrtTargetLimit(5, 0, {}, EFFECT_4, {}, {});
+    });
+
+    // Hungering Slash
+    ApplySpellFix({ 1239127 }, [](SpellInfo* spellInfo)
+    {
+        spellInfo->_LoadSqrtTargetLimit(8, 0, 1239123, EFFECT_1, {}, {});
     });
 
     TC_LOG_INFO("server.loading", ">> Loaded SpellInfo target caps in {} ms", GetMSTimeDiffToNow(oldMSTime));

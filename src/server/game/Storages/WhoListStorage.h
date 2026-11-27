@@ -25,9 +25,9 @@ class WhoListPlayerInfo
 {
 public:
     WhoListPlayerInfo(ObjectGuid guid, uint32 team, AccountTypes security, uint8 level, uint8 clss, uint8 race, uint32 zoneid, uint8 gender, bool visible, bool gamemaster, std::wstring const& widePlayerName,
-        std::wstring const& wideGuildName, std::string const& playerName, std::string const& guildName, ObjectGuid guildguid) :
+        std::wstring const& wideGuildName, std::string const& playerName, std::string const& guildName, ObjectGuid guildguid, uint32 areaid = 0) :
         _guid(guid), _team(team), _security(security), _level(level), _class(clss), _race(race), _zoneid(zoneid), _gender(gender), _visible(visible),
-        _gamemaster(gamemaster), _widePlayerName(widePlayerName), _wideGuildName(wideGuildName), _playerName(playerName), _guildName(guildName), _guildguid(guildguid) {}
+        _gamemaster(gamemaster), _widePlayerName(widePlayerName), _wideGuildName(wideGuildName), _playerName(playerName), _guildName(guildName), _guildguid(guildguid), _areaid(areaid) {}
 
     ObjectGuid GetGuid() const { return _guid; }
     uint32 GetTeam() const { return _team; }
@@ -44,6 +44,7 @@ public:
     std::string const& GetPlayerName() const { return _playerName; }
     std::string const& GetGuildName() const { return _guildName; }
     ObjectGuid GetGuildGuid() const { return _guildguid; }
+    uint32 GetAreaId() const { return _areaid; }   // the subzone, for /who (WoW Forever 70450)
 
 private:
     ObjectGuid _guid;
@@ -61,6 +62,7 @@ private:
     std::string _playerName;
     std::string _guildName;
     ObjectGuid _guildguid;
+    uint32 _areaid;
 };
 
 typedef std::vector<WhoListPlayerInfo> WhoListInfoVector;

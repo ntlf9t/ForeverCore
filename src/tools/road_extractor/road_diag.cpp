@@ -188,7 +188,7 @@ namespace
         return d;
     }
 
-    char const* VerdictReason(McnkDiag const& d, uint8 maskByteAfterFilter)
+    [[maybe_unused]] char const* VerdictReason(McnkDiag const& d, uint8 maskByteAfterFilter)
     {
         bool preFilter = d.ruleA_dominantIsRoad || d.ruleB_anyLayerIsRoadWithCoverage;
         if (d.effectVetoed)                return "effect_veto";

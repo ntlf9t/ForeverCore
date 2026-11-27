@@ -17,10 +17,13 @@
 
 // Classic 1.60 port of VMaNGOS src/scripts/kalimdor/silithus/silithus.cpp (ScriptDev2 / Nostalrius lineage, GPL-2)
 // Ported: npc_solenor (Nelson the Nice / Solenor the Slayer, Stave of the Ancients), npc_Geologist_Larksbane (quest 8315),
-//         npc_Krug_SkullSplit (Field Duty Papers event), npc_Shai
+//         npc_Krug_SkullSplit (Field Duty Papers event), npc_Shai,
+//         go_wind_stone (Abyssal Council summons: VMaNGOS go_wind_stoneAI, with TrinityCore's zone_silithus.cpp gossip,
+//         since VMaNGOS drives the gossip from its own database scripts)
 
 #include "ScriptMgr.h"
 #include "GameObject.h"
+#include "GameObjectAI.h"
 #include "MotionMaster.h"
 #include "ObjectAccessor.h"
 #include "Player.h"
@@ -797,10 +800,230 @@ private:
     uint32 _flashHealTimer;
 };
 
+/*#####
+ ## go_wind_stone (Lesser Wind Stone, Wind Stone, Greater Wind Stone)
+ ######*/
+
+// Wearing the Twilight Cultist garb (Cowl, Mantle, Robe) lets a player summon a random Templar at a Lesser Wind Stone; the
+// Medallion of Station adds the Dukes at a Wind Stone, the Ring of Lordship the Lords at a Greater Wind Stone. A Crest,
+// Signet or Scepter of Beckoning picks the element and is used up.
+//
+// The summon spells (24734 Summon Templar Random, 24744 Summon Templar, ...) are ACTIVATE_OBJECT spells that list the
+// garb and the Beckoning item as reagents; the stone casts their "Trigger" spell (24745, 24747, ...) on the player, whose
+// periodic trigger casts them as a triggered spell, which takes no reagents. So the script itself uses up the Beckoning
+// item. VMaNGOS does the same: its database gossip scripts cast the spell, its go_wind_stoneAI summons the creature.
+namespace WindStone
+{
+enum Auras : uint32
+{
+    AURA_TWILIGHT_SET   = 24746,    // Twilight Cultist Disguise (garb)
+    AURA_MEDALLION      = 24748,    // Twilight Cultist Disguise (Medallion of Station)
+    AURA_RING           = 24782,    // Twilight Cultist Disguise (Ring of Lordship)
+    SPELL_PUNISHMENT    = 24803     // Abyssal Punishment
+};
+
+enum Gossip : uint32
+{
+    GOSSIP_LESSER_WIND_STONE    = 6540,
+    GOSSIP_WIND_STONE           = 6542,
+    GOSSIP_GREATER_WIND_STONE   = 6543,
+    OPTION_RANDOM               = 0     // options 1-4: fire, water, earth, air
+};
+
+enum Stones : uint32
+{
+    GO_WIND_STONE_SOUTH_SPIRES  = 180461,
+    GO_WIND_STONE_CENTRAL       = 180534,
+    GO_WIND_STONE_NORTH         = 180554
+};
+
+struct Summon
+{
+    uint32 Npc;
+    uint32 TriggerSpell;
+    uint32 Item;                // 0: random summon, nothing used up
+};
+
+// [tier][0 random, 1 fire, 2 water, 3 earth, 4 air]: the gossip option ids of TDB's menus 6540, 6542 and 6543
+constexpr uint8 TIER_COUNT = 3;
+constexpr uint8 OPTION_COUNT = 5;
+constexpr uint32 TierMenu[TIER_COUNT] = { GOSSIP_LESSER_WIND_STONE, GOSSIP_WIND_STONE, GOSSIP_GREATER_WIND_STONE };
+constexpr uint8 TierRank[TIER_COUNT] = { 1, 2, 3 };
+constexpr Summon Summons[TIER_COUNT][OPTION_COUNT] =
+{
+    {   // Templars
+        { 0,     24745, 0 },        // Summon Templar, Trigger
+        { 15209, 24747, 20416 },    // Crimson Templar, Crest of Beckoning: Fire
+        { 15211, 24761, 20420 },    // Azure Templar, Crest of Beckoning: Water
+        { 15307, 24759, 20419 },    // Earthen Templar, Crest of Beckoning: Stone
+        { 15212, 24757, 20418 }     // Hoary Templar, Crest of Beckoning: Thunder
+    },
+    {   // Dukes
+        { 0,     24762, 0 },
+        { 15206, 24766, 20432 },    // The Duke of Cynders, Signet of Beckoning: Fire
+        { 15207, 24773, 20436 },    // The Duke of Fathoms, Signet of Beckoning: Water
+        { 15208, 24771, 20435 },    // The Duke of Shards, Signet of Beckoning: Stone
+        { 15220, 24769, 20433 }     // The Duke of Zephyrs, Signet of Beckoning: Thunder
+    },
+    {   // Lords
+        { 0,     24785, 0 },
+        { 15203, 24787, 20447 },    // Prince Skaldrenox, Scepter of Beckoning: Fire
+        { 15305, 24793, 20450 },    // Lord Skwol, Scepter of Beckoning: Water
+        { 15205, 24792, 20449 },    // Baron Kazum, Scepter of Beckoning: Stone
+        { 15204, 24791, 20448 }     // High Marshal Whirlaxis, Scepter of Beckoning: Thunder
+    }
+};
+
+// VMaNGOS GetSpawnText: what the summoned one says to the player (BroadcastText ids)
+constexpr uint32 TierTexts[TIER_COUNT][4] =
+{
+    { 10686, 10694, 10695, 10696 },
+    { 10801, 10802, 10803, 10804 },
+    { 10805, 10806, 10807, 10810 }
+};
+
+constexpr uint32 GossipAction(uint8 tier, uint8 option) { return GOSSIP_ACTION_INFO_DEF + tier * OPTION_COUNT + option; }
+}
+
+struct classic_go_wind_stone : public GameObjectAI
+{
+    classic_go_wind_stone(GameObject* go) : GameObjectAI(go), _summoning(false) { }
+
+    void Reset() override
+    {
+        // the stone goes away while its summon is out and comes back on its respawn timer
+        me->RemoveFlag(GO_FLAG_NODESPAWN);
+        _summoning = false;
+    }
+
+    bool OnGossipHello(Player* player) override
+    {
+        if (_summoning)
+            return true;
+
+        int8 tier = GetTier();
+        if (tier < 0)
+            return false;
+
+        uint32 const menuId = WindStone::TierMenu[tier];
+        InitGossipMenuFor(player, menuId);
+        if (GetDisguiseRank(player) < WindStone::TierRank[tier])
+            player->CastSpell(player, WindStone::SPELL_PUNISHMENT, true);
+        else
+        {
+            AddGossipItemFor(player, menuId, WindStone::OPTION_RANDOM, GOSSIP_SENDER_MAIN, WindStone::GossipAction(tier, 0));
+            for (uint8 option = 1; option < WindStone::OPTION_COUNT; ++option)
+                if (player->HasItemCount(WindStone::Summons[tier][option].Item))
+                    AddGossipItemFor(player, menuId, option, GOSSIP_SENDER_MAIN, WindStone::GossipAction(tier, option));
+        }
+
+        SendGossipMenuFor(player, player->GetGossipTextId(menuId, me), me->GetGUID());
+        return true;
+    }
+
+    bool OnGossipSelect(Player* player, uint32 /*menuId*/, uint32 gossipListId) override
+    {
+        uint32 const action = player->PlayerTalkClass->GetGossipOptionAction(gossipListId);
+        CloseGossipMenuFor(player);
+
+        int8 tier = GetTier();
+        if (_summoning || tier < 0 || action < WindStone::GossipAction(tier, 0) || action >= WindStone::GossipAction(tier, WindStone::OPTION_COUNT))
+            return true;
+
+        // checked again: the garb may have come off, or the item gone, since the menu opened
+        if (GetDisguiseRank(player) < WindStone::TierRank[tier])
+            return true;
+
+        uint8 const option = action - WindStone::GossipAction(tier, 0);
+        WindStone::Summon const& summon = WindStone::Summons[tier][option];
+        uint32 npc = summon.Npc;
+        if (summon.Item)
+        {
+            if (!player->HasItemCount(summon.Item))
+                return true;
+            player->DestroyItemCount(summon.Item, 1, true);
+        }
+        else
+            npc = WindStone::Summons[tier][urand(1, WindStone::OPTION_COUNT - 1)].Npc;
+
+        SummonCouncil(player, npc, tier, summon.TriggerSpell);
+        return true;
+    }
+
+private:
+    bool _summoning;
+
+    int8 GetTier() const
+    {
+        uint32 const menuId = me->GetGOInfo()->GetGossipMenuId();
+        for (uint8 tier = 0; tier < WindStone::TIER_COUNT; ++tier)
+            if (WindStone::TierMenu[tier] == menuId)
+                return tier;
+        return -1;
+    }
+
+    static uint8 GetDisguiseRank(Player const* player)
+    {
+        if (!player->HasAura(WindStone::AURA_TWILIGHT_SET))
+            return 0;
+        if (!player->HasAura(WindStone::AURA_MEDALLION))
+            return 1;
+        return player->HasAura(WindStone::AURA_RING) ? 3 : 2;
+    }
+
+    void SummonCouncil(Player* player, uint32 npc, uint8 tier, uint32 triggerSpell)
+    {
+        _summoning = true;
+
+        // VMaNGOS: three stones put their summon on open ground in front of them (one sniffed, two guessed)
+        Position pos = me->GetPosition();
+        switch (me->GetEntry())
+        {
+            case WindStone::GO_WIND_STONE_SOUTH_SPIRES: pos.Relocate(-7927.48f, 1935.30f, 5.61f, 4.76475f); break;
+            case WindStone::GO_WIND_STONE_CENTRAL:      pos.Relocate(-6998.52f, 1223.02f, 9.16f, 4.76475f); break;
+            case WindStone::GO_WIND_STONE_NORTH:        pos.Relocate(-6716.82f, 1674.36f, 8.51f, 4.76475f); break;
+            default: break;
+        }
+
+        me->CastSpell(player, triggerSpell);
+
+        if (TempSummon* creature = me->SummonCreature(npc, pos, TEMPSUMMON_TIMED_DESPAWN_OUT_OF_COMBAT, 1min))
+        {
+            // it rises for 8 seconds (the summon spell's channel), speaks to the summoner, then attacks
+            creature->SetImmuneToPC(true);
+            ObjectGuid const playerGuid = player->GetGUID();
+            uint32 const textId = WindStone::TierTexts[tier][urand(0, 3)];
+            creature->m_Events.AddEventAtOffset([creature, playerGuid]()
+            {
+                if (Player* summoner = ObjectAccessor::GetPlayer(*creature, playerGuid))
+                    creature->SetFacingToObject(summoner);
+            }, 1500ms);
+            creature->m_Events.AddEventAtOffset([creature, playerGuid, textId]()
+            {
+                if (Player* summoner = ObjectAccessor::GetPlayer(*creature, playerGuid))
+                    ClassicScriptText(textId, creature, summoner);
+            }, 1600ms);
+            creature->m_Events.AddEventAtOffset([creature, playerGuid]()
+            {
+                creature->SetImmuneToPC(false);
+                if (Player* summoner = ObjectAccessor::GetPlayer(*creature, playerGuid))
+                    if (summoner->IsAlive() && creature->IsAlive() && creature->IsValidAttackTarget(summoner))
+                    {
+                        creature->SetTappedBy(summoner);
+                        creature->AI()->AttackStart(summoner);
+                    }
+            }, 8s);
+        }
+
+        me->DespawnOrUnsummon(1100ms);
+    }
+};
+
 void AddSC_classic_silithus()
 {
     RegisterCreatureAI(classic_npc_solenor);
     RegisterCreatureAI(classic_npc_Geologist_Larksbane);
     RegisterCreatureAI(classic_npc_Krug_SkullSplit);
     RegisterCreatureAI(classic_npc_Shai);
+    RegisterGameObjectAI(classic_go_wind_stone);
 }

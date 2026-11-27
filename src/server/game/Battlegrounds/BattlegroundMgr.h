@@ -116,8 +116,9 @@ class TC_GAME_API BattlegroundMgr
         void AddToBGFreeSlotQueue(Battleground* bg);
         void RemoveFromBGFreeSlotQueue(Battleground* bg);
         BGFreeSlotQueueContainer& GetBGFreeSlotQueueStore(BattlegroundQueueTypeId queueId);
-        // Every free-slot queue (a battleground is in at most one), for code that looks across all queues (PlayerbotV2)
-        std::map<BattlegroundQueueTypeId, BGFreeSlotQueueContainer> const& GetBGFreeSlotQueues() const { return m_BGFreeSlotQueue; }
+        // PlayerbotV2: the free-slot lists of every queue, and a battleground found by its instance id alone (any queue)
+        std::map<BattlegroundQueueTypeId, BGFreeSlotQueueContainer> const& GetAllBGFreeSlotQueues() const { return m_BGFreeSlotQueue; }
+        Battleground* FindBattlegroundByInstanceId(uint32 instanceId) const;
 
         void LoadBattlegroundTemplates();
         void DeleteAllBattlegrounds();

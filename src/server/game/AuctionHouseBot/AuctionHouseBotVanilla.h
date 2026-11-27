@@ -32,7 +32,8 @@ namespace AuctionBotVanilla
     // True when the filter is switched on (AuctionHouseBot.Vanilla.Only = 1).
     bool Enabled();
 
-    // False for anything that is not level-60 vanilla content; always true while the filter is off.
+    // False for anything that is not level-60 vanilla content (while AuctionHouseBot.Vanilla.Only = 1), and, with
+    // AuctionHouseBot.Vanilla.MarketPrices.Only = 1, for anything without a market price.
     bool IsAllowed(ItemTemplate const* proto);
 
     // AuctionHouseBot.Vanilla.MarketPrices = 1 and the item has a row in auctionhousebot_market_price: that per-unit price in
@@ -43,6 +44,9 @@ namespace AuctionBotVanilla
     // (unit tests). An empty map switches them off.
     void SetMarketPrices(std::unordered_map<uint32, uint64> prices, float scale = 1.0f);
 
+    // AuctionHouseBot.Vanilla.MarketPrices.Only without the configuration (unit tests).
+    void SetMarketPricesOnly(bool only);
+
     // Per-unit market value in copper: MarketUnitPrice when the item has one; otherwise, with
     // AuctionHouseBot.Vanilla.ValueCurve = 1, from item level, quality and class, never below the vendor price.
     // 0 when neither applies (callers keep the vendor price).
@@ -50,6 +54,7 @@ namespace AuctionBotVanilla
 
     bool IsProfessionMaterial(ItemTemplate const* proto, bool soldUnlimitedByVendor);
     uint32 MaterialStackSize(uint32 maxStack);
+    uint32 MaterialStackSize(uint32 quality, uint32 stockStack, uint32 serverMaxStack, uint32 blueStack);
 }
 
 #endif

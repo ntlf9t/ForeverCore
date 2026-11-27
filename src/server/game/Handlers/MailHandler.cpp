@@ -30,6 +30,7 @@
 #include "Log.h"
 #include "Mail.h"
 #include "MailPackets.h"
+#include "MailRecipient.h"
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
 #include "Player.h"
@@ -83,9 +84,6 @@ void WorldSession::HandleSendMail(WorldPackets::Mail::SendMail& sendMail)
     if (sendMail.Info.Target.empty())
         return;
 
-    if (!ValidateHyperlinksAndMaybeKick(sendMail.Info.Subject) || !ValidateHyperlinksAndMaybeKick(sendMail.Info.Body))
-        return;
-
     Player* player = _player;
 
     if (player->GetLevel() < sWorld->getIntConfig(CONFIG_MAIL_LEVEL_REQ))
@@ -96,32 +94,10 @@ void WorldSession::HandleSendMail(WorldPackets::Mail::SendMail& sendMail)
 
     ObjectGuid receiverGuid;
     {
-        // The client sends recipients as "Name" or "Name Surname"
-        std::string recipientName = sendMail.Info.Target;
-        std::string recipientSurname;
-
-        // The 70790 client asks for a full name and sends "Name-Realm" ("Name Surname-Realm"); this realm's own suffix is dropped
-        if (size_t dashPos = recipientName.rfind('-'); dashPos != std::string::npos)
-        {
-            if (std::shared_ptr<Realm const> currentRealm = sRealmList->GetCurrentRealm())
-            {
-                std::string suffix = recipientName.substr(dashPos + 1);
-                std::string realmName = currentRealm->Name;
-                std::erase(suffix, ' ');
-                std::erase(realmName, ' ');
-                if (!suffix.empty() && StringEqualI(suffix, realmName))
-                    recipientName.erase(dashPos);
-            }
-        }
-
-        if (size_t spacePos = recipientName.find(' '); spacePos != std::string::npos)
-        {
-            recipientSurname = recipientName.substr(spacePos + 1);
-            recipientName.erase(spacePos);
-            // tolerate repeated/trailing whitespace
-            recipientSurname.erase(0, recipientSurname.find_first_not_of(' '));
-            recipientSurname.erase(recipientSurname.find_last_not_of(' ') + 1);
-        }
+        std::shared_ptr<Realm const> currentRealm = sRealmList->GetCurrentRealm();
+        Trinity::Mail::RecipientName recipient = Trinity::Mail::SplitRecipient(sendMail.Info.Target, currentRealm ? std::string_view(currentRealm->Name) : std::string_view());
+        std::string& recipientName = recipient.Name;
+        std::string const& recipientSurname = recipient.Surname;
 
         if (!recipientName.empty() && normalizePlayerName(recipientName))
         {
@@ -142,7 +118,7 @@ void WorldSession::HandleSendMail(WorldPackets::Mail::SendMail& sendMail)
     {
         TC_LOG_INFO("network", "Player {} is sending mail to {} (GUID: non-existing!) with subject {} "
             "and body {} includes {} items, {} copper and {} COD copper with StationeryID = {}",
-            GetPlayerInfo(), sendMail.Info.Target, sendMail.Info.Subject, sendMail.Info.Body,
+            GetPlayerInfo(), sendMail.Info.Target, std::string_view(sendMail.Info.Subject), std::string_view(sendMail.Info.Body),
             sendMail.Info.Attachments.size(), sendMail.Info.SendMoney, sendMail.Info.Cod, sendMail.Info.StationeryID);
         player->SendMailResult(0, MAIL_SEND, MAIL_ERR_RECIPIENT_NOT_FOUND);
         return;
@@ -165,9 +141,9 @@ void WorldSession::HandleSendMail(WorldPackets::Mail::SendMail& sendMail)
     }
 
     TC_LOG_INFO("network", "Player {} is sending mail to {} ({}) with subject {} and body {} "
-        "includes {} items, {} copper and {} COD copper with StationeryID = {}",
-        GetPlayerInfo(), sendMail.Info.Target, receiverGuid.ToString(), sendMail.Info.Subject,
-        sendMail.Info.Body, sendMail.Info.Attachments.size(), sendMail.Info.SendMoney, sendMail.Info.Cod, sendMail.Info.StationeryID);
+        "including {} items, {} copper and {} COD copper with StationeryID = {}",
+        GetPlayerInfo(), sendMail.Info.Target, receiverGuid.ToString(), std::string_view(sendMail.Info.Subject),
+        std::string_view(sendMail.Info.Body), sendMail.Info.Attachments.size(), sendMail.Info.SendMoney, sendMail.Info.Cod, sendMail.Info.StationeryID);
 
     if (player->GetGUID() == receiverGuid)
     {
@@ -186,7 +162,7 @@ void WorldSession::HandleSendMail(WorldPackets::Mail::SendMail& sendMail)
         return;
     }
 
-    auto mailCountCheckContinuation = [this, player = _player, receiverGuid, mailInfo = std::move(sendMail.Info), reqmoney, cost](Team receiverTeam, uint64 mailsCount, uint8 receiverLevel, uint32 receiverAccountId, uint32 receiverBnetAccountId) mutable
+    auto mailCountCheckContinuation = [this, player, receiverGuid, mailInfo = std::move(sendMail.Info), reqmoney, cost](Team receiverTeam, uint64 mailsCount, uint8 receiverLevel, uint32 receiverAccountId, uint32 receiverBnetAccountId) mutable
     {
         if (_player != player)
             return;
@@ -263,9 +239,9 @@ void WorldSession::HandleSendMail(WorldPackets::Mail::SendMail& sendMail)
                 return;
             }
 
-            if (item->IsBoundAccountWide() && item->IsSoulBound() && player->GetSession()->GetAccountId() != receiverAccountId)
+            if (item->IsBoundAccountWide() && item->IsSoulBound() && GetAccountId() != receiverAccountId)
             {
-                if (!item->IsBattlenetAccountBound() || !player->GetSession()->GetBattlenetAccountId() || player->GetSession()->GetBattlenetAccountId() != receiverBnetAccountId)
+                if (!item->IsBattlenetAccountBound() || !GetBattlenetAccountId() || GetBattlenetAccountId() != receiverBnetAccountId)
                 {
                     player->SendMailResult(0, MAIL_SEND, MAIL_ERR_EQUIP_ERROR, EQUIP_ERR_NOT_SAME_ACCOUNT);
                     return;
@@ -310,13 +286,13 @@ void WorldSession::HandleSendMail(WorldPackets::Mail::SendMail& sendMail)
             bool log = HasPermission(rbac::RBAC_PERM_LOG_GM_TRADE);
             if (!mailInfo.Attachments.empty())
             {
-                for (auto const& item : items)
+                for (Item* item : items)
                 {
                     if (log)
                     {
                         sLog->OutCommand(GetAccountId(), "GM {} ({}) (Account: {}) mail item: {} (Entry: {} Count: {}) "
                             "to: {} ({}) (Account: {})", GetPlayerName(), _player->GetGUID().ToString(), GetAccountId(),
-                            item->GetTemplate()->GetDefaultLocaleName(), item->GetEntry(), item->GetCount(),
+                            item->GetNameForLocaleIdx(sWorld->GetDefaultDbcLocale()), item->GetEntry(), item->GetCount(),
                             mailInfo.Target, receiverGuid.ToString(), receiverAccountId);
                     }
 
@@ -332,7 +308,7 @@ void WorldSession::HandleSendMail(WorldPackets::Mail::SendMail& sendMail)
                 }
 
                 // if item send to character at another account, then apply item delivery delay
-                needItemDelay = player->GetSession()->GetAccountId() != receiverAccountId;
+                needItemDelay = GetAccountId() != receiverAccountId;
             }
 
             if (log && mailInfo.SendMoney > 0)
@@ -409,6 +385,9 @@ void WorldSession::HandleMailMarkAsRead(WorldPackets::Mail::MailMarkAsRead& mark
 //called when client deletes mail
 void WorldSession::HandleMailDelete(WorldPackets::Mail::MailDelete& mailDelete)
 {
+    if (!CanOpenMailBox(_player->PlayerTalkClass->GetInteractionData().SourceGuid))
+        return;
+
     Mail* m = _player->GetMail(mailDelete.MailID);
     Player* player = _player;
     player->m_mailsUpdated = true;
@@ -462,7 +441,7 @@ void WorldSession::HandleMailReturnToSender(WorldPackets::Mail::MailReturnToSend
         {
             for (MailItemInfoVec::iterator itr2 = m->items.begin(); itr2 != m->items.end(); ++itr2)
             {
-                if (Item* const item = player->GetMItem(itr2->item_guid))
+                if (Item* item = player->GetMItem(itr2->item_guid))
                     draft.AddItem(item);
                 player->RemoveMItem(itr2->item_guid);
             }
@@ -500,7 +479,7 @@ void WorldSession::HandleMailTakeItem(WorldPackets::Mail::MailTakeItem& takeItem
     }
 
     // verify that the mail has the item to avoid cheaters taking COD items without paying
-    if (std::find_if(m->items.begin(), m->items.end(), [AttachID](MailItemInfo info){ return info.item_guid == AttachID; }) == m->items.end())
+    if (std::ranges::find(m->items, ObjectGuid::LowType(takeItem.AttachID), &MailItemInfo::item_guid) == m->items.end())
     {
         player->SendMailResult(takeItem.MailID, MAIL_ITEM_TAKEN, MAIL_ERR_INTERNAL_ERROR);
         return;
@@ -547,7 +526,7 @@ void WorldSession::HandleMailTakeItem(WorldPackets::Mail::MailTakeItem& takeItem
                         sender_name = sObjectMgr->GetTrinityStringForDBCLocale(LANG_UNKNOWN);
                 }
                 sLog->OutCommand(GetAccountId(), "GM {} (Account: {}) receiver mail item: {} (Entry: {} Count: {}) and send COD money: {} to player: {} (Account: {})",
-                    GetPlayerName(), GetAccountId(), it->GetTemplate()->GetDefaultLocaleName(), it->GetEntry(), it->GetCount(), m->COD, sender_name, sender_accId);
+                    GetPlayerName(), GetAccountId(), it->GetNameForLocaleIdx(sWorld->GetDefaultDbcLocale()), it->GetEntry(), it->GetCount(), m->COD, sender_name, sender_accId);
             }
             else if (!receiver)
                 sender_accId = sCharacterCache->GetCharacterAccountIdByGuid(sender_guid);

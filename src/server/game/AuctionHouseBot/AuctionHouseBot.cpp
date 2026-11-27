@@ -186,6 +186,7 @@ void AuctionBotConfig::GetConfigFromFile()
     SetConfig(CONFIG_AHBOT_ITEMS_PER_CYCLE_NORMAL, "AuctionHouseBot.ItemsPerCycle.Normal", 20);
     SetConfig(CONFIG_AHBOT_ITEMS_CRAFTED_MIN_STOCK, "AuctionHouseBot.Items.Crafted.MinStock", 0);
     SetConfig(CONFIG_AHBOT_ITEMS_TRADEGOODS_MIN_STOCK, "AuctionHouseBot.Items.TradeGoods.MinStock", 0);
+    SetConfig(CONFIG_AHBOT_ITEMS_TRADEGOODS_BLUE_STACK, "AuctionHouseBot.Items.TradeGoods.BlueStackSize", 0);
 
     SetConfig(CONFIG_AHBOT_ITEM_MIN_ITEM_LEVEL, "AuctionHouseBot.Items.ItemLevel.Min", 0);
     SetConfig(CONFIG_AHBOT_ITEM_MAX_ITEM_LEVEL, "AuctionHouseBot.Items.ItemLevel.Max", 0);

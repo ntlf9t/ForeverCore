@@ -221,13 +221,6 @@ struct ClassPool
 std::array<ClassPool, MAX_CLASSES> g_pools;
 bool g_initialized = false;
 
-uint64 fnv1a64(uint64 v)
-{
-    uint64 h = 0xcbf29ce484222325ULL;
-    while (v) { h ^= (v & 0xff); h *= 0x100000001b3ULL; v >>= 8; }
-    return h;
-}
-
 } // anonymous
 
 // Approximate ilvl target for a level. Linear from L1=1 to L80=600 (TWW
@@ -997,7 +990,6 @@ std::vector<GearItem> GenerateGearFor(GearGenerationContext const& ctx)
                                            : (ctx.cls == CLASS_ROGUE || ctx.cls == CLASS_WARRIOR || ctx.cls == CLASS_HUNTER);
 
     out.reserve(kSlots.size());
-    uint32 slot_idx = 0;
     // FINGER2/TRINKET2 draw from FINGER1/TRINKET1's pool and score it with the
     // same weights, so left to itself the generator picks the IDENTICAL entry
     // for both. That is fine for a plain ring and fatal for a unique-equipped
@@ -1013,15 +1005,15 @@ std::vector<GearItem> GenerateGearFor(GearGenerationContext const& ctx)
     {
         // Pick from pool slot.
         // For FINGER2/TRINKET2, reuse FINGER1/TRINKET1 pool (same items wearable in both).
-        uint8 lookup_slot = (slot == EQUIPMENT_SLOT_FINGER2)  ? EQUIPMENT_SLOT_FINGER1
-                          : (slot == EQUIPMENT_SLOT_TRINKET2) ? EQUIPMENT_SLOT_TRINKET1
+        uint8 lookup_slot = (slot == EQUIPMENT_SLOT_FINGER2)  ? uint8(EQUIPMENT_SLOT_FINGER1)
+                          : (slot == EQUIPMENT_SLOT_TRINKET2) ? uint8(EQUIPMENT_SLOT_TRINKET1)
                           : slot;
         auto const& candidates = pool.slots[lookup_slot];
-        if (candidates.empty()) { ++slot_idx; continue; }
+        if (candidates.empty()) continue;
         // A two-handed mainhand leaves no offhand to fill (no Titan's Grip in Classic): an offhand pick next to it
         // can never be worn together with it, and equipped first it blocks the two-hander.
         if (slot == EQUIPMENT_SLOT_OFFHAND && picked_mainhand && picked_mainhand->GetInventoryType() == INVTYPE_2HWEAPON)
-        { ++slot_idx; continue; }
+        continue;
 
         // Pick the candidate that best fits the bot's class+spec and lands
         // near the target ilvl. Combined score = fit - 2 * |ilvl - target|;
@@ -1282,7 +1274,6 @@ std::vector<GearItem> GenerateGearFor(GearGenerationContext const& ctx)
             if (slot == EQUIPMENT_SLOT_TRINKET1) picked_trinket1 = best;
             if (slot == EQUIPMENT_SLOT_MAINHAND) picked_mainhand = best;
         }
-        ++slot_idx;
     }
 
     if (tier_mode)

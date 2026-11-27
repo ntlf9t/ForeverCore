@@ -1,0 +1,62 @@
+# Everlake: once a day, list what upstream has that `everlake` has not sorted yet (docs/core-fork.md in
+# wow-project-everlake, "Staying current"): advocaite pull requests with no review log and whether each still merges,
+# TrinityCore master commits not in `everlake` (by patch id) and not logged, advocaite branch commits not in
+# `everlake`, and Karrz (docs/karrz-releases.md): releases not imported on `karrz-releases` yet, the files only the
+# newest imported release zip has, and Karrz git commits not in `everlake`. The list goes to the run's summary and,
+# when the repository has issues turned on, into one issue that is kept up to date. Nothing is merged, pushed or built.
+# Only GitHub's own token: it can read the public upstreams and their releases and write the issue; no personal token
+# (see everlake-mirrors.yml).
+name: Everlake upstream check
+
+on:
+  schedule:
+    - cron: '47 6 * * *'    # after the mirrors (06:17)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    if: github.repository == 'buildthehomelab/wow-trinitycore-everlake'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+    - name: Checkout everlake
+      uses: actions/checkout@v4
+      with:
+        ref: everlake
+        fetch-depth: 0
+
+    - name: List what is not sorted yet
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        .github/scripts/everlake-upstream-check.sh HEAD > upstream-check.md
+        cat upstream-check.md >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Keep the issue up to date
+      env:
+        GH_TOKEN: ${{ github.token }}
+        TITLE: Upstream check
+      run: |
+        if [ "$(gh api "repos/$GITHUB_REPOSITORY" --jq .has_issues)" != "true" ]; then
+          echo "Issues are turned off for this repository: the list is in the run summary only."
+          exit 0
+        fi
+        # an issue body holds at most 65,536 characters
+        body=upstream-check.md
+        if [ "$(wc -c < "$body")" -gt 60000 ]; then
+          head -c 60000 "$body" > issue-body.md
+          printf '\n\n(cut here: the whole list is in the summary of %s/%s/actions/runs/%s)\n' \
+            "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> issue-body.md
+          body=issue-body.md
+        fi
+        number=$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "in:title \"$TITLE\"" \
+          --json number,title --jq "map(select(.title == \"$TITLE\")) | .[0].number // empty")
+        if [ -n "$number" ]; then
+          gh issue edit "$number" -R "$GITHUB_REPOSITORY" --body-file "$body"
+        else
+          gh issue create -R "$GITHUB_REPOSITORY" --title "$TITLE" --body-file "$body"
+        fi

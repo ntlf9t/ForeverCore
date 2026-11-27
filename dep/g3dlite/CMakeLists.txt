@@ -76,7 +76,10 @@ target_sources(g3dlib
       include/G3D/Vector3.h
       include/G3D/Vector4.h)
 
-if((CMAKE_SYSTEM_NAME MATCHES "Linux" AND NOT NOJEM) OR TSAN)
+# Everlake: the sanitizer builds turn jemalloc off, and g3d's own pool would then hide freed memory from them (and calls
+# a member function on a null pool when a global G3D::Array is freed at exit). Use plain malloc, as Linux builds with
+# jemalloc do.
+if((CMAKE_SYSTEM_NAME MATCHES "Linux" AND NOT NOJEM) OR TSAN OR ASAN OR MSAN OR UBSAN)
   target_compile_definitions(g3dlib
     PRIVATE
       NO_BUFFERPOOL)

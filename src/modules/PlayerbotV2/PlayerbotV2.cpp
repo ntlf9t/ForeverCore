@@ -978,6 +978,11 @@ void Module::Init()
     // boot doesn't see a phantom-claimed pool.
     Fleet::BotNamePool::ReconcileOnBoot();
 
+    // Everlake name reservation: bots never reserve and never keep a name a player holds (see BotNamePool.h).
+    // Before any bot logs in, so the renames below only touch offline bots.
+    Fleet::BotNamePool::RegisterNameReservationHooks();
+    Fleet::BotNamePool::RenameBotsHoldingReservedNames();
+
     // Re-roll bot appearances the client would reject (retail-only
     // customization options in the Classic 1.60 data crashed the owner's
     // client when such a bot came into view). Before any bot logs in.
@@ -1846,6 +1851,7 @@ void Module::OnWorldUpdate(std::chrono::milliseconds diff)
         {
             last_hint_check = total;
             SendDueAddonHints();
+            RecheckArenaWaits(GameTime::GetGameTimeMS());   // real parties in an arena queue with no team against them
         }
     }
     {
@@ -4823,6 +4829,110 @@ void Module::DispatchSquadLine(Player* sender, Group* group, std::string const& 
     }
 }
 
+void Module::OnHumanArenaQueue(Player* player, BattlegroundTemplate const* tmpl, uint8 bracket)
+{
+    // Only a real party asks for opponents; a bot party queuing for an arena is the opponent.
+    if (!player || !player->GetSession() || player->GetSession()->IsBot() || !Services::Initialized())
+        return;
+    if (!sConfigMgr->GetBoolDefault("Playerbot.Arena.BotOpponents", true))
+        return;
+    if (!AskArenaOpponents(player, tmpl, bracket, 0))
+        return;
+
+    // Asked once; RecheckArenaWaits asks again every kArenaReaskMs while the party still waits with no team against it
+    // (2026-11-04 playtest: one ask found no free bots and the queue waited for ever).
+    std::lock_guard lock(arena_waits_mtx_);
+    ArenaWait& w = arena_waits_[player->GetGUID()];
+    w.bg_type_id  = uint32(tmpl->Id);
+    w.bracket     = bracket;
+    w.next_ask_ms = GameTime::GetGameTimeMS() + kArenaReaskMs;
+    w.asks        = 1;
+}
+
+bool Module::AskArenaOpponents(Player* player, BattlegroundTemplate const* tmpl, uint8 bracket, uint32 asks)
+{
+    if (tmpl->MapIDs.empty())
+        return false;
+
+    // team size of the queue the party is in (2, 3 or 5)
+    BattlegroundQueueTypeId queueId{};
+    uint8 teamSize = 0;
+    for (uint32 i = 0; i < PLAYER_MAX_BATTLEGROUND_QUEUES; ++i)
+    {
+        BattlegroundQueueTypeId const q = player->GetBattlegroundQueueTypeId(i);
+        if (q.BattlemasterListId == uint16(tmpl->Id) && q.Type == uint8(BattlegroundQueueIdType::Arena) && q.TeamSize)
+        {
+            queueId = q;
+            teamSize = q.TeamSize;
+        }
+    }
+    if (teamSize != 2 && teamSize != 3 && teamSize != 5)
+        return false;
+
+    PVPDifficultyEntry const* diff = DB2Manager::GetBattlegroundBracketById(tmpl->MapIDs.front(), BattlegroundBracketId(bracket));
+    if (!diff)
+        return false;
+
+    // A team of the other faction already waits in the same queue and bracket (a real party, or a bot team asked for before):
+    // the queue matches the two by itself, no further team is made.
+    TeamId const other = player->GetTeamId() == TEAM_ALLIANCE ? TEAM_HORDE : TEAM_ALLIANCE;
+    if (asks > 0 && sBattlegroundMgr->GetBattlegroundQueue(queueId).GetQueuedPlayersCount(other, BattlegroundBracketId(bracket)) >= teamSize)
+        return true;
+
+    // Opponents of the other faction, in the party's level bracket. BotGroupBuilder takes idle, ungrouped bots of that band, forms
+    // the party and its leader queues the same Arena queue (team size, rating 1) about 10 s later; the queue then matches the two.
+    V2::CoordEvent ev{};
+    ev.kind         = V2::CoordSignal::ArenaTeamForming;
+    ev.origin_low   = player->GetGUID().GetCounter();
+    ev.content_id   = uint32(tmpl->Id);
+    ev.level_min    = uint8(std::clamp<int32>(diff->MinLevel, 1, int32(MaxPlayerLevel())));
+    ev.level_max    = uint8(std::clamp<int32>(diff->MaxLevel, 1, int32(MaxPlayerLevel())));
+    ev.faction_mask = player->GetTeam() == ALLIANCE ? 0x2 : 0x1;
+    ev.arena_type   = teamSize;
+    ev.content_name = "Arena opponents";
+    Services::Coordination().Publish(ev);
+
+    TC_LOG_INFO("playerbot.v2", "[arena] {} queued {}v{} (bracket {}-{}): asked for a bot team of the other faction (ask {})",
+                player->GetName(), uint32(teamSize), uint32(teamSize), uint32(ev.level_min), uint32(ev.level_max), asks + 1);
+    return true;
+}
+
+void Module::RecheckArenaWaits(uint32 now_ms)
+{
+    std::vector<std::pair<ObjectGuid, ArenaWait>> due;
+    {
+        std::lock_guard lock(arena_waits_mtx_);
+        for (auto it = arena_waits_.begin(); it != arena_waits_.end();)
+        {
+            Player* p = ObjectAccessor::FindConnectedPlayer(it->first);
+            // gone, in the arena (or any battleground), or out of that arena queue: nothing more to ask
+            if (!p || p->InBattleground() || !p->InBattlegroundQueue(/*ignoreArena*/ false))
+            {
+                it = arena_waits_.erase(it);
+                continue;
+            }
+            if (int32(now_ms - it->second.next_ask_ms) >= 0)
+            {
+                due.emplace_back(it->first, it->second);
+                it->second.next_ask_ms = now_ms + kArenaReaskMs;
+                ++it->second.asks;
+            }
+            ++it;
+        }
+    }
+
+    for (auto const& [guid, w] : due)
+    {
+        Player* p = ObjectAccessor::FindConnectedPlayer(guid);
+        BattlegroundTemplate const* tmpl = sBattlegroundMgr->GetBattlegroundTemplateByTypeId(BattlegroundTypeId(w.bg_type_id));
+        if (!p || !tmpl || !AskArenaOpponents(p, tmpl, w.bracket, w.asks))
+        {
+            std::lock_guard lock(arena_waits_mtx_);
+            arena_waits_.erase(guid);
+        }
+    }
+}
+
 void Module::OnPlayerJoinedBgQueue(Player* player, uint32 bg_type_id, uint8 bracket)
 {
     if (!initialized_ || !player) return;
@@ -4838,6 +4948,15 @@ void Module::OnPlayerJoinedBgQueue(Player* player, uint32 bg_type_id, uint8 brac
         if (!g || g->GetLeaderGUID() != player->GetGUID())
             return;
         // fall through: bot premade leader — fill both factions below
+    }
+
+    // Arena (2v2 / 3v3): the party is one team; the opposing team is a bot party formed for it. The battleground fill below
+    // fills two sides with solo bots and does not fit an arena queue.
+    if (BattlegroundTemplate const* tmpl = sBattlegroundMgr->GetBattlegroundTemplateByTypeId(BattlegroundTypeId(bg_type_id));
+        tmpl && tmpl->IsArena())
+    {
+        OnHumanArenaQueue(player, tmpl, bracket);
+        return;
     }
 
     // A real player waiting for a place: MakeRoomForRealPlayers watches the wait.
@@ -5028,17 +5147,6 @@ void Module::OnPlayerJoinedLfg(Player* player, uint32 dungeon_id, uint8 /*role_m
     }
 }
 
-namespace
-{
-// The invite hook passes the battleground's own type, not its queue. BattlegroundMgr::GetBattleground finds the instance through the
-// queue's BattlemasterListId only, so a queue id built from that type reaches the same instance.
-Battleground* FindInvitedBattleground(uint32 bg_instance_id, uint32 bg_type_id)
-{
-    return sBattlegroundMgr->GetBattleground(bg_instance_id,
-        BattlegroundMgr::BGQueueTypeId(uint16(bg_type_id), BattlegroundQueueIdType::Battleground, false, 0));
-}
-}
-
 void Module::OnBGInvitationReceived(Player* player, uint32 bg_instance_id, uint32 bg_type_id)
 {
     // Synchronous handler fired from BattlegroundQueue::InviteGroupToBG /
@@ -5066,8 +5174,15 @@ void Module::OnBGInvitationReceived(Player* player, uint32 bg_instance_id, uint3
     bool const is_bot = player->GetSession() && player->GetSession()->IsBot();
     if (!is_bot)
     {
-        std::lock_guard lk(pending_bg_ports_mtx_);
-        ++bg_invite_state_[bg_instance_id].expected_humans;
+        {
+            std::lock_guard lk(pending_bg_ports_mtx_);
+            ++bg_invite_state_[bg_instance_id].expected_humans;
+        }
+        // The client's arena pop has Enter only: say how to turn it down (the ForeverBots add-on also shows Enter / Leave buttons).
+        if (BattlegroundTemplate const* bgTemplate = sBattlegroundMgr->GetBattlegroundTemplateByTypeId(BattlegroundTypeId(bg_type_id));
+            bgTemplate && bgTemplate->IsArena() && player->GetSession())
+            BotLanguage::LocalizedHandler(player->GetSession()).SendSysMessage(
+                "Your arena is ready. Enter: click Enter at the minimap or type .bot arena enter. Leave: type .bot arena leave.");
         return;
     }
 
@@ -5142,7 +5257,7 @@ void Module::FireDueBgPorts()
             {
                 // A human of this type is queued and not invited yet: TC's prep timer starts with the first player inside, so
                 // bots going in now would burn the human's wait. Hold until the human has an invitation (80 s expiry above).
-                if (Battleground const* held_bg = FindInvitedBattleground(it->bg_instance_id, it->bg_template_type_id))
+                if (Battleground const* held_bg = sBattlegroundMgr->FindBattlegroundByInstanceId(it->bg_instance_id))
                     if (Fleet::BotQueueFiller::HasWaitingHuman(it->bg_template_type_id, uint8(held_bg->GetBracketId())))
                     {
                         ++it;
@@ -5163,7 +5278,7 @@ void Module::FireDueBgPorts()
             // Once flagged sticky, the gate stays open for that instance.
             if (!human_in_bg)
             {
-                Battleground* bg = FindInvitedBattleground(it->bg_instance_id, it->bg_template_type_id);
+                Battleground* bg = sBattlegroundMgr->FindBattlegroundByInstanceId(it->bg_instance_id);
                 if (bg)
                 {
                     for (auto const& [guid, _] : bg->GetPlayers())

@@ -18,9 +18,9 @@
 #include "WorldSession.h"
 #include "AccountMgr.h"
 #include "CharacterCache.h"
-#include "DatabaseEnv.h"
 #include "Log.h"
 #include "ObjectAccessor.h"
+#include "FullName.h"
 #include "ObjectMgr.h"
 #include "Player.h"
 #include "QueryCallback.h"
@@ -37,7 +37,8 @@ void WorldSession::HandleContactListOpcode(WorldPackets::Social::SendContactList
 
 void WorldSession::HandleAddFriendOpcode(WorldPackets::Social::AddFriend& packet)
 {
-    if (!normalizePlayerName(packet.Name))
+    // "Name Surname": keep the surname, or the cache finds another Name (Trinity::FullName::Normalize)
+    if (!Trinity::FullName::Normalize(packet.Name))
         return;
 
     TC_LOG_DEBUG("network", "WorldSession::HandleAddFriendOpcode: {} asked to add friend: {}",
@@ -152,7 +153,7 @@ void WorldSession::HandleDelFriendOpcode(WorldPackets::Social::DelFriend& packet
 
 void WorldSession::HandleAddIgnoreOpcode(WorldPackets::Social::AddIgnore& packet)
 {
-    if (!normalizePlayerName(packet.Name))
+    if (!Trinity::FullName::Normalize(packet.Name))
         return;
 
     TC_LOG_DEBUG("network", "WorldSession::HandleAddIgnoreOpcode: {} asked to Ignore: {}",

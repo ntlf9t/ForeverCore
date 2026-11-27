@@ -103,6 +103,7 @@
 #include "MiscPackets.h"
 #include "MotionMaster.h"
 #include "MovementPackets.h"
+#include "NameReservationMgr.h"
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
 #include "ItemScoreAffix.h"
@@ -153,6 +154,7 @@
 #include "Util.h"
 #include "Vehicle.h"
 #include "VehiclePackets.h"
+#include "VendorPrice.h"
 #include "Vignette.h"
 #include "VignettePackets.h"
 #include "VMapFactory.h"
@@ -162,6 +164,7 @@
 #include "WorldSession.h"
 #include "WorldStateMgr.h"
 #include "WorldStatePackets.h"
+#include <array>
 #include <boost/dynamic_bitset.hpp>
 #include <G3D/g3dmath.h>
 #include <sstream>
@@ -250,9 +253,8 @@ Player::Player(WorldSession* session) : Unit(true), m_sceneMgr(this)
     m_DailyQuestChanged = false;
     m_lastDailyQuestTime = 0;
 
-    m_MirrorTimer.fill(DISABLED_MIRROR_TIMER);
+    m_environmentalDamageTimer = 1 * IN_MILLISECONDS;
     m_MirrorTimerFlags = UNDERWATER_NONE;
-    m_MirrorTimerFlagsLast = UNDERWATER_NONE;
 
     m_hostileReferenceCheckTimer = 0;
     m_drunkTimer = 0;
@@ -283,6 +285,7 @@ Player::Player(WorldSession* session) : Unit(true), m_sceneMgr(this)
     m_petResummonDelay = 0;
     m_petParkedForTravel = false;
     m_petParkedCheckTimer = 0;
+    m_petParkedLoadFails = 0;
     //cache for CreatedBySpell to allow
     //returning reagents for temporarily removed pets
     //when dying/logging out
@@ -622,22 +625,19 @@ bool Player::StoreNewItemInBestSlots(uint32 itemId, uint32 amount, ItemContext c
     return false;
 }
 
-void Player::SendMirrorTimer(MirrorTimerType Type, uint32 MaxValue, uint32 CurrentValue, int32 Regen)
+void Player::SendMirrorTimer(MirrorTimerType type, int32 value, int32 maxValue, int32 scale, int32 spellId, bool paused)
 {
-    if (int(MaxValue) == DISABLED_MIRROR_TIMER)
-    {
-        if (int(CurrentValue) != DISABLED_MIRROR_TIMER)
-            StopMirrorTimer(Type);
-        return;
-    }
-
-    SendDirectMessage(WorldPackets::Misc::StartMirrorTimer(Type, CurrentValue, MaxValue, Regen, 0, false).Write());
+    SendDirectMessage(WorldPackets::Misc::StartMirrorTimer(type, value, maxValue, scale, spellId, paused).Write());
 }
 
-void Player::StopMirrorTimer(MirrorTimerType Type)
+void Player::PauseMirrorTimer(MirrorTimerType type, bool paused)
 {
-    m_MirrorTimer[Type] = DISABLED_MIRROR_TIMER;
-    SendDirectMessage(WorldPackets::Misc::StopMirrorTimer(Type).Write());
+    SendDirectMessage(WorldPackets::Misc::PauseMirrorTimer(type, paused).Write());
+}
+
+void Player::StopMirrorTimer(MirrorTimerType type)
+{
+    SendDirectMessage(WorldPackets::Misc::StopMirrorTimer(type).Write());
 }
 
 bool Player::IsImmuneToEnvironmentalDamage() const
@@ -704,59 +704,57 @@ uint32 Player::EnvironmentalDamage(EnviromentalDamage type, uint32 damage)
     return final_damage;
 }
 
-int32 Player::getMaxTimer(MirrorTimerType timer) const
+int32 Player::GetMirrorTimerMaxValue(MirrorTimerType type) const
 {
-    switch (timer)
+    switch (type)
     {
-        case FATIGUE_TIMER:
+        case MIRROR_TIMER_FATIGUE:
             return MINUTE * IN_MILLISECONDS;
-        case BREATH_TIMER:
+        case MIRROR_TIMER_BREATH:
+            // Classic 1.60 (vanilla): 1 minute of breath (3 minutes since 3.0.2); the Forever client's Undead Underwater Breathing
+            // 5227 still reads "300% longer than normal", the vanilla 4 minutes
+            return std::max(int32(MINUTE * IN_MILLISECONDS * GetTotalAuraMultiplier(SPELL_AURA_MOD_WATER_BREATHING)), 1);
+        case MIRROR_TIMER_FEIGN_DEATH:
         {
-            if (!IsAlive() || HasAuraType(SPELL_AURA_WATER_BREATHING) || GetSession()->GetSecurity() >= AccountTypes(sWorld->getIntConfig(CONFIG_DISABLE_BREATHING)))
-                return DISABLED_MIRROR_TIMER;
-
-            // Classic 1.60 (vanilla, Classic Era): 1 minute of breath; 3 minutes came with patch 3.0.2. The Forever client's Undead
-            // Underwater Breathing 5227 is still "300% longer than normal", the vanilla 4 minutes.
-            int32 UnderWaterTime = MINUTE * IN_MILLISECONDS;
-            UnderWaterTime *= GetTotalAuraMultiplier(SPELL_AURA_MOD_WATER_BREATHING);
-            return UnderWaterTime;
-        }
-        case FIRE_TIMER:
-        {
-            if (!IsAlive())
-                return DISABLED_MIRROR_TIMER;
-            return 1 * IN_MILLISECONDS;
+            AuraEffectList const& feignDeathAuras = GetAuraEffectsByType(SPELL_AURA_FEIGN_DEATH);
+            return feignDeathAuras.empty() ? 0
+                : std::ranges::max(feignDeathAuras, {}, [](AuraEffect const* aurEff) { return aurEff->GetBase()->GetDuration(); })->GetBase()->GetMaxDuration();
         }
         default:
             return 0;
     }
 }
 
-void Player::UpdateMirrorTimers()
-{
-    // Desync flags for update on next HandleDrowning
-    if (m_MirrorTimerFlags)
-        m_MirrorTimerFlagsLast = ~m_MirrorTimerFlags;
-}
-
-void Player::StopMirrorTimers()
-{
-    StopMirrorTimer(FATIGUE_TIMER);
-    StopMirrorTimer(BREATH_TIMER);
-    StopMirrorTimer(FIRE_TIMER);
-}
-
 bool Player::IsMirrorTimerActive(MirrorTimerType type) const
 {
-    return m_MirrorTimer[type] == getMaxTimer(type);
+    return m_mirrorTimers[type].IsActive();
 }
 
-void Player::HandleDrowning(uint32 time_diff)
+void Player::UpdateMirrorTimers(uint32 diff)
 {
-    if (!m_MirrorTimerFlags)
-        return;
+    auto shouldMirrorTimerBeActive = [this](MirrorTimerType type)
+    {
+        switch (type)
+        {
+            case MIRROR_TIMER_FATIGUE:
+                if (!IsAlive() && !HasPlayerFlag(PLAYER_FLAGS_GHOST))
+                    return false;
+                return ((m_MirrorTimerFlags & UNDERWATER_INDARKWATER) != 0
+                    || m_mirrorTimers[type].GetValue() < m_mirrorTimers[type].GetMaxValue());
+            case MIRROR_TIMER_BREATH:
+                if (!IsAlive() || GetSession()->GetSecurity() >= AccountTypes(sWorld->getIntConfig(CONFIG_DISABLE_BREATHING)))
+                    return false;
+                return ((m_MirrorTimerFlags & UNDERWATER_INWATER) != 0
+                    || HasAuraType(SPELL_AURA_FORCE_BREATH_BAR)
+                    || m_mirrorTimers[type].GetValue() < m_mirrorTimers[type].GetMaxValue());
+            case MIRROR_TIMER_FEIGN_DEATH:
+                return HasAuraType(SPELL_AURA_FEIGN_DEATH);
+            default:
+                return false;
+        }
+    };
 
-    auto getEnvironmentalDamage = [&](EnviromentalDamage damageType)
+    auto getEnvironmentalDamage = [this](EnviromentalDamage damageType)
     {
         uint8 damagePercent = 10;
         if (damageType == DAMAGE_DROWNING || damageType == DAMAGE_EXHAUSTED)
@@ -770,115 +768,87 @@ void Player::HandleDrowning(uint32 time_diff)
         return damage;
     };
 
-    // In water
-    if (m_MirrorTimerFlags & UNDERWATER_INWATER)
+    for (MirrorTimerType type = MIRROR_TIMER_FATIGUE; type < m_mirrorTimers.size(); type = MirrorTimerType(type + 1))
     {
-        // Breath timer not activated - activate it
-        if (m_MirrorTimer[BREATH_TIMER] == DISABLED_MIRROR_TIMER)
+        MirrorTimer& timer = m_mirrorTimers[type];
+        bool isActive = timer.IsActive();
+        bool shouldBeActive = shouldMirrorTimerBeActive(type);
+        if (isActive)
         {
-            m_MirrorTimer[BREATH_TIMER] = getMaxTimer(BREATH_TIMER);
-            SendMirrorTimer(BREATH_TIMER, m_MirrorTimer[BREATH_TIMER], m_MirrorTimer[BREATH_TIMER], -1);
-        }
-        else                                                              // If activated - do tick
-        {
-            m_MirrorTimer[BREATH_TIMER] -= time_diff;
-            // Timer limit - need deal damage
-            if (m_MirrorTimer[BREATH_TIMER] < 0)
+            if (shouldBeActive)
             {
-                m_MirrorTimer[BREATH_TIMER] += 1 * IN_MILLISECONDS;
-                // Calculate and deal damage
-                uint32 damage = getEnvironmentalDamage(DAMAGE_DROWNING);
-                EnvironmentalDamage(DAMAGE_DROWNING, damage);
-            }
-            else if (!(m_MirrorTimerFlagsLast & UNDERWATER_INWATER))      // Update time in client if need
-                SendMirrorTimer(BREATH_TIMER, getMaxTimer(BREATH_TIMER), m_MirrorTimer[BREATH_TIMER], -1);
-        }
-    }
-    else if (m_MirrorTimer[BREATH_TIMER] != DISABLED_MIRROR_TIMER)        // Regen timer
-    {
-        int32 UnderWaterTime = getMaxTimer(BREATH_TIMER);
-        // Need breath regen
-        m_MirrorTimer[BREATH_TIMER] += 10 * time_diff;
-        if (m_MirrorTimer[BREATH_TIMER] >= UnderWaterTime || !IsAlive())
-            StopMirrorTimer(BREATH_TIMER);
-        else if (m_MirrorTimerFlagsLast & UNDERWATER_INWATER)
-            SendMirrorTimer(BREATH_TIMER, UnderWaterTime, m_MirrorTimer[BREATH_TIMER], 10);
-    }
-
-    // In dark water
-    if (m_MirrorTimerFlags & UNDERWATER_INDARKWATER)
-    {
-        // Fatigue timer not activated - activate it
-        if (m_MirrorTimer[FATIGUE_TIMER] == DISABLED_MIRROR_TIMER)
-        {
-            m_MirrorTimer[FATIGUE_TIMER] = getMaxTimer(FATIGUE_TIMER);
-            SendMirrorTimer(FATIGUE_TIMER, m_MirrorTimer[FATIGUE_TIMER], m_MirrorTimer[FATIGUE_TIMER], -1);
-        }
-        else
-        {
-            m_MirrorTimer[FATIGUE_TIMER] -= time_diff;
-            // Timer limit - need deal damage or teleport ghost to graveyard
-            if (m_MirrorTimer[FATIGUE_TIMER] < 0)
-            {
-                m_MirrorTimer[FATIGUE_TIMER] += 1 * IN_MILLISECONDS;
-                if (IsAlive())                                            // Calculate and deal damage
+                if (timer.Update(diff) == MirrorTimer::UpdateResult::ExpiredTicked)
                 {
-                    uint32 damage = getEnvironmentalDamage(DAMAGE_EXHAUSTED);
-                    EnvironmentalDamage(DAMAGE_EXHAUSTED, damage);
+                    // do env damage tick
+                    switch (type)
+                    {
+                        case MIRROR_TIMER_FATIGUE:
+                            if (IsAlive())                                    // Calculate and deal damage
+                                EnvironmentalDamage(DAMAGE_EXHAUSTED, getEnvironmentalDamage(DAMAGE_EXHAUSTED));
+                            else if (HasPlayerFlag(PLAYER_FLAGS_GHOST))       // Teleport ghost to graveyard
+                                RepopAtGraveyard();
+                            break;
+                        case MIRROR_TIMER_BREATH:
+                            EnvironmentalDamage(DAMAGE_DROWNING, getEnvironmentalDamage(DAMAGE_DROWNING));
+                            break;
+                        default:
+                            break;
+                    }
                 }
-                else if (HasPlayerFlag(PLAYER_FLAGS_GHOST))       // Teleport ghost to graveyard
-                    RepopAtGraveyard();
             }
-            else if (!(m_MirrorTimerFlagsLast & UNDERWATER_INDARKWATER))
-                SendMirrorTimer(FATIGUE_TIMER, getMaxTimer(FATIGUE_TIMER), m_MirrorTimer[FATIGUE_TIMER], -1);
+            else
+                timer.Stop();
         }
-    }
-    else if (m_MirrorTimer[FATIGUE_TIMER] != DISABLED_MIRROR_TIMER)       // Regen timer
-    {
-        int32 DarkWaterTime = getMaxTimer(FATIGUE_TIMER);
-        m_MirrorTimer[FATIGUE_TIMER] += 10 * time_diff;
-        if (m_MirrorTimer[FATIGUE_TIMER] >= DarkWaterTime || !IsAlive())
-            StopMirrorTimer(FATIGUE_TIMER);
-        else if (m_MirrorTimerFlagsLast & UNDERWATER_INDARKWATER)
-            SendMirrorTimer(FATIGUE_TIMER, DarkWaterTime, m_MirrorTimer[FATIGUE_TIMER], 10);
+        else if (shouldBeActive)
+        {
+            switch (type)
+            {
+                case MIRROR_TIMER_FATIGUE:
+                case MIRROR_TIMER_BREATH:
+                    timer.Start(GetMirrorTimerMaxValue(type), 0);
+                    break;
+                case MIRROR_TIMER_FEIGN_DEATH:
+                {
+                    Aura const* longestFeign = std::ranges::max(GetAuraEffectsByType(SPELL_AURA_FEIGN_DEATH), {}, [](AuraEffect const* aurEff) { return aurEff->GetBase()->GetDuration(); })->GetBase();
+                    timer.Start(longestFeign->GetDuration(), longestFeign->GetMaxDuration(), longestFeign->GetId());
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
+
+        if (timer.IsChanged())
+        {
+            if (timer.IsActive())
+                SendMirrorTimer(type, timer.GetValue(), timer.GetMaxValue(), timer.GetScale(), timer.GetSpellId(), timer.IsPaused());
+            else
+                StopMirrorTimer(type);
+        }
+        else if (timer.IsPausedChanged())
+            PauseMirrorTimer(type, timer.IsPaused());
+
+        timer.ClearChanged();
     }
 
-    if (m_MirrorTimerFlags & (UNDERWATER_INLAVA /*| UNDERWATER_INSLIME*/) && !(_lastLiquid && _lastLiquid->SpellID))
+    if (m_MirrorTimerFlags & (UNDERWATER_INLAVA /*| UNDERWATER_INSLIME*/) && !(_lastLiquid && _lastLiquid->SpellID) && IsAlive())
     {
-        // Breath timer not activated - activate it
-        if (m_MirrorTimer[FIRE_TIMER] == DISABLED_MIRROR_TIMER)
-            m_MirrorTimer[FIRE_TIMER] = getMaxTimer(FIRE_TIMER);
-        else
+        m_environmentalDamageTimer -= diff;
+        if (m_environmentalDamageTimer < 0)
         {
-            m_MirrorTimer[FIRE_TIMER] -= time_diff;
-            if (m_MirrorTimer[FIRE_TIMER] < 0)
-            {
-                m_MirrorTimer[FIRE_TIMER] += 1 * IN_MILLISECONDS;
-                // Calculate and deal damage
-                uint32 damage = getEnvironmentalDamage(DAMAGE_LAVA);
-                if (m_MirrorTimerFlags & UNDERWATER_INLAVA)
-                    EnvironmentalDamage(DAMAGE_LAVA, damage);
-                // need to skip Slime damage in Undercity,
-                // maybe someone can find better way to handle environmental damage
-                //else if (m_zoneUpdateId != 1497)
-                //    EnvironmentalDamage(DAMAGE_SLIME, damage);
-            }
+            m_environmentalDamageTimer += 1 * IN_MILLISECONDS;
+            // Calculate and deal damage
+            uint32 damage = getEnvironmentalDamage(DAMAGE_LAVA);
+            if (m_MirrorTimerFlags & UNDERWATER_INLAVA)
+                EnvironmentalDamage(DAMAGE_LAVA, damage);
+            // need to skip Slime damage in Undercity,
+            // maybe someone can find better way to handle environmental damage
+            //else if (m_zoneUpdateId != 1497)
+            //    EnvironmentalDamage(DAMAGE_SLIME, damage);
         }
     }
     else
-        m_MirrorTimer[FIRE_TIMER] = DISABLED_MIRROR_TIMER;
-
-    // Recheck timers flag
-    m_MirrorTimerFlags &= ~UNDERWATER_EXIST_TIMERS;
-    for (uint8 i = 0; i < MAX_TIMERS; ++i)
-    {
-        if (m_MirrorTimer[i] != DISABLED_MIRROR_TIMER)
-        {
-            m_MirrorTimerFlags |= UNDERWATER_EXIST_TIMERS;
-            break;
-        }
-    }
-    m_MirrorTimerFlagsLast = m_MirrorTimerFlags;
+        m_environmentalDamageTimer = 1 * IN_MILLISECONDS;
 }
 
 ///The player sobers by 1% every 9 seconds
@@ -979,12 +949,14 @@ void Player::Update(uint32 p_time)
 
     // The pet remembered at login comes back a moment after the player is in the world, as a summon during play does. Created while the
     // Classic 1.60 client is still on its loading screen, the client froze on the pet (warlock demon out at logout, 20 Oct).
+    // The companion out at logout (TrinityCore 2ae8e29d6c) waits for the same moment.
     if (m_petResummonDelay)
     {
         if (p_time >= m_petResummonDelay)
         {
             m_petResummonDelay = 0;
             ResummonPetTemporaryUnSummonedIfAny();
+            ResummonBattlePetTemporaryUnSummonedIfAny();
         }
         else
             m_petResummonDelay -= p_time;
@@ -1120,7 +1092,7 @@ void Player::Update(uint32 p_time)
     }
 
     //Handle Water/drowning
-    HandleDrowning(p_time);
+    UpdateMirrorTimers(p_time);
 
     // Played time
     if (now > m_Last_tick)
@@ -1170,7 +1142,10 @@ void Player::Update(uint32 p_time)
     Pet* pet = GetPet();
     // A pet out of sight on the same map (stuck on the terrain, left at a fight) is set down next to its owner, the way a player's pet
     // catches up in Classic; before, it was dismissed and a warlock's Imp just vanished while fighting or travelling (player report, 3 Nov).
-    if (pet && !pet->IsWithinDistInMap(this, GetMap()->GetVisibilityRange()) && !pet->isPossessed() && !pet->CatchUpWithOwner())
+    // One that cannot follow where the owner went (a taxi, a boat) is parked until the owner is back on the ground, never dismissed:
+    // Pet::Update has this same fallback, and whichever of the two ticks first used to decide whether the pet survived the trip.
+    if (pet && !pet->IsWithinDistInMap(this, GetMap()->GetVisibilityRange()) && !pet->isPossessed()
+        && !pet->CatchUpWithOwner() && !(pet->isControlled() && pet->ParkForOwnerTravel()))
     //if (pet && !pet->IsWithinDistInMap(this, GetMap()->GetVisibilityDistance()) && (GetCharmGUID() && (pet->GetGUID() != GetCharmGUID())))
     {
         TC_LOG_INFO("entities.pet", "Pet {} ({}) of {} dismissed: out of its owner's sight", pet->GetName(), pet->GetEntry(), GetName());
@@ -1421,9 +1396,9 @@ bool Player::TeleportTo(TeleportLocation const& teleportLocation, TeleportToOpti
 
         if (!(options & TELE_TO_NOT_UNSUMMON_PET))
         {
-            //same map, only remove pet if out of range for new position
+            // Same map: park an out-of-range pet so UpdateParkedPet retries loading it after the jump.
             if (pet && !pet->IsWithinDist3d(&*worldDestination, GetMap()->GetVisibilityRange()))
-                UnsummonPetTemporaryIfAny();
+                ParkPetForTravel();
         }
 
         if (!IsAlive() && options & TELE_REVIVE_AT_TELEPORT)
@@ -1512,9 +1487,9 @@ bool Player::TeleportTo(TeleportLocation const& teleportLocation, TeleportToOpti
                 pet->RemoveArenaAuras();
         }
 
-        // remove pet on map change
+        // remove pet on map change; parked so a resummon that cannot fire right away is retried instead of lost
         if (pet)
-            UnsummonPetTemporaryIfAny();
+            ParkPetForTravel();
 
         // remove all dyn objects
         RemoveAllDynObjects();
@@ -1725,17 +1700,18 @@ void Player::RegenerateAll()
     {
         uint32 regeneratedRunes = 0;
         uint32 regenIndex = 0;
+        float regenAmount = GetPowerRegen(POWER_RUNES) * 0.001f * m_regenTimer;
         while (regeneratedRunes < MAX_RECHARGING_RUNES && m_runes->CooldownOrder.size() > regenIndex)
         {
             uint8 runeToRegen = m_runes->CooldownOrder[regenIndex];
-            uint32 runeCooldown = GetRuneCooldown(runeToRegen);
-            if (runeCooldown > m_regenTimer)
+            float runeCooldown = GetRuneCooldown(runeToRegen) + regenAmount;
+            if (runeCooldown < 1.0f)
             {
-                SetRuneCooldown(runeToRegen, runeCooldown - m_regenTimer);
+                SetRuneCooldown(runeToRegen, runeCooldown);
                 ++regenIndex;
             }
             else
-                SetRuneCooldown(runeToRegen, 0);
+                SetRuneCooldown(runeToRegen, 1.0f);
 
             ++regeneratedRunes;
         }
@@ -1906,8 +1882,14 @@ void Player::RegenerateHealth()
 
     addValue += m_healthFraction;
     int32 integerValue = int32(addValue);
+    // less than one health this tick: keep it for the next ticks, as RegeneratePower does. Returning without it lost
+    // every tick's share, so a regen under 1 per tick gave nothing at all (a level 4 High Order Skyborne warrior, 18
+    // Spirit: 0.08 a tick, never a single point)
     if (!integerValue)
+    {
+        m_healthFraction = addValue;
         return;
+    }
 
     if (curValue + integerValue < maxValue)
     {
@@ -2556,7 +2538,7 @@ int32 Player::GetClassicLegacyPerkAmount(uint32 spellId, SpellEffIndex effIndex)
     return perk ? perk->GetAmount() : 0;
 }
 
-// Aura 620 (not named in this core): percent change of a gold price, misc value = price type. Bartering 1225459: 0 = vendor items,
+// Aura 620 (not named in this core): percent change of a gold price, misc value = price type. Bartering 1225459: 1 = vendor items,
 // Frequent Flier 1225490: 4 = flight paths.
 uint64 Player::ApplyClassicLegacyPriceMod(uint64 price, int32 priceType) const
 {
@@ -2676,6 +2658,7 @@ void Player::InitStatsForLevel(bool reapplyMods)
 
     // set default cast time multiplier
     SetModCastingSpeed(1.0f);
+    SetModCastingSpeedNeg(1.0f);
     SetModSpellHaste(1.0f);
     SetModHaste(1.0f);
     SetModRangedHaste(1.0f);
@@ -2875,18 +2858,12 @@ void Player::AddMail(Mail* mail)
 void Player::SendMailResult(uint64 mailId, MailResponseType mailAction, MailResponseResult mailError, uint32 equipError, ObjectGuid::LowType itemGuid, uint32 itemCount) const
 {
     WorldPackets::Mail::MailCommandResult result;
-
     result.MailID = mailId;
     result.Command = mailAction;
     result.ErrorCode = mailError;
-
-    if (mailError == MAIL_ERR_EQUIP_ERROR)
-        result.BagResult = equipError;
-    else if (mailAction == MAIL_ITEM_TAKEN)
-    {
-        result.AttachID = itemGuid;
-        result.QtyInInventory = itemCount;
-    }
+    result.BagResult = equipError;
+    result.AttachID = itemGuid;
+    result.QtyInInventory = itemCount;
     SendDirectMessage(result.Write());
 }
 
@@ -2895,7 +2872,6 @@ void Player::SendNewMail() const
     // deliver undelivered mail
     WorldPackets::Mail::NotifyReceivedMail notify;
     notify.Delay = 0.0f;
-
     SendDirectMessage(notify.Write());
 }
 
@@ -3457,7 +3433,8 @@ bool Player::AddSpell(uint32 spellId, bool active, bool learning, bool dependent
 
     // needs to be when spell is already learned, to prevent infinite recursion crashes
     if (sDB2Manager.GetMount(spellId))
-        GetSession()->GetCollectionMgr()->AddMount(spellId, MOUNT_STATUS_NONE, false, IsInWorld() ? false : true);
+        if (CollectionMgr* collectionMgr = GetSession()->GetCollectionMgr())
+            collectionMgr->AddMount(spellId, MOUNT_STATUS_NONE, false, IsInWorld() ? false : true);
 
     // return true (for send learn packet) only if spell active (in case ranked spells) and not replace old spell
     return active && !disabled && !superceded_old;
@@ -4622,6 +4599,9 @@ void Player::DeleteFromDB(ObjectGuid playerguid, uint32 accountId, bool updateRe
     LoginDatabase.CommitTransaction(loginTransaction);
     CharacterDatabase.CommitTransaction(trans);
 
+    // Everlake: the character no longer uses its name; it is freed once no character on any realm does
+    sNameReservationMgr->Release(guid);
+
     if (updateRealmChars)
         sWorld->UpdateRealmCharCount(accountId);
 }
@@ -4723,8 +4703,6 @@ void Player::BuildPlayerRepop()
 
     // to prevent cheating
     corpse->ResetGhostTime();
-
-    StopMirrorTimers();                                     //disable timers(bars)
 
     // OnPlayerRepop hook
     sScriptMgr->OnPlayerRepop(this);
@@ -4847,8 +4825,6 @@ void Player::KillPlayer()
 
     SetRooted(true);
 
-    StopMirrorTimers();                                     //disable timers(bars)
-
     setDeathState(CORPSE);
     PlayerMode::HandleLoneDeath(this);
     //SetFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_NOT_IN_PVP);
@@ -4900,7 +4876,7 @@ Corpse* Player::CreateCorpse()
 
     _corpseLocation.WorldRelocate(*this);
 
-    uint32 flags = 0;
+    CorpseFlags flags = CORPSE_FLAG_NONE;
     if (*m_unitData->PvpFlags & UNIT_BYTE2_FLAG_PVP)
         flags |= CORPSE_FLAG_PVP;
     if (InBattleground() && !InArena())
@@ -4911,10 +4887,16 @@ Corpse* Player::CreateCorpse()
     corpse->SetRace(GetRace());
     corpse->SetSex(GetNativeGender());
     corpse->SetClass(GetClass());
-    corpse->SetCustomizations(Trinity::Containers::MakeIteratorPair(m_playerData->Customizations.begin(), m_playerData->Customizations.end()));
-    corpse->ReplaceAllFlags(flags);
+    corpse->SetCustomizations({ m_playerData->Customizations.begin(), m_playerData->Customizations.end() });
+    corpse->ReplaceAllCorpseFlags(flags);
     corpse->SetDisplayId(GetNativeDisplayId());
     corpse->SetFactionTemplate(sChrRacesStore.AssertEntry(GetRace())->FactionID);
+
+    if (Group const* group = GetGroup())
+        corpse->SetPartyGUID(group->GetGUID());
+
+    if (Guild const* guild = GetGuild())
+        corpse->SetGuildGUID(guild->GetGUID());
 
     for (uint8 i = EQUIPMENT_SLOT_START; i < EQUIPMENT_SLOT_END; i++)
         if (ItemModifiedAppearanceEntry const* itemModifiedAppearance = sItemModifiedAppearanceStore.LookupEntry(m_playerData->VisibleItems[i].ItemModifiedAppearanceID))
@@ -5859,6 +5841,7 @@ void Player::UpdateRating(CombatRating cr)
             float const multiplier = GetRatingMultiplier(cr);
             float const oldVal = ApplyRatingDiminishing(cr, oldRating * multiplier);
             float const newVal = ApplyRatingDiminishing(cr, amount * multiplier);
+            int32 highestOtherRating = 0;
             switch (cr)
             {
                 case CR_HASTE_MELEE:
@@ -5866,19 +5849,29 @@ void Player::UpdateRating(CombatRating cr)
                     ApplyAttackTimePercentMod(OFF_ATTACK, oldVal, false);
                     ApplyAttackTimePercentMod(BASE_ATTACK, newVal, true);
                     ApplyAttackTimePercentMod(OFF_ATTACK, newVal, true);
-                    if (GetClass() == CLASS_DEATH_KNIGHT)
-                        UpdatePowerRegen(POWER_RUNES);
+                    highestOtherRating = std::max({ m_activePlayerData->CombatRatings[CR_HASTE_RANGED], m_activePlayerData->CombatRatings[CR_HASTE_SPELL] });
                     break;
                 case CR_HASTE_RANGED:
                     ApplyAttackTimePercentMod(RANGED_ATTACK, oldVal, false);
                     ApplyAttackTimePercentMod(RANGED_ATTACK, newVal, true);
+                    highestOtherRating = std::max(m_activePlayerData->CombatRatings[CR_HASTE_MELEE], m_activePlayerData->CombatRatings[CR_HASTE_SPELL]);
                     break;
                 case CR_HASTE_SPELL:
                     ApplyCastTimePercentMod(oldVal, false);
+                    ApplySpellHastePercentMod(oldVal, false);
                     ApplyCastTimePercentMod(newVal, true);
+                    ApplySpellHastePercentMod(newVal, true);
+                    highestOtherRating = std::max(m_activePlayerData->CombatRatings[CR_HASTE_MELEE], m_activePlayerData->CombatRatings[CR_HASTE_RANGED]);
                     break;
                 default:
                     break;
+            }
+            float oldHasteRegenVal = ApplyRatingDiminishing(cr, std::max(oldRating, highestOtherRating) * multiplier);
+            float newHasteRegenVal = ApplyRatingDiminishing(cr, std::max(amount, highestOtherRating) * multiplier);
+            if (oldHasteRegenVal != newHasteRegenVal)
+            {
+                ApplyHasteRegenPercentMod(oldHasteRegenVal, false);
+                ApplyHasteRegenPercentMod(newHasteRegenVal, true);
             }
             break;
         }
@@ -6444,6 +6437,9 @@ void Player::SetSkill(uint32 id, uint16 step, uint16 newVal, uint16 maxVal)
 
                 // Clear profession lines
                 SetUpdateFieldValue(m_values.ModifyValue(&Player::m_activePlayerData).ModifyValue(&UF::ActivePlayerData::ProfessionSkillLine, professionSlot), 0);
+
+                // Everlake: with MaxPrimaryTradeSkill above 2, a hidden profession takes the freed slot
+                FillFreeProfessionSlots(id);
             }
 
             //remove enchantments needing this skill
@@ -6775,7 +6771,8 @@ bool Player::IsActionButtonDataValid(uint16 button, uint64 action, uint8 type) c
             break;
         case ACTION_BUTTON_COMPANION:
         {
-            if (!GetSession()->GetBattlePetMgr()->GetPet(ObjectGuid::Create<HighGuid::BattlePet>(action)))
+            BattlePets::BattlePetMgr* battlePetMgr = GetSession()->GetBattlePetMgr();
+            if (!battlePetMgr || !battlePetMgr->GetPet(ObjectGuid::Create<HighGuid::BattlePet>(action)))
             {
                 TC_LOG_ERROR("entities.player", "Player::IsActionButtonDataValid: Companion action {} not added into button {} for player {} ({}): companion does not exist",
                     action, button, GetName(), GetGUID().ToString());
@@ -7528,7 +7525,14 @@ bool Player::RewardHonor(Unit* victim, uint32 groupsize, int32 honor, HonorGainS
     data.Target = victim_guid;
     data.Rank = victim_rank;
 
-    SendDirectMessage(data.Write());
+    // WoW Forever 70790: "Killing a player while at Honor cap will no longer show honor gained in floating text or chat messages."
+    bool atHonorCap = false;
+    if (CurrencyTypesEntry const* honorCurrency = sCurrencyTypesStore.LookupEntry(CURRENCY_HONOR_CLASSIC))
+        if (uint32 honorCap = GetCurrencyMaxQuantity(honorCurrency))
+            atHonorCap = GetCurrencyQuantity(CURRENCY_HONOR_CLASSIC) >= honorCap;
+
+    if (!atHonorCap)
+        SendDirectMessage(data.Write());
 
     AddHonorXP(honor);
 
@@ -9672,13 +9676,18 @@ void Player::CastItemCombatSpell(DamageInfo const& damageInfo, Item* item, ItemT
         // Windfury Weapon (vMaNGOS, Player::CastItemCombatSpell): 20% on a melee hit to gain the rank's Windfury Attack, which adds the extra
         // attack and the attack power for it; never on the extra attack itself. Done here on the imbue's enchantment, not through the
         // enchantment's own spell, which Forever points at a dummy aura (Windfury Weapon 439431) with no script.
+        // The client's 439431 also carries the internal cooldown (SpellAuraOptions ProcCategoryRecovery 1500 in the 70790 data and in
+        // live 70938, as in Classic Era 1.15): no new roll until it has run out.
         if (e_slot == TEMP_ENCHANTMENT_SLOT)
         {
             if (uint32 windfuryAttack = ClassicWeaponImbue::WindfuryAttackForEnchant(enchant_id))
             {
-                if (canTrigger && !GetLastExtraAttackSpell())
+                TimePoint const now = GameTime::Now();
+                if (canTrigger && !GetLastExtraAttackSpell() && now >= _classicWindfuryWeaponReadyAt)
                     CombatEnchantProc::Dispatch(20.0f, [](float procChance) { return roll_chance(procChance); }, [&]
                     {
+                        SpellInfo const* windfuryAura = sSpellMgr->GetSpellInfo(ClassicWeaponImbue::WINDFURY_WEAPON_AURA, DIFFICULTY_NONE);
+                        _classicWindfuryWeaponReadyAt = now + Milliseconds(windfuryAura ? windfuryAura->ProcCooldown : ClassicWeaponImbue::WINDFURY_WEAPON_ICD_MS);
                         CastSpell(this, windfuryAttack, CastSpellExtraArgs(item));
                     });
                 continue;
@@ -12482,7 +12491,8 @@ Item* Player::StoreNewItem(ItemPosCountVec const& pos, uint32 itemId, bool updat
         }
 
         if (addToCollection)
-            GetSession()->GetCollectionMgr()->OnItemAdded(item);
+            if (CollectionMgr* collectionMgr = GetSession()->GetCollectionMgr())
+                collectionMgr->OnItemAdded(item);
 
         if (ItemChildEquipmentEntry const* childItemEntry = sDB2Manager.GetItemChildEquipment(itemId))
         {
@@ -13057,10 +13067,14 @@ void Player::VisualizeItem(uint8 slot, Item* pItem)
     {
         pItem->SetBinding(true);
         if (IsInWorld())
-            GetSession()->GetCollectionMgr()->AddItemAppearance(pItem);
+            if (CollectionMgr* collectionMgr = GetSession()->GetCollectionMgr())
+                collectionMgr->AddItemAppearance(pItem);
     }
     else if (pItem->GetBonding() == BIND_NONE && IsInWorld())
-        GetSession()->GetCollectionMgr()->AddItemAppearance(pItem);
+    {
+        if (CollectionMgr* collectionMgr = GetSession()->GetCollectionMgr())
+            collectionMgr->AddItemAppearance(pItem);
+    }
 
     TC_LOG_DEBUG("entities.player.items", "Player::SetVisibleItemSlot: Player '{}' ({}), Slot: {}, Item: {}",
         GetName(), GetGUID().ToString(), slot, pItem->GetEntry());
@@ -13177,7 +13191,8 @@ void Player::MoveItemFromInventory(uint8 bag, uint8 slot, bool update)
         ItemRemovedQuestCheck(it->GetEntry(), it->GetCount());
         it->SetNotRefundable(this, false, nullptr, false);
         RemoveItemFromUpdateQueueOf(it, this);
-        GetSession()->GetCollectionMgr()->RemoveTemporaryAppearance(it);
+        if (CollectionMgr* collectionMgr = GetSession()->GetCollectionMgr())
+            collectionMgr->RemoveTemporaryAppearance(it);
         if (it->IsInWorld())
         {
             it->RemoveFromWorld();
@@ -14319,7 +14334,7 @@ void Player::SendBuyError(BuyResult msg, Creature const* creature, uint32 vendor
     SendDirectMessage(packet.Write());
 }
 
-void Player::SendSellError(SellResult msg, Creature* creature, ObjectGuid guid) const
+void Player::SendSellError(SellResult msg, Creature const* creature, ObjectGuid guid) const
 {
     WorldPackets::Item::SellResponse sellResponse;
     sellResponse.VendorGUID = creature ? creature->GetGUID() : ObjectGuid::Empty;
@@ -15288,6 +15303,14 @@ void Player::PrepareGossipMenu(WorldObject* source, uint32 menuId, bool showQues
                 canTalk = false;
         }
 
+        // Classic 1.60 Legacy perk reset: class trainers of the player's class, once the Legacy system is open
+        if (IsClassicLegacyResetGossipOption(gossipMenuItem.GossipOptionID))
+        {
+            Creature* creature = source->ToCreature();
+            if (!creature || !creature->CanResetTalents(this) || !GetClassicLegacyTraitConfig())
+                canTalk = false;
+        }
+
         if (canTalk)
             PlayerTalkClass->GetGossipMenu().AddMenuItem(gossipMenuItem, gossipMenuItem.MenuID, gossipMenuItem.OrderIndex);
     }
@@ -15408,6 +15431,27 @@ void Player::OnGossipSelect(WorldObject* source, int32 gossipOptionId, uint32 me
             {
                 PlayerTalkClass->SendCloseGossip();
                 UntrainClassicPet(cost);
+            }
+            else if (IsClassicLegacyResetGossipOption(gossipOptionId))
+            {
+                PlayerTalkClass->SendCloseGossip();
+                Creature* creature = source->ToCreature();
+                if (!creature || !creature->CanResetTalents(this))
+                    return;
+
+                switch (CanResetClassicLegacyPerks())
+                {
+                    case ClassicLegacyResetResult::NothingToReset:
+                        SendDirectMessage(WorldPackets::Misc::DisplayGameError(GameError::ERR_TALENT_WIPE_ERROR).Write());
+                        break;
+                    case ClassicLegacyResetResult::TalentPointDeficit:
+                        // client string ERR_LEGACY_WIPE_ERROR_CLASS_POINTS has no GameError value in this core
+                        GetSession()->SendNotification("%s", "Unlearning your \"Talented\" legacy perk would put you at a talent point deficit. You must unlearn your class talents first.");
+                        break;
+                    default:
+                        SendRespecWipeConfirm(guid, GetNextClassicLegacyResetCost(), SPEC_RESET_CLASSIC_LEGACY_PERKS);
+                        break;
+                }
             }
             else if (optionSpellId)
             {
@@ -16421,7 +16465,8 @@ void Player::RewardQuestPackage(uint32 questPackageId, ItemContext context, uint
             }
 
             // Unlock the item appearance for the other reward items as well of possible
-            GetSession()->GetCollectionMgr()->AddItemAppearance(questPackageItem->ItemID);
+            if (CollectionMgr* collectionMgr = GetSession()->GetCollectionMgr())
+                collectionMgr->AddItemAppearance(questPackageItem->ItemID);
         }
     }
 
@@ -16577,7 +16622,8 @@ void Player::RewardQuest(Quest const* quest, LootItemType rewardType, uint32 rew
                         }
 
                         // Add the remaining item appearances for the quest if possible
-                        GetSession()->GetCollectionMgr()->AddItemAppearance(quest->RewardChoiceItemId[i]);
+                        if (CollectionMgr* collectionMgr = GetSession()->GetCollectionMgr())
+                            collectionMgr->AddItemAppearance(quest->RewardChoiceItemId[i]);
                     }
                 }
             }
@@ -18761,12 +18807,12 @@ void Player::SendQuestReward(Quest const* quest, Creature const* questGiver, uin
         if (questGiver->IsGossip())
             packet.LaunchGossip = quest->HasFlag(QUEST_FLAGS_LAUNCH_GOSSIP_COMPLETE);
 
-        if (questGiver->IsQuestGiver())
-            packet.LaunchQuest = (GetQuestDialogStatus(questGiver) & ~QuestGiverStatusFutureMask) != QuestGiverStatus::None;
-
         if (!quest->HasFlag(QUEST_FLAGS_AUTO_COMPLETE))
             if (Quest const* rewardQuest = GetNextQuest(questGiver, quest))
                 packet.UseQuestReward = CanTakeQuest(rewardQuest, false);
+
+        if (questGiver->IsQuestGiver())
+            packet.LaunchQuest = !packet.UseQuestReward && (GetQuestDialogStatus(questGiver) & ~QuestGiverStatusFutureMask) != QuestGiverStatus::None;
     }
 
     packet.HideChatMessage = hideChatMessage;
@@ -19397,8 +19443,8 @@ bool Player::LoadFromDB(ObjectGuid guid, CharacterDatabaseQueryHolder const& hol
         // "SELECT c.guid, account, name, race, class, gender, level, xp, money, inventorySlots, inventoryBagFlags, bagSlotFlags1, bagSlotFlags2, bagSlotFlags3, bagSlotFlags4, bagSlotFlags5, "
         // "bankSlots, bankTabs, bankBagFlags, restState, playerFlags, playerFlagsEx, "
         // "position_x, position_y, position_z, map, orientation, taximask, createTime, createMode, cinematic, totaltime, leveltime, rest_bonus, logout_time, is_logout_resting, resettalents_cost, "
-        // "resettalents_time, primarySpecialization, trans_x, trans_y, trans_z, trans_o, transguid, extra_flags, summonedPetNumber, at_login, zone, online, death_expire_time, taxi_path, dungeonDifficulty, "
-        // "totalKills, todayKills, yesterdayKills, chosenTitle, watchedFaction, drunk, "
+        // "resettalents_time, primarySpecialization, trans_x, trans_y, trans_z, trans_o, transguid, extra_flags, summonedPetNumber, lastSummonedBattlePet, at_login, zone, online, death_expire_time, "
+        // "taxi_path, dungeonDifficulty, totalKills, todayKills, yesterdayKills, chosenTitle, watchedFaction, drunk, "
         // "health, power1, power2, power3, power4, power5, power6, power7, power8, power9, power10, instance_id, activeTalentGroup, lootSpecId, exploredZones, knownTitles, actionBars, "
         // "raidDifficulty, legacyRaidDifficulty, fishingSteps, honor, honorLevel, honorRestState, honorRestBonus, numRespecs, "
         // "personalTabardEmblemStyle, personalTabardEmblemColor, personalTabardBorderStyle, personalTabardBorderColor, personalTabardBackgroundColor, transmogOutfitEquippedId, transmogOutfitLocked "
@@ -19446,6 +19492,7 @@ bool Player::LoadFromDB(ObjectGuid guid, CharacterDatabaseQueryHolder const& hol
         ObjectGuid::LowType transguid;
         uint16 extra_flags;
         uint32 summonedPetNumber;
+        int64 lastSummonedBattlePet;
         uint16 at_login;
         uint16 zone;
         uint8 online;
@@ -19528,6 +19575,7 @@ bool Player::LoadFromDB(ObjectGuid guid, CharacterDatabaseQueryHolder const& hol
             transguid = fields[i++].GetUInt64();
             extra_flags = fields[i++].GetUInt16();
             summonedPetNumber = fields[i++].GetUInt32();
+            lastSummonedBattlePet = fields[i++].GetInt64();
             at_login = fields[i++].GetUInt16();
             zone = fields[i++].GetUInt16();
             online = fields[i++].GetUInt8();
@@ -20073,6 +20121,17 @@ bool Player::LoadFromDB(ObjectGuid guid, CharacterDatabaseQueryHolder const& hol
     if (QueryResult stableSlots = CharacterDatabase.PQuery("SELECT slots FROM character_stable_slots WHERE guid = {}", GetGUID().GetCounter()))
         SetNumStableSlots(std::min<uint8>((*stableSlots)[0].GetUInt8(), MAX_CLASSIC_STABLE_SLOTS));
 
+    // Classic 1.60: last Legacy perk reset price and time (ResetClassicLegacyPerks)
+    if (QueryResult legacyReset = CharacterDatabase.PQuery("SELECT cost, time FROM character_legacy_reset WHERE guid = {}", GetGUID().GetCounter()))
+    {
+        _classicLegacyResetCost = (*legacyReset)[0].GetUInt64();
+        _classicLegacyResetTime = time_t((*legacyReset)[1].GetUInt64());
+    }
+
+    // companion pet summoned at last logout, resummoned once the player is in world
+    if (fields.lastSummonedBattlePet)
+        m_temporaryUnsummonedBattlePet = ObjectGuid::Create<HighGuid::BattlePet>(fields.lastSummonedBattlePet);
+
     // Honor system
     // Update Honor kills data
     m_lastHonorUpdateTime = logoutTime;
@@ -20116,7 +20175,8 @@ bool Player::LoadFromDB(ObjectGuid guid, CharacterDatabaseQueryHolder const& hol
     _LoadTalents(holder.GetPreparedResult(PLAYER_LOGIN_QUERY_LOAD_TALENTS));
     _LoadPvpTalents(holder.GetPreparedResult(PLAYER_LOGIN_QUERY_LOAD_PVP_TALENTS));
     _LoadSpells(holder.GetPreparedResult(PLAYER_LOGIN_QUERY_LOAD_SPELLS), holder.GetPreparedResult(PLAYER_LOGIN_QUERY_LOAD_SPELL_FAVORITES));
-    GetSession()->GetCollectionMgr()->LoadCharacterData();
+    if (CollectionMgr* collectionMgr = GetSession()->GetCollectionMgr())
+        collectionMgr->LoadCharacterData();
 
     LearnSpecializationSpells();
 
@@ -20234,10 +20294,9 @@ bool Player::LoadFromDB(ObjectGuid guid, CharacterDatabaseQueryHolder const& hol
     {
         int32 runes = GetPower(POWER_RUNES);
         int32 maxRunes = GetMaxPower(POWER_RUNES);
-        uint32 runeCooldown = GetRuneBaseCooldown();
         while (runes < maxRunes)
         {
-            SetRuneCooldown(runes, runeCooldown);
+            SetRuneCooldown(runes, 0.0f);
             ++runes;
         }
     }
@@ -20336,7 +20395,7 @@ bool Player::LoadFromDB(ObjectGuid guid, CharacterDatabaseQueryHolder const& hol
     }
 
     // Unlock battle pet system if it's enabled in bnet account
-    if (GetSession()->GetBattlePetMgr()->IsBattlePetSystemEnabled())
+    if (GetSession()->GetBattlePetMgr() && GetSession()->GetBattlePetMgr()->IsBattlePetSystemEnabled())
         LearnSpell(BattlePets::SPELL_BATTLE_PET_TRAINING, false);
 
     m_achievementMgr->CheckAllAchievementCriteria(this);
@@ -20349,13 +20408,14 @@ bool Player::LoadFromDB(ObjectGuid guid, CharacterDatabaseQueryHolder const& hol
         if (!transmogIllusion->GetFlags().HasFlag(TransmogIllusionFlags::PlayerConditionGrantsOnLogin))
             continue;
 
-        if (GetSession()->GetCollectionMgr()->HasTransmogIllusion(transmogIllusion->ID))
+        CollectionMgr* collectionMgr = GetSession()->GetCollectionMgr();
+        if (!collectionMgr || collectionMgr->HasTransmogIllusion(transmogIllusion->ID))
             continue;
 
         if (!ConditionMgr::IsPlayerMeetingCondition(this, transmogIllusion->UnlockConditionID))
             continue;
 
-        GetSession()->GetCollectionMgr()->AddTransmogIllusion(transmogIllusion->ID);
+        collectionMgr->AddTransmogIllusion(transmogIllusion->ID);
     }
 
     SetFreePrimaryProfessions(GetFreePrimaryProfessionPoints());
@@ -20522,7 +20582,9 @@ void Player::_LoadAuras(PreparedQueryResult auraResult, PreparedQueryResult effe
 
     /*
                     0         1      2           3                4           5           6            7           8              9          10             11
-    SELECT casterGuid, itemGuid, spell, effectMask, recalculateMask, difficulty, stackCount, maxDuration, remainTime, remainCharges, castItemId, castItemLevel FROM character_aura WHERE guid = ?
+    SELECT casterGuid, itemGuid, spell, effectMask, recalculateMask, difficulty, stackCount, maxDuration, remainTime, remainCharges, castItemId, castItemLevel,
+                         12            13            14            15            16
+           dstLocationMapId, dstLocationX, dstLocationY, dstLocationZ, dstLocationO FROM character_aura WHERE guid = ?
     */
     if (auraResult)
     {
@@ -20549,6 +20611,7 @@ void Player::_LoadAuras(PreparedQueryResult auraResult, PreparedQueryResult effe
             uint8 remainCharges = fields[9].GetUInt8();
             uint32 castItemId = fields[10].GetUInt32();
             int32 castItemLevel = fields[11].GetInt32();
+            WorldLocation dst(fields[12].GetInt32(), fields[13].GetFloat(), fields[14].GetFloat(), fields[15].GetFloat(), fields[16].GetFloat());
 
             SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(key.SpellId, difficulty);
             if (!spellInfo)
@@ -20585,6 +20648,10 @@ void Player::_LoadAuras(PreparedQueryResult auraResult, PreparedQueryResult effe
             else
                 remainCharges = 0;
 
+            if ((dst.GetMapId() != MAPID_INVALID && !sMapStore.HasRecord(dst.GetMapId()))
+                || !Trinity::IsValidMapCoord(dst.GetPositionX(), dst.GetPositionY(), dst.GetPositionZ(), dst.GetOrientation()))
+                dst = WorldLocation();
+
             AuraLoadEffectInfo& info = effectInfo[key];
             ObjectGuid castId = ObjectGuid::Create<HighGuid::Cast>(SPELL_CAST_SOURCE_NORMAL, GetMapId(), spellInfo->Id, GetMap()->GenerateLowGuid<HighGuid::Cast>());
             AuraCreateInfo createInfo(castId, spellInfo, difficulty, key.EffectMask, this);
@@ -20592,7 +20659,8 @@ void Player::_LoadAuras(PreparedQueryResult auraResult, PreparedQueryResult effe
                 .SetCasterGUID(casterGuid)
                 .SetBaseAmount(info.BaseAmounts.data())
                 .SetCastItem(itemGuid, castItemId, castItemLevel)
-                .SetStackAmount(stackCount);
+                .SetStackAmount(stackCount)
+                .SetDst(&dst);
 
             if (Aura* aura = Aura::TryCreate(createInfo))
             {
@@ -20663,7 +20731,7 @@ void Player::_LoadInventory(PreparedQueryResult result, PreparedQueryResult arti
     //                38           39           40                41          42           43           44                45          46           47           48                49
     //        gemItemId1, gemBonuses1, gemContext1, gemScalingLevel1, gemItemId2, gemBonuses2, gemContext2, gemScalingLevel2, gemItemId3, gemBonuses3, gemContext3, gemScalingLevel3
     //                       50                      51
-    //        fixedScalingLevel, artifactKnowledgeLevel FROM item_instance
+    //        fixedScalingLevel, artifactKnowledgeLevel
     //         52    53
     //        bag, slot
     // FROM character_inventory ci
@@ -20712,8 +20780,11 @@ void Player::_LoadInventory(PreparedQueryResult result, PreparedQueryResult arti
                 ObjectGuid bagGuid = fields[52].GetUInt64() ? ObjectGuid::Create<HighGuid::Item>(fields[52].GetUInt64()) : ObjectGuid::Empty;
                 uint8 slot = fields[53].GetUInt8();
 
-                GetSession()->GetCollectionMgr()->CheckHeirloomUpgrades(item);
-                GetSession()->GetCollectionMgr()->AddItemAppearance(item);
+                if (CollectionMgr* collectionMgr = GetSession()->GetCollectionMgr())
+                {
+                    collectionMgr->CheckHeirloomUpgrades(item);
+                    collectionMgr->AddItemAppearance(item);
+                }
 
                 InventoryResult err = EQUIP_ERR_OK;
                 if (item->HasItemFlag(ITEM_FIELD_FLAG_CHILD))
@@ -21280,15 +21351,18 @@ void Player::_LoadQuestStatusRewarded(PreparedQueryResult result)
                 if (!quest->IsDailyOrWeekly() && !quest->IsMonthly() && !quest->IsSeasonal())
                     SetQuestCompletedBit(quest_id, true);
 
-                for (uint32 i = 0; i < quest->GetRewChoiceItemsCount(); ++i)
-                    GetSession()->GetCollectionMgr()->AddItemAppearance(quest->RewardChoiceItemId[i]);
+                if (CollectionMgr* collectionMgr = GetSession()->GetCollectionMgr())
+                {
+                    for (uint32 i = 0; i < quest->GetRewChoiceItemsCount(); ++i)
+                        collectionMgr->AddItemAppearance(quest->RewardChoiceItemId[i]);
 
-                for (uint32 i = 0; i < quest->GetRewItemsCount(); ++i)
-                    GetSession()->GetCollectionMgr()->AddItemAppearance(quest->RewardItemId[i]);
+                    for (uint32 i = 0; i < quest->GetRewItemsCount(); ++i)
+                        collectionMgr->AddItemAppearance(quest->RewardItemId[i]);
 
-                if (std::vector<QuestPackageItemEntry const*> const* questPackageItems = sDB2Manager.GetQuestPackageItems(quest->GetQuestPackageID()))
-                    for (QuestPackageItemEntry const* questPackageItem : *questPackageItems)
-                        GetSession()->GetCollectionMgr()->AddItemAppearance(questPackageItem->ItemID);
+                    if (std::vector<QuestPackageItemEntry const*> const* questPackageItems = sDB2Manager.GetQuestPackageItems(quest->GetQuestPackageID()))
+                        for (QuestPackageItemEntry const* questPackageItem : *questPackageItems)
+                            collectionMgr->AddItemAppearance(questPackageItem->ItemID);
+                }
 
                 if (quest->CanIncreaseRewardedQuestCounters())
                     m_RewardedQuests.insert(quest_id);
@@ -22229,6 +22303,7 @@ void Player::SaveToDB(LoginDatabaseTransaction loginTransaction, CharacterDataba
             stmt->setUInt32(index++, petStable->GetCurrentPet() && petStable->GetCurrentPet()->Health > 0 ? petStable->GetCurrentPet()->PetNumber : 0); // summonedPetNumber
         else
             stmt->setUInt32(index++, 0); // summonedPetNumber
+        stmt->setInt64(index++, (GetSummonedBattlePetGUID().IsEmpty() ? m_temporaryUnsummonedBattlePet : GetSummonedBattlePetGUID()).GetCounter()); // lastSummonedBattlePet
         stmt->setUInt16(index++, (uint16)m_atLoginFlags);
         stmt->setUInt16(index++, GetZoneId());
         stmt->setInt64(index++, m_deathExpireTime);
@@ -22346,8 +22421,10 @@ void Player::SaveToDB(LoginDatabaseTransaction loginTransaction, CharacterDataba
         _SaveStats(trans);
 
     // TODO: Move this out
-    GetSession()->GetCollectionMgr()->SaveToDB(loginTransaction);
-    GetSession()->GetBattlePetMgr()->SaveToDB(loginTransaction);
+    if (CollectionMgr* collectionMgr = GetSession()->GetCollectionMgr())
+        collectionMgr->SaveToDB(loginTransaction);
+    if (BattlePets::BattlePetMgr* battlePetMgr = GetSession()->GetBattlePetMgr())
+        battlePetMgr->SaveToDB(loginTransaction);
     GetSession()->SavePlayerDataAccount(loginTransaction);
 
     Battlenet::RealmHandle currentRealmId = sRealmList->GetCurrentRealmId();
@@ -22524,6 +22601,11 @@ void Player::_SaveAuras(CharacterDatabaseTransaction trans)
         stmt->setUInt8(index++, aura->GetCharges());
         stmt->setUInt32(index++, aura->GetCastItemId());
         stmt->setInt32(index++, aura->GetCastItemLevel());
+        stmt->setInt32(index++, aura->GetDst().GetMapId());
+        stmt->setFloat(index++, aura->GetDst().GetPositionX());
+        stmt->setFloat(index++, aura->GetDst().GetPositionY());
+        stmt->setFloat(index++, aura->GetDst().GetPositionZ());
+        stmt->setFloat(index++, aura->GetDst().GetOrientation());
         trans->Append(stmt);
 
         for (AuraEffect const* effect : aura->GetAuraEffects())
@@ -23030,6 +23112,8 @@ void Player::_SaveSkills(CharacterDatabaseTransaction trans)
         uint16 value = GetSkillRankByPos(itr->second.pos);
         uint16 max = GetSkillMaxRankByPos(itr->second.pos);
         int8 professionSlot = int8(GetProfessionSlotFor(itr->first));
+        if (professionSlot == -1 && _playerHiddenProfessions.contains(itr->first))
+            professionSlot = PROFESSION_SLOT_HIDDEN_BY_PLAYER;
 
         switch (itr->second.uState)
         {
@@ -24182,6 +24266,20 @@ int32 Player::IsAffectedBySpellmod(SpellInfo const* spellInfo, SpellModifier con
     if (spell && mod->ownerAura->IsUsingCharges() && !mod->ownerAura->GetCharges() && !spell->m_appliedMods.contains(mod->ownerAura))
         return 0;
 
+    // Classic 1.60: a crit chance mod paid for with charges ("the next spell": Revelation, Elemental Mastery, Inner Focus) belongs to a
+    // cast. A crit roll with no Spell (damage over time ticks, Flamestrike's ground ticks) could take it for nothing, as the charge is
+    // only spent through a Spell; Revelation's tooltip names non-periodic spells and EV-0028 shows ground ticks without its crit.
+    if (!spell && mod->op == SpellModOp::CritChance && mod->ownerAura->IsUsingCharges())
+        return 0;
+
+    // Blizzard, build 70755: "Clearcasting is no longer consumed on Arcane Missiles if Missile Barrage is active at the same time." The
+    // mage's Clearcasting (12536) is used up through its proc row (PROC_ATTR_REQ_SPELLMOD), which needs its cost mod on the cast, so an
+    // Arcane Missiles channel (mage class flag 0x800, as Missile Barrage's row) cast with Missile Barrage (400589) up does not take it.
+    if (spell && mod->ownerAura->GetId() == 12536 && spellInfo->SpellFamilyName == SPELLFAMILY_MAGE
+        && (spellInfo->SpellFamilyFlags[0] & 0x800) && spellInfo->IsChanneled())
+        if (Unit const* mage = spell->GetCaster()->ToUnit(); mage && mage->HasAura(400589))
+            return 0;
+
     switch (mod->op)
     {
         case SpellModOp::Duration: // +duration to infinite duration spells making them limited
@@ -24190,6 +24288,11 @@ int32 Player::IsAffectedBySpellmod(SpellInfo const* spellInfo, SpellModifier con
             break;
         case SpellModOp::CritChance: // mod crit to spells that can't crit
             if (!spellInfo->HasAttribute(SPELL_ATTR0_CU_CAN_CRIT))
+                return 0;
+            // Classic 1.60: a crit mod used up by the next spell (Inner Focus) is for that cast, not for periodic ticks, which come
+            // without a spell. An unspent Inner Focus gave every running DoT +25% crit (forever-bugs #137, fixed on live: "if it is a
+            // non-periodic spell").
+            if (!spell && mod->ownerAura->IsUsingCharges())
                 return 0;
             break;
         case SpellModOp::PointsIndex0: // check if spell has any effect at that index
@@ -24218,6 +24321,116 @@ int32 Player::IsAffectedBySpellmod(SpellInfo const* spellInfo, SpellModifier con
     }
 
     return spellInfo->IsAffectedBySpellMod(mod);
+}
+
+// WoW Forever: Revelation (weapon enchant 8217) on a channel. A Blizzard developer on forever-bugs #163 (2026-09-29): "Won't work on
+// DoTs anymore, will work for full duration of channels"; #592 reports every tick of Blizzard, Hurricane and Hellfire critting under it
+// on live, and a collaborator answered that this is intended. The class buff's crit mod has one charge and IsAffectedBySpellmod keeps
+// charged crit mods away from rolls without a Spell (ticks), so a channel the buff's class flags name spends the charge here, as it
+// starts, and its ticks get the mod's chance until that channel ends: ground ticks (classic_spell_ground_area_damage), periodic
+// damage ticks on others (AuraEffect::GetCritChanceFor) and the spells it triggers each tick (Unit::SpellCritChanceDone). Damage over
+// time outside a channel never gets it, and the bonus ends with the channel.
+// Blizzard 24 November 2026 (71091+1, Mage and Warlock): "The Revelation enchant's bonus now covers only the first tick of a channeled
+// spell such as Blizzard/Hellfire, instead of the whole channel." The first tick is the first world update in which one of these
+// asks for the bonus: every enemy that tick's wave hits (Blizzard's ground ticks, Hellfire Effect's targets) is struck in that
+// update, and later ticks come in later ones.
+static constexpr std::array<uint32, 7> RevelationClassBuffs = { 1248808, 1323377, 1323392, 1323400, 1323410, 1323418, 1323419 };
+
+void Player::StartRevelationChannel(Spell const* channel)
+{
+    m_revelationChannelCastId.Clear();
+    m_revelationChannelSpellId = 0;
+    m_revelationChannelCritBonus = 0.0f;
+    m_revelationChannelFirstTickMS.reset();
+
+    SpellInfo const* channelInfo = channel->GetSpellInfo();
+    for (uint32 buffId : RevelationClassBuffs)
+    {
+        Aura* buff = GetAura(buffId, GetGUID());
+        if (!buff || !buff->IsUsingCharges() || !buff->GetCharges())
+            continue;
+
+        for (AuraEffect const* aurEff : buff->GetAuraEffects())
+        {
+            if (!aurEff || aurEff->GetMiscValue() != int32(SpellModOp::CritChance)
+                || aurEff->GetAuraType() != SPELL_AURA_ADD_FLAT_MODIFIER
+                || !aurEff->IsAffectingSpell(channelInfo))
+                continue;
+
+            m_revelationChannelCastId = channel->m_castId;
+            m_revelationChannelSpellId = channelInfo->Id;
+            m_revelationChannelCritBonus = float(aurEff->GetAmount());
+            buff->DropCharge();
+            return;
+        }
+    }
+}
+
+// Matched by the channel's cast id alone, not by the current channeled spell: the last tick comes in the update that already
+// finished the channel. Only that cast's auras carry the id, and they end with the channel.
+float Player::GetRevelationChannelCritBonus(ObjectGuid const& channelCastId) const
+{
+    if (m_revelationChannelCastId.IsEmpty() || channelCastId != m_revelationChannelCastId)
+        return 0.0f;
+
+    return GetRevelationChannelFirstTickBonus();
+}
+
+float Player::GetRevelationChannelCritBonus(Spell const* tickSpell) const
+{
+    if (!tickSpell || m_revelationChannelCastId.IsEmpty())
+        return 0.0f;
+
+    // a spell the channel's own aura triggers each tick (Hellfire Effect, Arcane Missile). A triggered cast carries no cast id of the
+    // channel, so it is matched by the channel's spell id; the next channel resets the record (StartRevelationChannel), and the
+    // channel's aura, the only one triggering these, ends with it. Missiles still in flight at the channel's end keep the bonus.
+    SpellInfo const* triggeredBy = tickSpell->GetTriggeredByAuraSpell();
+    if (!triggeredBy || triggeredBy->Id != m_revelationChannelSpellId)
+        return 0.0f;
+
+    return GetRevelationChannelFirstTickBonus();
+}
+
+// the channel's bonus for a hit in the current world update: the first update that asks marks the first tick, which keeps it
+float Player::GetRevelationChannelFirstTickBonus() const
+{
+    uint32 const now = GameTime::GetGameTimeMS();
+    if (!m_revelationChannelFirstTickMS)
+        m_revelationChannelFirstTickMS = now;
+    else if (*m_revelationChannelFirstTickMS != now)
+        return 0.0f;
+
+    return m_revelationChannelCritBonus;
+}
+
+// Blizzard 24 November 2026 (71091+1, Priest): "The Revelation enchant's bonus is now also used up by your periodic damage, such as
+// Mind Flay's, not only by your direct spells." A periodic damage tick of a priest spell (Shadow Word: Pain, Devouring Plague) that can
+// crit spends the charge of the priest buff and gets its crit chance. Mind Flay's ticks come through the channel record above
+// (StartRevelationChannel spends the charge as the channel starts), so the channel's own ticks are left to it.
+float Player::UseRevelationOnPeriodicTick(AuraEffect const* tickEffect)
+{
+    static constexpr uint32 SPELL_REVELATION_PRIEST = 1323377;
+
+    if (!tickEffect || tickEffect->GetSpellInfo()->SpellFamilyName != SPELLFAMILY_PRIEST)
+        return 0.0f;
+    if (!m_revelationChannelCastId.IsEmpty() && tickEffect->GetBase()->GetCastId() == m_revelationChannelCastId)
+        return 0.0f;
+
+    Aura* buff = GetAura(SPELL_REVELATION_PRIEST, GetGUID());
+    if (!buff || !buff->IsUsingCharges() || !buff->GetCharges())
+        return 0.0f;
+
+    for (AuraEffect const* aurEff : buff->GetAuraEffects())
+    {
+        if (!aurEff || aurEff->GetMiscValue() != int32(SpellModOp::CritChance) || aurEff->GetAuraType() != SPELL_AURA_ADD_FLAT_MODIFIER)
+            continue;
+
+        float const bonus = float(aurEff->GetAmount());
+        buff->DropCharge();
+        return bonus;
+    }
+
+    return 0.0f;
 }
 
 void Player::GetSpellModValues(SpellInfo const* spellInfo, SpellModOp op, Spell* spell, double base, int32* flat, float* pct) const
@@ -24976,6 +25189,10 @@ void Player::StartTaxiMovement(uint32 mountDisplayId, uint32 path, uint32 pathNo
     // remove fake death
     RemoveAurasWithInterruptFlags(SpellAuraInterruptFlags::Interacting);
 
+    // Forever: classic dismisses the pet for the flight and Dismount() on landing resummons it; left out, the pet
+    // stays behind, falls out of visibility range and is removed with its reagent (soul shard) refunded.
+    UnsummonPetTemporaryIfAny();
+
     if (mountDisplayId)
         Mount(mountDisplayId);
 
@@ -25083,7 +25300,8 @@ inline bool Player::_StoreOrEquipNewItem(uint32 vendorslot, uint32 item, uint8 c
             AddRefundReference(it->GetGUID());
         }
 
-        GetSession()->GetCollectionMgr()->OnItemAdded(it);
+        if (CollectionMgr* collectionMgr = GetSession()->GetCollectionMgr())
+            collectionMgr->OnItemAdded(it);
     }
     return true;
 }
@@ -25155,15 +25373,16 @@ bool Player::BuyCurrencyFromVendorSlot(ObjectGuid vendorGuid, uint32 vendorSlot,
 
         if (iece->Money)
         {
-            // the price is worked out in 64 bits: a 32-bit product wraps for a large count and sold currency for next to nothing
-            price = uint64(iece->Money) * count;
-            if (price > MAX_MONEY_AMOUNT)
+            // a price past the money cap is refused, not cut down to a smaller purchase
+            Optional<uint64> currencyPrice = Trinity::VendorPrice::ForCurrency(iece->Money, count, MAX_MONEY_AMOUNT);
+            if (!currencyPrice)
             {
                 TC_LOG_ERROR("entities.player.cheat", "Player::BuyCurrencyFromVendorSlot: Player '{}' ({}) tried to buy currency (ItemID: {}, Count: {}), causing money overflow",
                     GetName(), GetGUID(), currency, count);
                 SendBuyError(BUY_ERR_NOT_ENOUGHT_MONEY, creature, vendorSlot);
                 return false;
             }
+            price = *currencyPrice;
             if (!HasEnoughMoney(price))
             {
                 SendBuyError(BUY_ERR_NOT_ENOUGHT_MONEY, creature, vendorSlot);
@@ -25173,8 +25392,12 @@ bool Player::BuyCurrencyFromVendorSlot(ObjectGuid vendorGuid, uint32 vendorSlot,
 
         for (uint8 i = 0; i < MAX_ITEM_EXT_COST_ITEMS; ++i)
         {
+            if (!iece->ItemID[i])
+                continue;
+
             // the needed count must not wrap round for a large purchase
-            if (iece->ItemID[i] && (uint64(iece->ItemCount[i]) * stacks > std::numeric_limits<uint32>::max() || !HasItemCount(iece->ItemID[i], (iece->ItemCount[i] * stacks))))
+            Optional<uint32> needed = Trinity::VendorPrice::TurnInCount(iece->ItemCount[i], stacks);
+            if (!needed || !HasItemCount(iece->ItemID[i], *needed))
             {
                 SendEquipError(EQUIP_ERR_VENDOR_MISSING_TURNINS, nullptr, nullptr);
                 return false;
@@ -25199,7 +25422,7 @@ bool Player::BuyCurrencyFromVendorSlot(ObjectGuid vendorGuid, uint32 vendorSlot,
                 SendEquipError(EQUIP_ERR_VENDOR_MISSING_TURNINS, nullptr, nullptr); // Find correct error
                 return false;
             }
-            else if (uint64(iece->CurrencyCount[i]) * stacks > std::numeric_limits<uint32>::max() || !HasCurrency(iece->CurrencyID[i], (iece->CurrencyCount[i] * stacks)))
+            else if (Optional<uint32> needed = Trinity::VendorPrice::TurnInCount(iece->CurrencyCount[i], stacks); !needed || !HasCurrency(iece->CurrencyID[i], *needed))
             {
                 SendEquipError(EQUIP_ERR_VENDOR_MISSING_TURNINS, nullptr, nullptr); // Find correct error
                 return false;
@@ -25376,7 +25599,12 @@ bool Player::BuyItemFromVendorSlot(ObjectGuid vendorguid, uint32 vendorslot, uin
 
         for (uint8 i = 0; i < MAX_ITEM_EXT_COST_ITEMS; ++i)
         {
-            if (iece->ItemID[i] && !HasItemCount(iece->ItemID[i], iece->ItemCount[i] * stacks))
+            if (!iece->ItemID[i])
+                continue;
+
+            // the same wrap-round guard as for currency purchases
+            Optional<uint32> needed = Trinity::VendorPrice::TurnInCount(iece->ItemCount[i], stacks);
+            if (!needed || !HasItemCount(iece->ItemID[i], *needed))
             {
                 SendEquipError(EQUIP_ERR_VENDOR_MISSING_TURNINS, nullptr, nullptr);
                 return false;
@@ -25400,7 +25628,7 @@ bool Player::BuyItemFromVendorSlot(ObjectGuid vendorguid, uint32 vendorslot, uin
                 SendEquipError(EQUIP_ERR_VENDOR_MISSING_TURNINS, nullptr, nullptr); // Find correct error
                 return false;
             }
-            else if (!HasCurrency(iece->CurrencyID[i], iece->CurrencyCount[i] * stacks))
+            else if (Optional<uint32> needed = Trinity::VendorPrice::TurnInCount(iece->CurrencyCount[i], stacks); !needed || !HasCurrency(iece->CurrencyID[i], *needed))
             {
                 SendEquipError(EQUIP_ERR_VENDOR_MISSING_TURNINS, nullptr, nullptr);
                 return false;
@@ -25448,7 +25676,7 @@ bool Player::BuyItemFromVendorSlot(ObjectGuid vendorguid, uint32 vendorslot, uin
             count = uint32(maxCount);
         }
         // whole numbers: part of a stack (arrows) rounds up instead of down to free, and full stacks cost exactly the stack price
-        price = (basePrice * count + pProto->GetBuyCount() - 1) / pProto->GetBuyCount();
+        price = Trinity::VendorPrice::ForItems(basePrice, pProto->GetBuyCount(), count);
 
         // reputation discount
         price = uint64(floor(price * GetReputationPriceDiscount(creature)));
@@ -25458,7 +25686,7 @@ bool Player::BuyItemFromVendorSlot(ObjectGuid vendorguid, uint32 vendorslot, uin
         if (float priceMod = GetTotalAuraModifier(SPELL_AURA_MOD_VENDOR_ITEMS_PRICES))
             price -= CalculatePct(price, priceMod);
 
-        price = ApplyClassicLegacyPriceMod(price, 0);   // Legacy perk Bartering
+        price = ApplyClassicLegacyPriceMod(price, 1);   // Legacy perk Bartering (aura 620 misc 1, forever-bugs #209)
         price = std::max(uint64(1), price);              // discounts never make a priced item free
 
         if (!HasEnoughMoney(price))
@@ -26770,31 +26998,35 @@ void Player::SendInitialPacketsBeforeAddToMap()
     // Spell modifiers
     SendSpellModifiers();
 
-    // SMSG_ACCOUNT_MOUNT_UPDATE
-    WorldPackets::Misc::AccountMountUpdate mountUpdate;
-    mountUpdate.IsFullUpdate = true;
-    mountUpdate.Mounts = &GetSession()->GetCollectionMgr()->GetAccountMounts();
-    SendDirectMessage(mountUpdate.Write());
+    // A bot session drops its collections (WorldSession::DropClientOnlyManagers) and has no client to tell
+    if (CollectionMgr* collectionMgr = GetSession()->GetCollectionMgr())
+    {
+        // SMSG_ACCOUNT_MOUNT_UPDATE
+        WorldPackets::Misc::AccountMountUpdate mountUpdate;
+        mountUpdate.IsFullUpdate = true;
+        mountUpdate.Mounts = &collectionMgr->GetAccountMounts();
+        SendDirectMessage(mountUpdate.Write());
 
-    // SMSG_ACCOUNT_TOYS_UPDATE
-    WorldPackets::Toy::AccountToyUpdate toyUpdate;
-    toyUpdate.IsFullUpdate = true;
-    toyUpdate.Toys = &GetSession()->GetCollectionMgr()->GetAccountToys();
-    SendDirectMessage(toyUpdate.Write());
+        // SMSG_ACCOUNT_TOYS_UPDATE
+        WorldPackets::Toy::AccountToyUpdate toyUpdate;
+        toyUpdate.IsFullUpdate = true;
+        toyUpdate.Toys = &collectionMgr->GetAccountToys();
+        SendDirectMessage(toyUpdate.Write());
 
-    // SMSG_ACCOUNT_HEIRLOOM_UPDATE
-    WorldPackets::Misc::AccountHeirloomUpdate heirloomUpdate;
-    heirloomUpdate.IsFullUpdate = true;
-    heirloomUpdate.Heirlooms = &GetSession()->GetCollectionMgr()->GetAccountHeirlooms();
-    SendDirectMessage(heirloomUpdate.Write());
+        // SMSG_ACCOUNT_HEIRLOOM_UPDATE
+        WorldPackets::Misc::AccountHeirloomUpdate heirloomUpdate;
+        heirloomUpdate.IsFullUpdate = true;
+        heirloomUpdate.Heirlooms = &collectionMgr->GetAccountHeirlooms();
+        SendDirectMessage(heirloomUpdate.Write());
 
-    GetSession()->GetCollectionMgr()->SendFavoriteAppearances();
+        collectionMgr->SendFavoriteAppearances();
 
-    // SMSG_ACCOUNT_WARBAND_SCENE_UPDATE
-    WorldPackets::Misc::AccountWarbandSceneUpdate warbandSceneUpdate;
-    warbandSceneUpdate.IsFullUpdate = true;
-    warbandSceneUpdate.WarbandScenes = &GetSession()->GetCollectionMgr()->GetWarbandScenes();
-    SendDirectMessage(warbandSceneUpdate.Write());
+        // SMSG_ACCOUNT_WARBAND_SCENE_UPDATE
+        WorldPackets::Misc::AccountWarbandSceneUpdate warbandSceneUpdate;
+        warbandSceneUpdate.IsFullUpdate = true;
+        warbandSceneUpdate.WarbandScenes = &collectionMgr->GetWarbandScenes();
+        SendDirectMessage(warbandSceneUpdate.Write());
+    }
 
     WorldPackets::Character::InitialSetup initialSetup;
     initialSetup.ServerExpansionLevel = sWorld->getIntConfig(CONFIG_EXPANSION);
@@ -27333,6 +27565,14 @@ int32 Player::GetProfessionSlotFor(uint32 skillId) const
     return std::distance(professionsBegin, professionSlot);
 }
 
+// Everlake: with more than 2 primary professions allowed, the client's 2nd ProfessionSkillLine slot is always left
+// empty. The client offers a new primary profession at a trainer only while a slot is free, so a full pair would block
+// learning a 3rd one; the Everlake addon lists every profession next to the window instead.
+uint8 Player::GetUsableProfessionSlots()
+{
+    return sWorld->getIntConfig(CONFIG_MAX_PRIMARY_TRADE_SKILL) > 2 ? 1 : uint8(UF::size<decltype(UF::ActivePlayerData::ProfessionSkillLine)>());
+}
+
 int32 Player::FindEmptyProfessionSlotFor(uint32 skillId) const
 {
     SkillLineEntry const* skillEntry = sSkillLineStore.LookupEntry(skillId);
@@ -27348,6 +27588,121 @@ int32 Player::FindEmptyProfessionSlotFor(uint32 skillId) const
     // If there is no same profession, find any free client-visible slot.
     auto freeSlot = std::find(professionsBegin, professionsEnd, 0);
     return freeSlot != professionsEnd ? std::distance(professionsBegin, freeSlot) : -1;
+}
+
+std::vector<uint32> Player::GetPrimaryProfessions() const
+{
+    std::vector<uint32> professions;
+    for (auto const& [skillId, status] : mSkillStatus)
+        if (status.uState != SKILL_DELETED && IsPrimaryProfessionSkill(skillId) && HasSkill(skillId))
+            professions.push_back(skillId);
+
+    std::sort(professions.begin(), professions.end());
+    return professions;
+}
+
+// Puts a learned primary profession into one of the client's 2 ProfessionSkillLine slots. A free slot is used first;
+// otherwise the slot not filled last by this command is taken, so two calls in a row pick the two shown professions.
+// The hidden profession keeps its skill and recipes. The slot is saved in character_skills.professionSlot.
+Player::ShowProfessionResult Player::ShowProfession(uint32 skillId, uint32* hiddenSkillId /*= nullptr*/)
+{
+    if (hiddenSkillId)
+        *hiddenSkillId = 0;
+
+    if (!IsPrimaryProfessionSkill(skillId) || !HasSkill(skillId))
+        return ShowProfessionResult::NotPrimaryProfession;
+
+    if (GetProfessionSlotFor(skillId) != -1)
+        return ShowProfessionResult::AlreadyShown;
+
+    int32 slot = FindEmptyProfessionSlotFor(skillId);
+    if (slot == -1)
+        slot = GetUsableProfessionSlots() == 1 ? 0 : (_lastShownProfessionSlot == 1 ? 0 : 1);
+
+    // profession tools and gear sit in per-slot equipment slots; they would end up under the other profession
+    uint8 const professionSlotStart = PROFESSION_SLOT_PROFESSION1_TOOL + slot * PROFESSION_SLOT_MAX_COUNT;
+    for (uint8 slotOffset = 0; slotOffset < PROFESSION_SLOT_MAX_COUNT; ++slotOffset)
+        if (GetItemByPos(INVENTORY_SLOT_BAG_0, professionSlotStart + slotOffset))
+            return ShowProfessionResult::ToolsEquipped;
+
+    uint32 const oldSkillId = uint32(m_activePlayerData->ProfessionSkillLine[slot]);
+    SetUpdateFieldValue(m_values.ModifyValue(&Player::m_activePlayerData).ModifyValue(&UF::ActivePlayerData::ProfessionSkillLine, slot), int32(skillId));
+    _lastShownProfessionSlot = slot;
+    _playerHiddenProfessions.erase(skillId);
+    RefreshProfessionSkillLines({ skillId, oldSkillId });
+
+    for (uint32 changedSkillId : { skillId, oldSkillId })
+    {
+        auto itr = mSkillStatus.find(changedSkillId);
+        if (itr != mSkillStatus.end() && itr->second.uState == SKILL_UNCHANGED)
+            itr->second.uState = SKILL_CHANGED;
+    }
+
+    if (hiddenSkillId)
+        *hiddenSkillId = oldSkillId;
+
+    return ShowProfessionResult::Ok;
+}
+
+Player::ShowProfessionResult Player::HideProfession(uint32 skillId)
+{
+    if (!IsPrimaryProfessionSkill(skillId) || !HasSkill(skillId))
+        return ShowProfessionResult::NotPrimaryProfession;
+
+    int32 const slot = GetProfessionSlotFor(skillId);
+    if (slot == -1)
+    {
+        // keep it out of a slot that frees up later too
+        if (_playerHiddenProfessions.insert(skillId).second)
+            if (auto itr = mSkillStatus.find(skillId); itr != mSkillStatus.end() && itr->second.uState == SKILL_UNCHANGED)
+                itr->second.uState = SKILL_CHANGED;
+        return ShowProfessionResult::AlreadyHidden;
+    }
+
+    uint8 const professionSlotStart = PROFESSION_SLOT_PROFESSION1_TOOL + slot * PROFESSION_SLOT_MAX_COUNT;
+    for (uint8 slotOffset = 0; slotOffset < PROFESSION_SLOT_MAX_COUNT; ++slotOffset)
+        if (GetItemByPos(INVENTORY_SLOT_BAG_0, professionSlotStart + slotOffset))
+            return ShowProfessionResult::ToolsEquipped;
+
+    SetUpdateFieldValue(m_values.ModifyValue(&Player::m_activePlayerData).ModifyValue(&UF::ActivePlayerData::ProfessionSkillLine, slot), 0);
+    _playerHiddenProfessions.insert(skillId);
+    RefreshProfessionSkillLines({ skillId });
+    auto itr = mSkillStatus.find(skillId);
+    if (itr != mSkillStatus.end() && itr->second.uState == SKILL_UNCHANGED)
+        itr->second.uState = SKILL_CHANGED;
+
+    return ShowProfessionResult::Ok;
+}
+
+// The client rebuilds its profession list (Professions tab, profession window) on a skill line update; a change of
+// ProfessionSkillLine alone may not do it. Resend the skill line ids of the moved professions.
+void Player::RefreshProfessionSkillLines(std::initializer_list<uint32> skillIds)
+{
+    for (uint32 skillId : skillIds)
+    {
+        auto itr = mSkillStatus.find(skillId);
+        if (skillId && itr != mSkillStatus.end() && itr->second.uState != SKILL_DELETED)
+            SetSkillLineId(itr->second.pos, uint16(skillId));
+    }
+}
+
+// A slot freed by unlearning a profession goes to a learned primary profession that had none.
+void Player::FillFreeProfessionSlots(uint32 exceptSkillId /*= 0*/)
+{
+    for (uint32 skillId : GetPrimaryProfessions())
+    {
+        if (skillId == exceptSkillId || GetProfessionSlotFor(skillId) != -1 || _playerHiddenProfessions.contains(skillId))
+            continue;
+
+        int32 slot = FindEmptyProfessionSlotFor(skillId);
+        if (slot == -1)
+            return;
+
+        SetUpdateFieldValue(m_values.ModifyValue(&Player::m_activePlayerData).ModifyValue(&UF::ActivePlayerData::ProfessionSkillLine, slot), int32(skillId));
+        auto itr = mSkillStatus.find(skillId);
+        if (itr != mSkillStatus.end() && itr->second.uState == SKILL_UNCHANGED)
+            itr->second.uState = SKILL_CHANGED;
+    }
 }
 
 void Player::SendAurasForTarget(Unit* target) const
@@ -28153,8 +28508,18 @@ bool Player::CanNoReagentCast(SpellInfo const* spellInfo) const
         return true;
 
     // Classic 1.60 Legacy perk Reagent Economy 1225503 (aura 215, its arena preparation effect is prevented by
-    // classic_spell_legacy_reagent_economy): class abilities no longer require reagents purchasable from vendors
-    if (spellInfo->SpellFamilyName != SPELLFAMILY_GENERIC && HasAura(1225503))
+    // classic_spell_legacy_reagent_economy): class abilities no longer require reagents purchasable from vendors.
+    // Hotfix of 24 Nov (71091): "now also works for your poisons and Vanish". Vanish is a rogue spell; the poison recipes are
+    // generic spells of the Poisons skill (SkillLine 40), so they are taken in by their skill line.
+    auto isPoisonRecipe = [spellInfo]()
+    {
+        SkillLineAbilityMapBounds bounds = sSpellMgr->GetSkillLineAbilityMapBounds(spellInfo->Id);
+        for (auto itr = bounds.first; itr != bounds.second; ++itr)
+            if (itr->second->SkillLine == 40)   // Poisons
+                return true;
+        return false;
+    };
+    if (HasAura(1225503) && (spellInfo->SpellFamilyName != SPELLFAMILY_GENERIC || isPoisonRecipe()))
     {
         bool anyReagent = false;
         bool allFromVendors = true;
@@ -28778,8 +29143,22 @@ void Player::UpdateLiquidMirrorTimerFlagsOnPositionChange(Optional<LiquidData> c
                 m_MirrorTimerFlags |= UNDERWATER_INSLIME;
     }
 
-    if (HasAuraType(SPELL_AURA_FORCE_BREATH_BAR))
-        m_MirrorTimerFlags |= UNDERWATER_INWATER;
+    m_mirrorTimers[MIRROR_TIMER_FATIGUE].SetScale((m_MirrorTimerFlags & UNDERWATER_INDARKWATER) != 0 ? -1 : 10);
+    m_mirrorTimers[MIRROR_TIMER_BREATH].SetScale(
+        ((m_MirrorTimerFlags & UNDERWATER_INWATER) != 0 || HasAuraType(SPELL_AURA_FORCE_BREATH_BAR)) && !HasAuraType(SPELL_AURA_WATER_BREATHING)
+        ? -1 : 10);
+}
+
+void Player::UpdateLiquidMirrorTimerValuesOnAura()
+{
+    if (m_mirrorTimers[MIRROR_TIMER_BREATH].IsActive())
+    {
+        int32 oldMaxValue = m_mirrorTimers[MIRROR_TIMER_BREATH].GetMaxValue();
+        int32 newMaxValue = GetMirrorTimerMaxValue(MIRROR_TIMER_BREATH);
+        m_mirrorTimers[MIRROR_TIMER_BREATH].SetMaxValue(newMaxValue);
+        int32 valueDiff = newMaxValue - oldMaxValue;
+        m_mirrorTimers[MIRROR_TIMER_BREATH].SetValue(m_mirrorTimers[MIRROR_TIMER_BREATH].GetValue() + valueDiff);
+    }
 }
 
 void Player::AtEnterCombat()
@@ -29026,40 +29405,18 @@ uint8 Player::GetRunesState() const
     return uint8(m_runes->RuneState & ((1 << GetMaxPower(POWER_RUNES)) - 1));
 }
 
-uint32 Player::GetRuneBaseCooldown() const
+void Player::SetRuneCooldown(uint8 index, float cooldown)
 {
-    double cooldown = RUNE_BASE_COOLDOWN;
-
-    AuraEffectList const& regenAura = GetAuraEffectsByType(SPELL_AURA_MOD_POWER_REGEN_PERCENT);
-    for (AuraEffectList::const_iterator i = regenAura.begin();i != regenAura.end(); ++i)
-        if ((*i)->GetMiscValue() == POWER_RUNES)
-            cooldown *= 1.0 - (*i)->GetAmount() / 100.0;
-
-    // Runes cooldown are now affected by player's haste from equipment ...
-    float hastePct = GetRatingBonusValue(CR_HASTE_MELEE);
-
-    // ... and some auras.
-    hastePct += GetTotalAuraModifier(SPELL_AURA_MOD_MELEE_HASTE);
-    hastePct += GetTotalAuraModifier(SPELL_AURA_MOD_MELEE_HASTE_2);
-    hastePct += GetTotalAuraModifier(SPELL_AURA_MOD_MELEE_HASTE_3);
-
-    cooldown *= 1.0f - (hastePct / 100.0f);
-
-    return static_cast<float>(cooldown);
-}
-
-void Player::SetRuneCooldown(uint8 index, uint32 cooldown)
-{
-    m_runes->Cooldown[index] = cooldown;
-    m_runes->SetRuneState(index, (cooldown == 0) ? true : false);
-    int32 activeRunes = std::count(std::begin(m_runes->Cooldown), &m_runes->Cooldown[std::min(GetMaxPower(POWER_RUNES), MAX_RUNES)], 0u);
+    m_runes->Cooldown[index] = std::clamp(cooldown, 0.0f, 1.0f);
+    m_runes->SetRuneState(index, cooldown >= 1.0f);
+    int32 activeRunes = std::popcount(GetRunesState());
     if (activeRunes != GetPower(POWER_RUNES))
         SetPower(POWER_RUNES, activeRunes);
 }
 
 void Runes::SetRuneState(uint8 index, bool set /*= true*/)
 {
-    auto itr = std::find(CooldownOrder.begin(), CooldownOrder.end(), index);
+    auto itr = std::ranges::find(CooldownOrder, index);
     if (set)
     {
         RuneState |= (1 << index);                      // usable
@@ -29082,9 +29439,8 @@ void Player::ResyncRunes() const
     data.Runes.Start = uint8((1 << maxRunes) - 1);
     data.Runes.Count = GetRunesState();
 
-    float baseCd = float(GetRuneBaseCooldown());
     for (uint32 i = 0; i < maxRunes; ++i)
-        data.Runes.Cooldowns.push_back(uint8((baseCd - float(GetRuneCooldown(i))) / baseCd * 255));
+        data.Runes.Cooldowns.push_back(uint8(GetRuneCooldown(i) * 255.0f));
 
     SendDirectMessage(data.Write());
 }
@@ -29102,10 +29458,7 @@ void Player::InitRunes()
     m_runes->RuneState = 0;
 
     for (uint8 i = 0; i < MAX_RUNES; ++i)
-        SetRuneCooldown(i, 0);                                          // reset cooldowns
-
-    SetUpdateFieldValue(m_values.ModifyValue(&Unit::m_unitData).ModifyValue(&UF::UnitData::PowerRegenFlatModifier, runeIndex), 0.0f);
-    SetUpdateFieldValue(m_values.ModifyValue(&Unit::m_unitData).ModifyValue(&UF::UnitData::PowerRegenInterruptedFlatModifier, runeIndex), 0.0f);
+        SetRuneCooldown(i, 1.0f);                                       // reset cooldowns
 }
 
 void Player::AutoStoreLoot(uint8 bag, uint8 slot, uint32 loot_id, LootStore const& store, ItemContext context, bool broadcast, bool pushed, bool createdByPlayer)
@@ -29292,7 +29645,9 @@ void Player::_LoadSkills(PreparedQueryResult result)
 
                     if (value && !skillLine->ParentSkillLineID)
                     {
-                        if (professionSlot >= 0 && uint32(professionSlot) < GetClientProfessionSlotLimit())
+                        if (professionSlot == PROFESSION_SLOT_HIDDEN_BY_PLAYER)
+                            _playerHiddenProfessions.insert(skill); // .profession hide remains hidden across logins
+                        else if (professionSlot >= 0 && uint32(professionSlot) < GetClientProfessionSlotLimit())
                             SetUpdateFieldValue(m_values.ModifyValue(&Player::m_activePlayerData).ModifyValue(&UF::ActivePlayerData::ProfessionSkillLine, professionSlot), skill);
                         else
                             loadedProfessionsWithoutSlot.push_back(skill);
@@ -29950,6 +30305,7 @@ void Player::ParkPetForTravel()
     {
         m_petParkedForTravel = true;
         m_petParkedCheckTimer = 2000;
+        m_petParkedLoadFails = 0;
     }
 }
 
@@ -29975,8 +30331,11 @@ void Player::UpdateParkedPet(uint32 diff)
     if (!IsInWorld() || IsBeingTeleported() || IsInFlight() || GetTransport() || GetVehicle() || IsPetNeedBeTemporaryUnsummoned())
         return;
 
-    m_petParkedForTravel = false;
     ResummonPetTemporaryUnSummonedIfAny();
+    // The flag stays set while a retry is still owed; a pet brought back (or brought back by someone
+    // else) or the retry limit reached clears it.
+    if (!m_temporaryUnsummonedPetNumber || !GetPetGUID().IsEmpty())
+        m_petParkedForTravel = false;
 }
 
 void Player::ResummonPetTemporaryUnSummonedIfAny()
@@ -29992,8 +30351,23 @@ void Player::ResummonPetTemporaryUnSummonedIfAny()
         return;
 
     Pet* NewPet = new Pet(this);
-    if (!NewPet->LoadPetFromDB(this, 0, m_temporaryUnsummonedPetNumber, true))
-        delete NewPet;
+    if (NewPet->LoadPetFromDB(this, 0, m_temporaryUnsummonedPetNumber, true))
+    {
+        m_temporaryUnsummonedPetNumber = 0;
+        return;
+    }
+
+    delete NewPet;
+    // A pet parked for travel gets the load retried by UpdateParkedPet rather than dropped after one
+    // failure. Give up after a few tries but keep the number, so a later resummon trigger can still
+    // bring the pet back.
+    if (m_petParkedForTravel)
+    {
+        if (++m_petParkedLoadFails < 5)
+            return;
+        m_petParkedForTravel = false;
+        return;
+    }
 
     m_temporaryUnsummonedPetNumber = 0;
 }
@@ -30010,7 +30384,8 @@ void Player::UnsummonBattlePetTemporaryIfAny(bool onFlyingMount /*= false*/)
     if (battlepet->ToTempSummon()->IsAutoResummoned())
         m_temporaryUnsummonedBattlePet = battlepet->GetBattlePetCompanionGUID();
 
-    GetSession()->GetBattlePetMgr()->DismissPet();
+    if (BattlePets::BattlePetMgr* battlePetMgr = GetSession()->GetBattlePetMgr())
+        battlePetMgr->DismissPet();
 }
 
 void Player::ResummonBattlePetTemporaryUnSummonedIfAny()
@@ -30022,7 +30397,8 @@ void Player::ResummonBattlePetTemporaryUnSummonedIfAny()
     if (IsPetNeedBeTemporaryUnsummoned())
         return;
 
-    GetSession()->GetBattlePetMgr()->SummonPet(m_temporaryUnsummonedBattlePet);
+    if (BattlePets::BattlePetMgr* battlePetMgr = GetSession()->GetBattlePetMgr())
+        battlePetMgr->SummonPet(m_temporaryUnsummonedBattlePet);
 
     m_temporaryUnsummonedBattlePet.Clear();
 }
@@ -30241,6 +30617,95 @@ bool Player::UntrainClassicPet(int64 cost)
     ModifyMoney(-cost);
     pet->SavePetToDB(PET_SAVE_AS_CURRENT);
     pet->CastSpell(pet, 14867 /*SPELL_UNTALENT_VISUAL_EFFECT*/, true);
+    return true;
+}
+
+// Classic 1.60 Legacy perks are unlearned at a class trainer (the Legacy trees are CannotRefund, so the Legacy window cannot take
+// points back): forever-bugs #503, "Legacy Point talent respec starts at 10g for first respec", rising with each reset. Gossip
+// options 97000000 + menu (sql/custom/world 2026_11_17_46); the client asks with CONFIRM_TALENT_WIPE_5 and confirms with
+// CMSG_CONFIRM_RESPEC_WIPE type 4 (WorldSession::HandleConfirmRespecWipeOpcode).
+bool Player::IsClassicLegacyResetGossipOption(int32 gossipOptionId)
+{
+    return gossipOptionId >= 97000000 && gossipOptionId < 98000000;
+}
+
+UF::TraitConfig const* Player::GetClassicLegacyTraitConfig() const
+{
+    static constexpr int32 LegacyTraitSystemID = 45;
+    return m_activePlayerData->TraitConfigs.FindIf([](UF::TraitConfig const& config)
+    {
+        return static_cast<TraitConfigType>(*config.Type) == TraitConfigType::Generic && config.TraitSystemID == LegacyTraitSystemID;
+    }).second;
+}
+
+// Live charges 10 gold for the first reset and more for each one after; Blizzard has not published the steps. Until a live number
+// is known this follows the class talent reset (GetNextResetTalentsCost) from 10 gold: +5 gold a reset up to 50 gold, and 5 gold
+// less for every month without one, down to 10 gold.
+uint64 Player::GetNextClassicLegacyResetCost() const
+{
+    if (sWorld->getBoolConfig(CONFIG_NO_RESET_TALENT_COST))
+        return 0;
+
+    static constexpr uint64 FirstCost = 10 * GOLD;
+    static constexpr uint64 Step = 5 * GOLD;
+    static constexpr uint64 MaxCost = 50 * GOLD;
+    if (_classicLegacyResetCost < FirstCost)
+        return FirstCost;
+
+    uint64 months = uint64(std::max<time_t>(0, GameTime::GetGameTime() - _classicLegacyResetTime)) / MONTH;
+    if (months > 0)
+        return _classicLegacyResetCost > FirstCost + Step * months ? _classicLegacyResetCost - Step * months : FirstCost;
+
+    return std::min(_classicLegacyResetCost + Step, MaxCost);
+}
+
+Player::ClassicLegacyResetResult Player::CanResetClassicLegacyPerks() const
+{
+    UF::TraitConfig const* legacyConfig = GetClassicLegacyTraitConfig();
+    if (!legacyConfig || std::ranges::none_of(legacyConfig->Entries, [](UF::TraitEntry const& entry) { return entry.Rank > 0; }))
+        return ClassicLegacyResetResult::NothingToReset;
+
+    // Talented gives class talent points before level 10; with them spent, the client refuses the reset
+    // (ERR_LEGACY_WIPE_ERROR_CLASS_POINTS) until the class talents are unlearned.
+    if (TraitMgr::PlayerDataAccessor(this).GetClassicTalentedStartLevel() > 0)
+    {
+        for (auto const& [_, config] : m_activePlayerData->TraitConfigs)
+        {
+            if (static_cast<TraitConfigType>(*config.value.Type) != TraitConfigType::Combat)
+                continue;
+
+            WorldPackets::Traits::TraitConfig combatConfig(config.value);
+            if (TraitMgr::ValidateConfig(combatConfig, TraitMgr::PlayerDataAccessor(this, true)) == TraitMgr::LearnResult::NotEnoughTalentsInPrimaryTree)
+                return ClassicLegacyResetResult::TalentPointDeficit;
+        }
+    }
+
+    return ClassicLegacyResetResult::Ok;
+}
+
+bool Player::ResetClassicLegacyPerks(uint64 cost)
+{
+    if (CanResetClassicLegacyPerks() != ClassicLegacyResetResult::Ok || !HasEnoughMoney(cost))
+        return false;
+
+    UF::TraitConfig const* legacyConfig = GetClassicLegacyTraitConfig();
+    WorldPackets::Traits::TraitConfig newConfig(*legacyConfig);
+    // bought ranks go, ranks the game grants stay
+    std::erase_if(newConfig.Entries, [](WorldPackets::Traits::TraitEntry const& entry) { return !entry.GrantedRanks; });
+    for (WorldPackets::Traits::TraitEntry& entry : newConfig.Entries)
+        entry.Rank = 0;
+
+    UpdateTraitConfig(std::move(newConfig), 0, false);
+
+    ModifyMoney(-int64(cost));
+    if (cost > 0)   // a free reset (NoResetTalentsCost) keeps the price where it was, as for class talents
+        _classicLegacyResetCost = cost;
+    _classicLegacyResetTime = GameTime::GetGameTime();
+    CharacterDatabase.PExecute("REPLACE INTO character_legacy_reset (guid, cost, time) VALUES ({}, {}, {})",
+        GetGUID().GetCounter(), _classicLegacyResetCost, uint64(_classicLegacyResetTime));
+
+    UpdateCriteria(CriteriaType::MoneySpentOnRespecs, cost);
+    UpdateCriteria(CriteriaType::TotalRespecs, 1);
     return true;
 }
 
@@ -30762,6 +31227,31 @@ void Player::_LoadTraits(PreparedQueryResult configsResult, PreparedQueryResult 
     {
         int32 const ranksBefore = spentRanks(traitConfig);
         std::vector<WorldPackets::Traits::TraitEntry> const entriesBefore = traitConfig.Entries;
+
+        // A node Blizzard gave fewer ranks (WoW Forever, 25 November 2026: Improved Starfire 5 -> 2) holds more ranks than it
+        // can: as on live, every talent point of that config is given back, not only the ranks above the new maximum.
+        auto const overMaxRanks = std::ranges::find_if(traitConfig.Entries, [](WorldPackets::Traits::TraitEntry const& entry)
+        {
+            TraitNodeEntryEntry const* nodeEntry = sTraitNodeEntryStore.LookupEntry(entry.TraitNodeEntryID);
+            return nodeEntry && entry.Rank > 0 && entry.Rank + entry.GrantedRanks > nodeEntry->MaxRanks;
+        });
+        if (overMaxRanks != traitConfig.Entries.end())
+        {
+            TC_LOG_INFO("entities.player.talents", "Player {} ({}): talent config {} (type {}, spec {}) has node {} entry {} at rank {}, above its {} ranks now; every talent point of it is given back.",
+                GetName(), GetGUID().ToString(), traitConfig.ID, AsUnderlyingType(traitConfig.Type), traitConfig.ChrSpecializationID,
+                overMaxRanks->TraitNodeID, overMaxRanks->TraitNodeEntryID, overMaxRanks->Rank + overMaxRanks->GrantedRanks,
+                sTraitNodeEntryStore.AssertEntry(overMaxRanks->TraitNodeEntryID)->MaxRanks);
+
+            traitConfig.Entries.clear();
+            traitConfig.SubTrees.clear();
+            for (UF::TraitEntry const& grantedEntry : TraitMgr::GetGrantedTraitEntriesForConfig(traitConfig, this))
+                traitConfig.Entries.emplace_back(grantedEntry);
+            TraitMgr::ValidateConfig(traitConfig, this, false, true);
+            AddTraitConfig(traitConfig);
+            m_traitConfigStates[traitConfig.ID] = PLAYERSPELL_CHANGED;   // saved emptied: the next login does not reset it again
+            continue;
+        }
+
         TraitMgr::LearnResult const validateResult = TraitMgr::ValidateConfig(traitConfig, this, false, true);
         if (validateResult == TraitMgr::LearnResult::Ok && spentRanks(traitConfig) < ranksBefore)
         {
@@ -31881,7 +32371,7 @@ void Player::AddPetToUpdateFields(PetStable::PetInfo const& pet, PetSaveMode slo
     ufPet.ModifyValue(&UF::StablePetInfo::Name).SetValue(pet.Name);
 }
 
-void Player::UpdateStablePetLoyalty(uint32 petNumber, uint8 loyaltyLevel, int32 loyaltyPoints)
+void Player::UpdateStablePetLoyalty(uint32 petNumber, uint8 loyaltyLevel, int32 loyaltyPoints, uint32 loyaltySeconds)
 {
     if (m_petStable)
     {
@@ -31891,6 +32381,7 @@ void Player::UpdateStablePetLoyalty(uint32 petNumber, uint8 loyaltyLevel, int32 
             {
                 currentPet->LoyaltyLevel = loyaltyLevel;
                 currentPet->LoyaltyPoints = loyaltyPoints;
+                currentPet->LoyaltySeconds = loyaltySeconds;
             }
         }
     }
@@ -32217,7 +32708,8 @@ void Player::RefundItem(Item* item)
 
     // Delete any references to the refund data
     item->SetNotRefundable(this, true, &trans, false);
-    GetSession()->GetCollectionMgr()->RemoveTemporaryAppearance(item);
+    if (CollectionMgr* collectionMgr = GetSession()->GetCollectionMgr())
+        collectionMgr->RemoveTemporaryAppearance(item);
 
     // Destroy item
     DestroyItem(item->GetBagSlot(), item->GetSlot(), true);
@@ -32323,14 +32815,14 @@ void Player::_LoadPetStable(uint32 summonedPetNumber, PreparedQueryResult result
     m_petStable = std::make_unique<PetStable>();
 
     // Classic 1.60: hunter pet loyalty (character_pet_loyalty; pets saved before it existed have no row and count as Best Friend)
-    std::unordered_map<uint32, std::pair<uint8, int32>> petLoyalty;
-    if (QueryResult loyaltyResult = CharacterDatabase.PQuery("SELECT l.id, l.loyalty, l.loyalty_points FROM character_pet_loyalty l "
+    std::unordered_map<uint32, std::tuple<uint8, int32, uint32>> petLoyalty;
+    if (QueryResult loyaltyResult = CharacterDatabase.PQuery("SELECT l.id, l.loyalty, l.loyalty_points, l.loyalty_time FROM character_pet_loyalty l "
         "JOIN character_pet p ON p.id = l.id WHERE p.owner = {}", GetGUID().GetCounter()))
     {
         do
         {
             Field* fields = loyaltyResult->Fetch();
-            petLoyalty[fields[0].GetUInt32()] = { fields[1].GetUInt8(), fields[2].GetInt32() };
+            petLoyalty[fields[0].GetUInt32()] = { fields[1].GetUInt8(), fields[2].GetInt32(), fields[3].GetUInt32() };
         } while (loyaltyResult->NextRow());
     }
 
@@ -32361,8 +32853,7 @@ void Player::_LoadPetStable(uint32 summonedPetNumber, PreparedQueryResult result
             petInfo.SpecializationId = fields[15].GetUInt16();
             if (auto loyalty = petLoyalty.find(petInfo.PetNumber); loyalty != petLoyalty.end())
             {
-                petInfo.LoyaltyLevel = loyalty->second.first;
-                petInfo.LoyaltyPoints = loyalty->second.second;
+                std::tie(petInfo.LoyaltyLevel, petInfo.LoyaltyPoints, petInfo.LoyaltySeconds) = loyalty->second;
             }
             if (slot >= PET_SAVE_FIRST_ACTIVE_SLOT && slot < PET_SAVE_LAST_ACTIVE_SLOT)
             {
@@ -33085,11 +33576,11 @@ void Player::SendRaidGroupOnlyMessage(RaidGroupReason reason, int32 delay) const
     SendDirectMessage(raidGroupOnly.Write());
 }
 
-uint32 Player::DoRandomRoll(uint32 minimum, uint32 maximum)
+int32 Player::DoRandomRoll(int32 minimum, int32 maximum)
 {
     ASSERT(maximum <= 1000000);
 
-    uint32 roll = urand(minimum, maximum);
+    int32 roll = irand(minimum, maximum);
 
     WorldPackets::Misc::RandomRoll randomRoll;
     randomRoll.Min = minimum;
@@ -33831,6 +34322,9 @@ int32 TraitMgr::PlayerDataAccessor::GetClassicTalentedStartLevel() const
     // advocaite/TrinityCore #150). Every entry granting the perk counts: the 5 rank node's curve gives 9..5 by rank, the
     // single rank nodes give a fixed 9, 8, 7, 6 or 5 (TraitDefinitionEffectPoints, Set); the lowest start level wins.
     static constexpr uint32 TalentedSpellId = 1225474;
+    if (_ignoreClassicTalented)
+        return 0;
+
     int32 startLevel = 0;
     for (auto const& [configId, config] : _player->m_activePlayerData->TraitConfigs)
     {
@@ -34117,7 +34611,8 @@ bool Player::ProcessItemCast(SpellCastRequest& castRequest, SpellCastTargets con
         {
             item->SetState(ITEM_CHANGED, this);
             item->SetBinding(true);
-            GetSession()->GetCollectionMgr()->AddItemAppearance(item);
+            if (CollectionMgr* collectionMgr = GetSession()->GetCollectionMgr())
+                collectionMgr->AddItemAppearance(item);
         }
     }
 

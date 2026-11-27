@@ -24,6 +24,7 @@
 #include "GameObject.h"
 #include "GameObjectAI.h"
 #include "GameTime.h"
+#include "HolidayStageLength.h"
 #include "Language.h"
 #include "Log.h"
 #include "Map.h"
@@ -1703,9 +1704,8 @@ void GameEventMgr::SetHolidayEventTime(GameEventData& event)
     uint8 stageIndex = event.holidayStage - 1;
     // The client's duration for this stage wins. Some holidays have dates but no durations at all (the Forever client's
     // Noblegarden, 181): those keep the length of their game_event row instead of dropping the client's dates.
-    if (holiday->Duration[stageIndex])
-        event.length = holiday->Duration[stageIndex] * HOUR / MINUTE;
-    else if (!event.length)
+    event.length = Trinity::Holiday::StageLengthMinutes(holiday->Duration, stageIndex, event.length);
+    if (!event.length)
     {
         TC_LOG_ERROR("sql.sql", "Holiday {} has no duration for stage {} and game_event {} has no length.", event.holiday_id,
             event.holidayStage, event.description);

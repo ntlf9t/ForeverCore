@@ -30,6 +30,7 @@
 #include "IteratorPair.h"
 #include "ItemEnchantmentMgr.h"
 #include "MapReference.h"
+#include "MirrorTimer.h"
 #include "PetDefines.h"
 #include "PlayerTaxi.h"
 #include "QuestDef.h"
@@ -196,8 +197,6 @@ enum PlayerUnderwaterState
     UNDERWATER_INLAVA                   = 0x02,             // terrain type is lava and player is afflicted by it
     UNDERWATER_INSLIME                  = 0x04,             // terrain type is lava and player is afflicted by it
     UNDERWATER_INDARKWATER              = 0x08,             // terrain type is dark water and player is afflicted by it
-
-    UNDERWATER_EXIST_TIMERS             = 0x10
 };
 
 enum BuyBankSlotResult
@@ -252,7 +251,8 @@ enum SpecResetType
     SPEC_RESET_TALENTS = 0,
     SPEC_RESET_SPECIALIZATION = 1,
     SPEC_RESET_GLYPHS = 2,
-    SPEC_RESET_PET_TALENTS = 3
+    SPEC_RESET_PET_TALENTS = 3,
+    SPEC_RESET_CLASSIC_LEGACY_PERKS = 4     // Classic 1.60: client popup CONFIRM_TALENT_WIPE_5 "unlearn all of your legacy perks?"
 };
 
 // Spell modifier (used for modify other spells)
@@ -484,15 +484,10 @@ struct Areas
 #define MAX_RUNES 7
 #define MAX_RECHARGING_RUNES 3
 
-enum RuneCooldowns
-{
-    RUNE_BASE_COOLDOWN  = 10000
-};
-
 struct Runes
 {
     std::deque<uint8> CooldownOrder;
-    uint32 Cooldown[MAX_RUNES];
+    std::array<float, MAX_RUNES> Cooldown;                  // cooldown progress [0,1] where 1 means rune is ready
     uint8 RuneState;                                        // mask of available runes
 
     void SetRuneState(uint8 index, bool set = true);
@@ -607,15 +602,6 @@ enum PlayerFieldByte2Flags
     PLAYER_FIELD_BYTE2_STEALTH              = 0x20,
     PLAYER_FIELD_BYTE2_INVISIBILITY_GLOW    = 0x40
 };
-
-enum MirrorTimerType
-{
-    FATIGUE_TIMER      = 0,
-    BREATH_TIMER       = 1,
-    FIRE_TIMER         = 2 // feign death
-};
-#define MAX_TIMERS      3
-#define DISABLED_MIRROR_TIMER   -1
 
 // 2^n values
 enum PlayerExtraFlags
@@ -777,6 +763,9 @@ enum ProfessionSlots : uint8
 
     PROFESSION_SLOT_MAX_COUNT            = PROFESSION_SLOT_PROFESSION2_TOOL - PROFESSION_SLOT_PROFESSION1_TOOL
 };
+
+// character_skills.professionSlot of a primary profession the player hid with .profession hide (-1 = no slot yet)
+constexpr int8 PROFESSION_SLOT_HIDDEN_BY_PLAYER = -2;
 
 enum InventorySlots : uint8                                 // 4 slots
 {
@@ -1386,7 +1375,7 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
         PetStable& GetOrInitPetStable();
         PetStable const* GetPetStable() const { return m_petStable.get(); }
         void AddPetToUpdateFields(PetStable::PetInfo const& pet, PetSaveMode slot, PetStableFlags flags);
-        void UpdateStablePetLoyalty(uint32 petNumber, uint8 loyaltyLevel, int32 loyaltyPoints);   // Classic 1.60 hunter pet loyalty
+        void UpdateStablePetLoyalty(uint32 petNumber, uint8 loyaltyLevel, int32 loyaltyPoints, uint32 loyaltySeconds);   // Classic 1.60 hunter pet loyalty
         void SetPetSlot(uint32 petNumber, PetSaveMode dstPetSlot);
         uint8 GetNumStableSlots() const { return m_activePlayerData->NumStableSlots; }
         void SetNumStableSlots(uint8 slots);
@@ -1694,7 +1683,7 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
         void RemoveItemFromBuyBackSlot(uint32 slot, bool del);
         void SendEquipError(InventoryResult msg, Item const* item1 = nullptr, Item const* item2 = nullptr, uint32 itemId = 0) const;
         void SendBuyError(BuyResult msg, Creature const* creature, uint32 vendorslot) const;
-        void SendSellError(SellResult msg, Creature* creature, ObjectGuid guid) const;
+        void SendSellError(SellResult msg, Creature const* creature, ObjectGuid guid) const;
         void AddWeaponProficiency(uint32 newflag) { m_WeaponProficiency |= newflag; }
         void AddArmorProficiency(uint32 newflag) { m_ArmorProficiency |= newflag; }
         uint32 GetWeaponProficiency() const { return m_WeaponProficiency; }
@@ -2089,6 +2078,13 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
         bool PurchaseClassicDualSpec();
         bool UntrainClassicPet(int64 cost);
         static bool IsClassicDualSpecGossipOption(int32 gossipOptionId);
+        // Classic 1.60 Legacy perk reset at class trainers (gossip options 97000000 + menu)
+        static bool IsClassicLegacyResetGossipOption(int32 gossipOptionId);
+        UF::TraitConfig const* GetClassicLegacyTraitConfig() const;
+        uint64 GetNextClassicLegacyResetCost() const;
+        enum class ClassicLegacyResetResult : uint8 { Ok, NothingToReset, TalentPointDeficit };
+        ClassicLegacyResetResult CanResetClassicLegacyPerks() const;
+        bool ResetClassicLegacyPerks(uint64 cost);
         TalentLearnResult LearnTalent(uint32 talentId, int32* spellOnCooldown);
         bool AddTalent(TalentEntry const* talent, uint8 spec, bool learning);
         bool HasTalent(uint32 spell_id, uint8 spec) const;
@@ -2153,6 +2149,13 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
         static void ApplyModToSpell(SpellModifier* mod, Spell* spell);
         void SetSpellModTakingSpell(Spell* spell, bool apply);
         void SendSpellModifiers() const;
+
+        // WoW Forever: a Revelation charge spent by a channel covers the first tick of that channel (Player.cpp)
+        void StartRevelationChannel(Spell const* channel);
+        float GetRevelationChannelCritBonus(ObjectGuid const& channelCastId) const;
+        float GetRevelationChannelCritBonus(Spell const* tickSpell) const;
+        // WoW Forever: the priest's Revelation charge is also spent by a periodic damage tick (Player.cpp)
+        float UseRevelationOnPeriodicTick(AuraEffect const* tickEffect);
 
         void RemoveArenaSpellCooldowns(bool removeActivePetCooldowns = false);
 
@@ -2419,6 +2422,7 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
         bool UpdatePosition(Position const& pos, bool teleport = false) override { return UpdatePosition(pos.GetPositionX(), pos.GetPositionY(), pos.GetPositionZ(), pos.GetOrientation(), teleport); }
         void ProcessPositionDataChanged(PositionFullTerrainStatus const& data) override;
         void UpdateLiquidMirrorTimerFlagsOnPositionChange(Optional<LiquidData> const& newLiquidData);
+        void UpdateLiquidMirrorTimerValuesOnAura();
         void AtEnterCombat() override;
         void AtExitCombat() override;
 
@@ -2465,8 +2469,6 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
         void DurabilityRepairAll(bool takeCost, float discountMod, bool guildBank);
         void DurabilityRepair(uint16 pos, bool takeCost, float discountMod);
 
-        void UpdateMirrorTimers();
-        void StopMirrorTimers();
         bool IsMirrorTimerActive(MirrorTimerType type) const;
 
         bool CanJoinConstantChannelInZone(ChatChannelsEntry const* channel, AreaTableEntry const* zone) const;
@@ -2509,6 +2511,15 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
         void LearnSkillRewardedSpells(uint32 skillId, uint32 skillValue, Races race);
         int32 GetProfessionSlotFor(uint32 skillId) const;
         int32 FindEmptyProfessionSlotFor(uint32 skillId) const;
+        static uint8 GetUsableProfessionSlots();
+        // Everlake: MaxPrimaryTradeSkill can be above 2, but the client has only 2 ProfessionSkillLine slots, and only
+        // professions in a slot get a window and a Professions tab entry. .profession show moves one into a slot.
+        enum class ShowProfessionResult { Ok, AlreadyShown, AlreadyHidden, NotPrimaryProfession, ToolsEquipped };
+        std::vector<uint32> GetPrimaryProfessions() const;
+        ShowProfessionResult ShowProfession(uint32 skillId, uint32* hiddenSkillId = nullptr);
+        // Empties the profession's slot: the client offers a new primary profession at a trainer only with a free slot
+        ShowProfessionResult HideProfession(uint32 skillId);
+        void FillFreeProfessionSlots(uint32 exceptSkillId = 0);
         uint16 GetSkillLineIdByPos(uint32 pos) const { return m_activePlayerData->Skill->SkillLineID[pos]; }
         void SetSkillLineId(uint32 pos, uint16 skillLineId) { SetUpdateFieldValue(m_values.ModifyValue(&Player::m_activePlayerData).ModifyValue(&UF::ActivePlayerData::Skill).ModifyValue(&UF::SkillInfo::SkillLineID, pos), skillLineId); }
         uint16 GetSkillStepByPos(uint32 pos) const { return m_activePlayerData->Skill->SkillStep[pos]; }
@@ -2889,7 +2900,7 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
         void SendCinematicStart(uint32 CinematicSequenceId) const;
         void SendMovieStart(uint32 movieId);
 
-        uint32 DoRandomRoll(uint32 minimum, uint32 maximum);
+        int32 DoRandomRoll(int32 minimum, int32 maximum);
         uint8 GetItemLimitCategoryQuantity(ItemLimitCategoryEntry const* limitEntry) const;
 
         void UpdateItemLevelAreaBasedScaling();
@@ -2973,9 +2984,8 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
 
         UF::DeclinedNames const* GetDeclinedNames() const { return m_playerData->DeclinedNames.has_value() ? &*m_playerData->DeclinedNames : nullptr; }
         uint8 GetRunesState() const;
-        uint32 GetRuneCooldown(uint8 index) const { return m_runes->Cooldown[index]; }
-        uint32 GetRuneBaseCooldown() const;
-        void SetRuneCooldown(uint8 index, uint32 cooldown);
+        float GetRuneCooldown(uint8 index) const { return m_runes->Cooldown[index]; }
+        void SetRuneCooldown(uint8 index, float cooldown);
         void ResyncRunes() const;
         void InitRunes();
 
@@ -3008,6 +3018,13 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
         uint32 GetChampioningFaction() const { return m_ChampioningFaction; }
         void SetChampioningFaction(uint32 faction) { m_ChampioningFaction = faction; }
         Spell* m_spellModTakingSpell;
+
+        // the channel that spent a Revelation charge, the crit chance it keeps for its first tick and the world update of that tick
+        ObjectGuid m_revelationChannelCastId;
+        uint32 m_revelationChannelSpellId = 0;
+        float m_revelationChannelCritBonus = 0.0f;
+        mutable Optional<uint32> m_revelationChannelFirstTickMS;
+        float GetRevelationChannelFirstTickBonus() const;
 
         float GetAverageItemLevel() const;
         bool isDebugAreaTriggers;
@@ -3348,10 +3365,11 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
         /***              ENVIRONMENTAL SYSTEM                 ***/
         /*********************************************************/
         void HandleSobering();
-        void SendMirrorTimer(MirrorTimerType Type, uint32 MaxValue, uint32 CurrentValue, int32 Regen);
-        void StopMirrorTimer(MirrorTimerType Type);
-        void HandleDrowning(uint32 time_diff);
-        int32 getMaxTimer(MirrorTimerType timer) const;
+        void SendMirrorTimer(MirrorTimerType type, int32 value, int32 maxValue, int32 scale, int32 spellId, bool paused);
+        void PauseMirrorTimer(MirrorTimerType type, bool paused);
+        void StopMirrorTimer(MirrorTimerType type);
+        void UpdateMirrorTimers(uint32 diff);
+        int32 GetMirrorTimerMaxValue(MirrorTimerType type) const;
 
         /*********************************************************/
         /***                  HONOR SYSTEM                     ***/
@@ -3415,11 +3433,14 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
         uint32 m_baseHealthRegen;
         int32 m_spellPenetrationItemMod;
         std::array<int32, 140 - 83> m_classicItemMods = { };   // ItemModType 83 .. 139 (ITEM_MOD_CLASSIC_*), from equipped items
+        uint64 _classicLegacyResetCost = 0;                          // last Legacy perk reset price (character_legacy_reset)
+        time_t _classicLegacyResetTime = 0;                          // when it was paid
         int32 m_classicBlockValueBonus = 0;                    // ITEM_MOD_BLOCK_VALUE of equipped items
         float m_classicItemArmor = 0.0f;                        // armor of equipped items (base and ITEM_MOD_EXTRA_ARMOR), part of UNIT_MOD_ARMOR TOTAL_VALUE
         int32 m_classicSpellHealingDone = 0;                   // ITEM_MOD_SPELL_HEALING_DONE of equipped items and enchantments
         int32 m_classicSpellDamageDone = 0;                    // ITEM_MOD_SPELL_DAMAGE_DONE of equipped items and enchantments
         mutable TimePoint _classicFreeHelpfulSpellsUntil;            // Legacy perk The Quick and the Dead: free helpful spells after resurrection
+        TimePoint _classicWindfuryWeaponReadyAt = TimePoint::min();  // Windfury Weapon's internal cooldown (439431 ProcCategoryRecovery, 1.5 s)
 
         SpellModContainer m_spellMods;
 
@@ -3531,9 +3552,13 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
         uint32 m_lastFallTime;
         float  m_lastFallZ;
 
-        std::array<int32, MAX_TIMERS> m_MirrorTimer;
+        int32 _lastShownProfessionSlot = -1; // slot .profession show filled last, so the next one replaces the other
+        std::unordered_set<uint32> _playerHiddenProfessions; // .profession hide: saved as professionSlot -2, never put back in a slot by itself
+        void RefreshProfessionSkillLines(std::initializer_list<uint32> skillIds);
+
+        std::array<MirrorTimer, MIRROR_TIMER_MAX> m_mirrorTimers;
+        int32 m_environmentalDamageTimer;
         uint8 m_MirrorTimerFlags;
-        uint8 m_MirrorTimerFlagsLast;
 
         // Current teleport data
         TeleportLocation m_teleport_dest;
@@ -3553,6 +3578,7 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
         uint32 m_petResummonDelay;                          // ms until the pet remembered at login is summoned (0 = none pending)
         bool m_petParkedForTravel;                          // pet put away because it could not follow the owner (boat, taxi, teleport)
         uint32 m_petParkedCheckTimer;
+        uint8 m_petParkedLoadFails;                         // resummon loads that failed while parked; bounded so a bad record cannot retry forever
         Optional<ReactStates> m_temporaryPetReactState;
         uint32 m_oldpetspell;
         ObjectGuid m_temporaryUnsummonedBattlePet;

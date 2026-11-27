@@ -24,11 +24,17 @@
 
 void WorldSession::HandleBattlePetRequestJournal(WorldPackets::BattlePet::BattlePetRequestJournal& /*battlePetRequestJournal*/)
 {
+    if (!_battlePetMgr) // a bot session has none (DropClientOnlyManagers)
+        return;
+
     GetBattlePetMgr()->SendJournal();
 }
 
 void WorldSession::HandleBattlePetRequestJournalLock(WorldPackets::BattlePet::BattlePetRequestJournalLock& /*battlePetRequestJournalLock*/)
 {
+    if (!_battlePetMgr) // a bot session has none (DropClientOnlyManagers)
+        return;
+
     GetBattlePetMgr()->SendJournalLockStatus();
 
     if (GetBattlePetMgr()->HasJournalLock())
@@ -37,6 +43,9 @@ void WorldSession::HandleBattlePetRequestJournalLock(WorldPackets::BattlePet::Ba
 
 void WorldSession::HandleBattlePetSetBattleSlot(WorldPackets::BattlePet::BattlePetSetBattleSlot& battlePetSetBattleSlot)
 {
+    if (!_battlePetMgr) // a bot session has none (DropClientOnlyManagers)
+        return;
+
     if (BattlePets::BattlePet* pet = GetBattlePetMgr()->GetPet(battlePetSetBattleSlot.PetGuid))
         if (WorldPackets::BattlePet::BattlePetSlot* slot = GetBattlePetMgr()->GetSlot(BattlePets::BattlePetSlot(battlePetSetBattleSlot.Slot)))
             slot->Pet = pet->PacketInfo;
@@ -44,6 +53,9 @@ void WorldSession::HandleBattlePetSetBattleSlot(WorldPackets::BattlePet::BattleP
 
 void WorldSession::HandleBattlePetModifyName(WorldPackets::BattlePet::BattlePetModifyName& battlePetModifyName)
 {
+    if (!_battlePetMgr) // a bot session has none (DropClientOnlyManagers)
+        return;
+
     GetBattlePetMgr()->ModifyName(battlePetModifyName.PetGuid, battlePetModifyName.Name, std::move(battlePetModifyName.DeclinedNames));
 }
 
@@ -69,7 +81,8 @@ void WorldSession::HandleQueryBattlePetName(WorldPackets::BattlePet::QueryBattle
         return;
     }
 
-    BattlePets::BattlePet const* battlePet = petOwner->ToPlayer()->GetSession()->GetBattlePetMgr()->GetPet(queryBattlePetName.BattlePetID);
+    BattlePets::BattlePetMgr* ownerBattlePetMgr = petOwner->ToPlayer()->GetSession()->GetBattlePetMgr();
+    BattlePets::BattlePet const* battlePet = ownerBattlePetMgr ? ownerBattlePetMgr->GetPet(queryBattlePetName.BattlePetID) : nullptr;
     if (!battlePet)
     {
         SendPacket(response.Write());
@@ -90,11 +103,17 @@ void WorldSession::HandleQueryBattlePetName(WorldPackets::BattlePet::QueryBattle
 
 void WorldSession::HandleBattlePetDeletePet(WorldPackets::BattlePet::BattlePetDeletePet& battlePetDeletePet)
 {
+    if (!_battlePetMgr) // a bot session has none (DropClientOnlyManagers)
+        return;
+
     GetBattlePetMgr()->RemovePet(battlePetDeletePet.PetGuid);
 }
 
 void WorldSession::HandleBattlePetSetFlags(WorldPackets::BattlePet::BattlePetSetFlags& battlePetSetFlags)
 {
+    if (!_battlePetMgr) // a bot session has none (DropClientOnlyManagers)
+        return;
+
     if (!GetBattlePetMgr()->HasJournalLock())
         return;
 
@@ -112,16 +131,25 @@ void WorldSession::HandleBattlePetSetFlags(WorldPackets::BattlePet::BattlePetSet
 
 void WorldSession::HandleBattlePetClearFanfare(WorldPackets::BattlePet::BattlePetClearFanfare& battlePetClearFanfare)
 {
+    if (!_battlePetMgr) // a bot session has none (DropClientOnlyManagers)
+        return;
+
     GetBattlePetMgr()->ClearFanfare(battlePetClearFanfare.PetGuid);
 }
 
 void WorldSession::HandleCageBattlePet(WorldPackets::BattlePet::CageBattlePet& cageBattlePet)
 {
+    if (!_battlePetMgr) // a bot session has none (DropClientOnlyManagers)
+        return;
+
     GetBattlePetMgr()->CageBattlePet(cageBattlePet.PetGuid);
 }
 
 void WorldSession::HandleBattlePetSummon(WorldPackets::BattlePet::BattlePetSummon& battlePetSummon)
 {
+    if (!_battlePetMgr) // a bot session has none (DropClientOnlyManagers)
+        return;
+
     if (*_player->m_activePlayerData->SummonedBattlePetGUID != battlePetSummon.PetGuid)
         GetBattlePetMgr()->SummonPet(battlePetSummon.PetGuid);
     else
@@ -130,5 +158,8 @@ void WorldSession::HandleBattlePetSummon(WorldPackets::BattlePet::BattlePetSummo
 
 void WorldSession::HandleBattlePetUpdateNotify(WorldPackets::BattlePet::BattlePetUpdateNotify& battlePetUpdateNotify)
 {
+    if (!_battlePetMgr) // a bot session has none (DropClientOnlyManagers)
+        return;
+
     GetBattlePetMgr()->UpdateBattlePetData(battlePetUpdateNotify.PetGuid);
 }

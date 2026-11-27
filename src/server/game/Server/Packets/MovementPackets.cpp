@@ -926,6 +926,11 @@ void MovementSpeedAck::Read()
     _worldPacket >> Speed;
 }
 
+void MoveSetTurnRateCheat::Read()
+{
+    _worldPacket >> Speed;
+}
+
 void MovementSpeedRangeAck::Read()
 {
     _worldPacket >> Ack;

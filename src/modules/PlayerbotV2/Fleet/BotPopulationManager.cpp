@@ -5491,7 +5491,7 @@ void BotPopulationManager::SeedBgMatches(uint32 now_ms)
     // Count active bot-relevant BG instances (any status) — same enumeration
     // TopUpActiveBGs uses. Seed only when below the cap.
     int32 active = 0;
-    for (auto const& [_, free_slot_store] : sBattlegroundMgr->GetBGFreeSlotQueues())
+    for (auto const& [queue_id, free_slot_store] : sBattlegroundMgr->GetAllBGFreeSlotQueues())
         for (Battleground* bg : free_slot_store)
             if (bg) ++active;
     if (active > 0)
@@ -5795,17 +5795,19 @@ void BotPopulationManager::TopUpActiveBGs(uint32 now_ms)
     if (prep_due)    last_bg_topup_ms_         = now_ms;
     if (running_due) last_bg_running_topup_ms_ = now_ms;
 
-    // Walk every queue's free-slot list. It holds the BG instances that
-    // still have capacity (TC's existing FreeSlotQueue mechanism), each
-    // in exactly one queue's list. For each BG below max population in
-    // prep OR running, re-issue BotQueueFiller::Fill. Newly-queued bots
-    // are auto-pulled into the BG by AddToBGFreeSlotQueue when the next
-    // queue cycle runs.
-    for (auto const& [_, free_slot_store] : sBattlegroundMgr->GetBGFreeSlotQueues())
+    // Walk the free-slot list of every queue. The free-slot list contains BG instances that
+    // still have capacity (TC's existing FreeSlotQueue mechanism). For
+    // each BG below max population in prep OR running, re-issue
+    // BotQueueFiller::Fill. Newly-queued bots are auto-pulled into the
+    // BG by AddToBGFreeSlotQueue when the next queue cycle runs.
+    // A queue only fills the instances it made (TrinityCore e5c9acdf34), so bots are queued in the instance's own queue
+    // (queue_bg_type): for a match the random queue made that is the random queue, not the battleground's own type.
+    for (auto const& [queue_id, free_slot_store] : sBattlegroundMgr->GetAllBGFreeSlotQueues())
     {
         for (Battleground* bg : free_slot_store)
         {
             if (!bg) continue;
+            uint32 const queue_bg_type = uint32(bg->GetQueueID().BattlemasterListId);
             auto const status = bg->GetStatus();
             bool const is_prep    = (status == STATUS_WAIT_JOIN);
             bool const is_running = (status == STATUS_IN_PROGRESS);
@@ -5817,7 +5819,7 @@ void BotPopulationManager::TopUpActiveBGs(uint32 now_ms)
             bool const has_human = BgHasHumanPlayer(bg);
             if (is_running && !has_human) continue;
             // A bot just left this type's running match to make room for a waiting human: no top-up until the human has taken the place.
-            if (BotQueueFiller::RoomRecentlyMade(uint32(bg->GetTypeID()), now_ms)) continue;
+            if (BotQueueFiller::RoomRecentlyMade(queue_bg_type, now_ms)) continue;
             // Respect each phase's own cadence:
             // - Prep BGs only on prep_due ticks (every 5s)
             // - Running BGs only on running_due ticks (every 30s)
@@ -5894,10 +5896,10 @@ void BotPopulationManager::TopUpActiveBGs(uint32 now_ms)
                 req.kind = BotQueueFiller::QueueKind::Bg;
                 req.bracket = bracket;
                 req.faction = ALLIANCE;
-                req.instance_id = uint32(bg->GetTypeID());
+                req.instance_id = queue_bg_type;
                 req.requesting_player = nullptr;
                 req.online_only = !allow_jit;
-                req.max_total_bots = uint8(Battleground::TopUpAfterInFlight(alli, max_per_team, BotQueueFiller::JitInFlight(uint32(bg->GetTypeID()), true)));
+                req.max_total_bots = uint8(Battleground::TopUpAfterInFlight(alli, max_per_team, BotQueueFiller::JitInFlight(queue_bg_type, true)));
                 req.single_faction = true;
                 if (target_level_for_bracket > 0)
                     req.target_level_override = target_level_for_bracket;
@@ -5915,10 +5917,10 @@ void BotPopulationManager::TopUpActiveBGs(uint32 now_ms)
                 req.kind = BotQueueFiller::QueueKind::Bg;
                 req.bracket = bracket;
                 req.faction = HORDE;
-                req.instance_id = uint32(bg->GetTypeID());
+                req.instance_id = queue_bg_type;
                 req.requesting_player = nullptr;
                 req.online_only = !allow_jit;
-                req.max_total_bots = uint8(Battleground::TopUpAfterInFlight(horde, max_per_team, BotQueueFiller::JitInFlight(uint32(bg->GetTypeID()), false)));
+                req.max_total_bots = uint8(Battleground::TopUpAfterInFlight(horde, max_per_team, BotQueueFiller::JitInFlight(queue_bg_type, false)));
                 req.single_faction = true;
                 if (target_level_for_bracket > 0)
                     req.target_level_override = target_level_for_bracket;
@@ -5937,9 +5939,9 @@ void BotPopulationManager::TopUpActiveBGs(uint32 now_ms)
                 "invited alli={} horde={}, waiting in queue alli={} horde={})",
                 bg->GetInstanceID(), uint32(bg->GetTypeID()), alli_free_tc, horde_free_tc, alli, horde,
                 bg->GetInvitedCount(ALLIANCE), bg->GetInvitedCount(HORDE),
-                sBattlegroundMgr->GetBattlegroundQueue(BattlegroundMgr::BGQueueTypeId(uint16(bg->GetTypeID()), BattlegroundQueueIdType::Battleground,
+                sBattlegroundMgr->GetBattlegroundQueue(BattlegroundMgr::BGQueueTypeId(uint16(queue_bg_type), BattlegroundQueueIdType::Battleground,
                     false, 0)).GetQueuedPlayersCount(TEAM_ALLIANCE, BattlegroundBracketId(bracket)),
-                sBattlegroundMgr->GetBattlegroundQueue(BattlegroundMgr::BGQueueTypeId(uint16(bg->GetTypeID()), BattlegroundQueueIdType::Battleground,
+                sBattlegroundMgr->GetBattlegroundQueue(BattlegroundMgr::BGQueueTypeId(uint16(queue_bg_type), BattlegroundQueueIdType::Battleground,
                     false, 0)).GetQueuedPlayersCount(TEAM_HORDE, BattlegroundBracketId(bracket)));
 
             TC_LOG_INFO("playerbot.v2",

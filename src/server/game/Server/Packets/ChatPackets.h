@@ -65,6 +65,7 @@ namespace WorldPackets
             ObjectGuid TargetGUID;
             uint32 TargetVirtualRealmAddress = 0;
             std::string Target;
+            std::string TargetSurname;      // Classic 1.60: the target's surname, sent apart from the name (empty for a typed "/w Name")
             std::string Text;
         };
 

@@ -2249,7 +2249,7 @@ local function ToggleMinimapMenu()
     if not mmMenu then
         local m = CreateFrame("Frame", "ForeverBotsMinimapMenu", UIParent, BackdropTemplateMixin and "BackdropTemplate" or nil)
         mmMenu = m
-        m:SetSize(170, 5 * 28 + 12)   -- five items below
+        m:SetSize(170, 8 * 28 + 12)   -- eight items below
         m:SetFrameStrata("DIALOG")
         m:EnableMouse(true)
         if m.SetBackdrop then
@@ -2263,6 +2263,10 @@ local function ToggleMinimapMenu()
             { L["Raid ready"], RaidReady },
             { L["Call saved bots"], function() ServerCommand(".bot summon saved") end },
             { L["Dismiss all bots"], function() ServerCommand(".bot dismiss all") end },
+            -- arena (".bot arena"): the party leader queues the party; 2v2 needs a party of 2, 3v3 a party of 3 (bots count)
+            { L["Arena 2v2"], function() ServerCommand(".bot arena 2") end },
+            { L["Arena 3v3"], function() ServerCommand(".bot arena 3") end },
+            { L["Leave arena queue"], function() ServerCommand(".bot arena leave") end },
             { CombatPlates.Label(), CombatPlates.Toggle, "plates" },
             { L["Hide this button"], function()
                 ForeverBotsDB.minimap.hidden = true

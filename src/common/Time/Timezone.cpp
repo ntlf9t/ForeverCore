@@ -76,6 +76,7 @@ std::chrono::time_zone const* GetCurrentZone()
 }
 #endif
 
+#if TRINITY_PLATFORM == TRINITY_PLATFORM_WINDOWS
 // Local time offset from the C runtime, used where the time zone database is not available
 Seconds GetCrtZoneOffsetAt(SystemTimePoint date)
 {
@@ -83,6 +84,7 @@ Seconds GetCrtZoneOffsetAt(SystemTimePoint date)
     tm local = TimeBreakdown(utc);
     return Seconds(timegm(&local) - utc);
 }
+#endif
 
 std::unordered_map<uint32, Minutes, std::identity> InitTimezoneHashDb()
 {

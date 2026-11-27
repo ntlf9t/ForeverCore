@@ -19,17 +19,19 @@
 #include "ArenaTeam.h"
 #include "Config.h"
 #include "DatabaseEnv.h"
+#include "FullName.h"
 #include "Log.h"
 #include "MiscPackets.h"
 #include "Player.h"
 #include "Timer.h"
 #include "World.h"
 #include <unordered_map>
+#include <vector>
 
 namespace
 {
     std::unordered_map<ObjectGuid, CharacterCacheEntry> _characterCacheStore;
-    std::unordered_map<std::string, CharacterCacheEntry*> _characterCacheByNameStore;
+    std::unordered_multimap<std::string, CharacterCacheEntry*> _characterCacheByNameStore;
 }
 
 CharacterCache::CharacterCache()
@@ -78,6 +80,7 @@ bool CharacterCache::AreSurnamesEnabled()
 void CharacterCache::LoadCharacterCacheStorage()
 {
     _characterCacheStore.clear();
+    _characterCacheByNameStore.clear();
     uint32 oldMSTime = getMSTime();
 
     QueryResult result = CharacterDatabase.Query("SELECT guid, name, account, race, gender, class, level, deleteDate, surname FROM characters");
@@ -106,6 +109,7 @@ Modifying functions
 void CharacterCache::AddCharacterCacheEntry(ObjectGuid const& guid, uint32 accountId, std::string const& name, uint8 gender, uint8 race, uint8 playerClass, uint8 level, bool isDeleted)
 {
     CharacterCacheEntry& data = _characterCacheStore[guid];
+    RemoveFromNameStore(data.Name, &data);  // re-adding an existing guid must not leave a stale name entry behind
     data.Guid = guid;
     data.Name = name;
     data.AccountId = accountId;
@@ -120,7 +124,31 @@ void CharacterCache::AddCharacterCacheEntry(ObjectGuid const& guid, uint32 accou
 
     // Fill Name to Guid Store
     if (!isDeleted)
-        _characterCacheByNameStore[name] = &data;
+        AddToNameStore(name, &data);
+}
+
+void CharacterCache::AddToNameStore(std::string const& name, CharacterCacheEntry* entry)
+{
+    // never register the same entry twice under one name
+    auto range = _characterCacheByNameStore.equal_range(name);
+    for (auto itr = range.first; itr != range.second; ++itr)
+        if (itr->second == entry)
+            return;
+
+    _characterCacheByNameStore.emplace(name, entry);
+}
+
+void CharacterCache::RemoveFromNameStore(std::string const& name, CharacterCacheEntry const* entry)
+{
+    auto range = _characterCacheByNameStore.equal_range(name);
+    for (auto itr = range.first; itr != range.second; ++itr)
+    {
+        if (itr->second == entry)
+        {
+            _characterCacheByNameStore.erase(itr);
+            return;
+        }
+    }
 }
 
 void CharacterCache::UpdateCharacterSurname(ObjectGuid const& guid, std::string const& surname)
@@ -136,10 +164,12 @@ std::string CharacterCache::GetCharacterSurnameByGuid(ObjectGuid guid) const
     return itr != _characterCacheStore.end() ? itr->second.Surname : std::string();
 }
 
-void CharacterCache::DeleteCharacterCacheEntry(ObjectGuid const& guid, std::string const& name)
+void CharacterCache::DeleteCharacterCacheEntry(ObjectGuid const& guid, std::string const& /*name*/)
 {
+    auto itr = _characterCacheStore.find(guid);
+    if (itr != _characterCacheStore.end())
+        RemoveFromNameStore(itr->second.Name, &itr->second);  // use the stored name, never trust the caller's
     _characterCacheStore.erase(guid);
-    _characterCacheByNameStore.erase(name);
 }
 
 void CharacterCache::UpdateCharacterData(ObjectGuid const& guid, std::string const& name, Optional<uint8> gender /*= {}*/, Optional<uint8> race /*= {}*/)
@@ -162,8 +192,8 @@ void CharacterCache::UpdateCharacterData(ObjectGuid const& guid, std::string con
     sWorld->SendGlobalMessage(invalidatePlayer.Write());
 
     // Correct name -> pointer storage
-    _characterCacheByNameStore.erase(oldName);
-    _characterCacheByNameStore[name] = &itr->second;
+    RemoveFromNameStore(oldName, &itr->second);
+    AddToNameStore(name, &itr->second);
 }
 
 void CharacterCache::UpdateCharacterGender(ObjectGuid const& guid, uint8 gender)
@@ -219,9 +249,9 @@ void CharacterCache::UpdateCharacterInfoDeleted(ObjectGuid const& guid, bool del
         return;
 
     if (deleted)
-        _characterCacheByNameStore.erase(itr->second.Name);
+        RemoveFromNameStore(itr->second.Name, &itr->second);
     else
-        _characterCacheByNameStore[name] = &itr->second;
+        AddToNameStore(name, &itr->second);
 
     itr->second.Name = name;
     itr->second.IsDeleted = deleted;
@@ -246,18 +276,38 @@ CharacterCacheEntry const* CharacterCache::GetCharacterCacheByGuid(ObjectGuid co
 
 CharacterCacheEntry const* CharacterCache::GetCharacterCacheByName(std::string const& name) const
 {
-    auto itr = _characterCacheByNameStore.find(name);
-    if (itr != _characterCacheByNameStore.end())
-        return itr->second;
+    // "Bob", "bob smith": several characters may be called Bob, only the full name is unique (Trinity::FullName::Pick)
+    Trinity::FullName::Parts parts;
+    if (!Trinity::FullName::Split(name, parts))
+        return nullptr;
+
+    std::vector<CharacterCacheEntry const*> candidates;
+    std::vector<std::string_view> surnames;
+    auto range = _characterCacheByNameStore.equal_range(parts.Name);
+    for (auto itr = range.first; itr != range.second; ++itr)
+    {
+        candidates.push_back(itr->second);
+        surnames.push_back(itr->second->Surname);
+    }
+
+    std::size_t picked = Trinity::FullName::Pick(surnames, parts);
+    return picked < candidates.size() ? candidates[picked] : nullptr;
+}
+
+CharacterCacheEntry const* CharacterCache::GetCharacterCacheByFullName(std::string const& name, std::string const& surname) const
+{
+    auto range = _characterCacheByNameStore.equal_range(name);
+    for (auto itr = range.first; itr != range.second; ++itr)
+        if (Trinity::FullName::SurnameEquals(itr->second->Surname, surname))
+            return itr->second;
 
     return nullptr;
 }
 
 ObjectGuid CharacterCache::GetCharacterGuidByName(std::string const& name) const
 {
-    auto itr = _characterCacheByNameStore.find(name);
-    if (itr != _characterCacheByNameStore.end())
-        return itr->second->Guid;
+    if (CharacterCacheEntry const* entry = GetCharacterCacheByName(name))
+        return entry->Guid;
 
     return ObjectGuid::Empty;
 }

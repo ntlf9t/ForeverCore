@@ -39,3 +39,23 @@ TEST_CASE("Loopback and a limit of 0 are never limited or counted", "[IpConnecti
     CHECK(limit.GetCount("127.0.0.1") == 0);
     CHECK(limit.GetCount("10.0.0.5") == 0);
 }
+
+TEST_CASE("A place given back when the connection closes is not given back again when the socket goes", "[IpConnectionLimit]")
+{
+    // WorldSocket drops its Slot in OnClose and the (now empty) pointer again in its destructor: the count must drop once.
+    IpConnectionLimit limit;
+    auto closed = limit.TryAcquire("10.0.0.7", false, 2);
+    auto open = limit.TryAcquire("10.0.0.7", false, 2);
+    REQUIRE(closed);
+    REQUIRE(open);
+
+    closed.reset();  // OnClose
+    CHECK(limit.GetCount("10.0.0.7") == 1);
+    closed.reset();  // ~WorldSocket
+    CHECK(limit.GetCount("10.0.0.7") == 1);
+
+    // a reconnect gets the freed place while the other connection keeps its own
+    auto reconnect = limit.TryAcquire("10.0.0.7", false, 2);
+    CHECK(reconnect);
+    CHECK(!limit.TryAcquire("10.0.0.7", false, 2));
+}

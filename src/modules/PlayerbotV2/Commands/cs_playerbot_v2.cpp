@@ -74,6 +74,7 @@
 #include "Fleet/BotComposition.h"
 #include "Fleet/BotIdentityRegistry.h"
 #include "Fleet/BotPopulationManager.h"
+#include "Fleet/AutoRaid.h"    // a raid made for one more member may go back to a party
 #include "Fleet/BotSize.h"
 #include "Fleet/InstanceGroupCap.h"
 #include "Fleet/BotSetupPipeline.h"
@@ -796,6 +797,8 @@ public:
             { "addon",         HandleBotAddonHello, rbac::RBAC_PERM_JOIN_NORMAL_BG, Console::No },
             { "add",           HandleBotAdd,        rbac::RBAC_PERM_JOIN_NORMAL_BG, Console::No  },
             { "lfg",           HandleBotLfg,        rbac::RBAC_PERM_JOIN_NORMAL_BG, Console::No  },
+            // Every player: `.bot arena 2|3|leave` queues the caller's party (leader only) for a 2v2 / 3v3 arena, or leaves it.
+            { "arena",         HandleBotArena,      rbac::RBAC_PERM_JOIN_NORMAL_BG, Console::No  },
             { "dungeon",       HandleBotDungeon,    rbac::RBAC_PERM_JOIN_NORMAL_BG, Console::No  },
             // Every player: `.bot lead [on|pause|off]` hands the lead of a 5-man dungeon to the caller's tank bot and back.
             { "lead",          HandleBotLead,       rbac::RBAC_PERM_JOIN_NORMAL_BG, Console::No  },
@@ -1038,6 +1041,101 @@ public:
 
     // .bot lfg [tank|healer|dps]: fill the group's missing tank / healer / damage places now with level-matched companions
     // (the Group Finder does the same by itself when nobody joins a posted listing in time). The word is your own role.
+    // `.bot arena 2|3|enter|leave`: the arena join without the client's arena window. The party leader queues the whole party through
+    // the same handler as the client's join (party size, level bracket and the bot opponents all as for the window). "enter" takes
+    // the arena that is ready (the same as Enter on the pop), "leave" leaves the arena queue or turns down the ready arena (not a
+    // running match): the client's own arena pop has Enter only. The ForeverBots add-on sends the same lines from its pop-up.
+    static bool HandleBotArena(ChatHandler* handler, Optional<std::string> what)
+    {
+        Playerbot::BotLanguage::LocalizedHandler localized(handler); handler = localized.Get();   // replies in the player's language
+        WorldSession* session = handler->GetSession();
+        Player* player = session ? session->GetPlayer() : nullptr;
+        if (!player)
+            return false;
+        std::string const w = what ? ToLowerAscii(*what) : std::string();
+        if (w == "enter")
+        {
+            for (uint8 slot = 0; slot < PLAYER_MAX_BATTLEGROUND_QUEUES; ++slot)
+            {
+                BattlegroundQueueTypeId const q = player->GetBattlegroundQueueTypeId(slot);
+                if (q == BATTLEGROUND_QUEUE_NONE || q.Type != uint8(BattlegroundQueueIdType::Arena) || !player->IsInvitedForBattlegroundQueueType(q))
+                    continue;
+                WorldPackets::Battleground::BattlefieldPort port{ WorldPacket(CMSG_BATTLEFIELD_PORT) };
+                port.Ticket.RequesterGuid = player->GetGUID();
+                port.Ticket.Id = slot;
+                port.Ticket.Type = WorldPackets::LFG::RideType::Battlegrounds;
+                port.AcceptedInvite = true;
+                session->HandleBattleFieldPortOpcode(port);
+                return true;
+            }
+            handler->SendSysMessage("No arena is ready for you yet.");
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+        if (w == "leave")
+        {
+            bool left = false;
+            for (uint8 slot = 0; slot < PLAYER_MAX_BATTLEGROUND_QUEUES; ++slot)
+            {
+                BattlegroundQueueTypeId const q = player->GetBattlegroundQueueTypeId(slot);
+                if (q == BATTLEGROUND_QUEUE_NONE || q.Type != uint8(BattlegroundQueueIdType::Arena))
+                    continue;
+                WorldPackets::Battleground::BattlefieldPort port{ WorldPacket(CMSG_BATTLEFIELD_PORT) };
+                port.Ticket.RequesterGuid = player->GetGUID();
+                port.Ticket.Id = slot;
+                port.Ticket.Type = WorldPackets::LFG::RideType::Battlegrounds;
+                port.AcceptedInvite = false;
+                session->HandleBattleFieldPortOpcode(port);
+                left = true;
+            }
+            // The party's bots leave the same queue with you (and an arena that has not begun yet), so they do not go in alone.
+            if (left)
+                if (Group* group = player->GetGroup())
+                    for (GroupReference const& itr : group->GetMembers())
+                    {
+                        Player* member = itr.GetSource();
+                        if (!member || member == player || !member->GetSession() || !member->GetSession()->IsBot())
+                            continue;
+                        if (Battleground* bg = member->GetBattleground(); bg && bg->isArena() && bg->GetStatus() == STATUS_WAIT_JOIN)
+                            member->LeaveBattleground(true, /*withoutDeserterDebuff*/ true);
+                        for (uint8 slot = 0; slot < PLAYER_MAX_BATTLEGROUND_QUEUES; ++slot)
+                        {
+                            BattlegroundQueueTypeId const q = member->GetBattlegroundQueueTypeId(slot);
+                            if (q == BATTLEGROUND_QUEUE_NONE || q.Type != uint8(BattlegroundQueueIdType::Arena))
+                                continue;
+                            sBattlegroundMgr->GetBattlegroundQueue(q).RemovePlayer(member->GetGUID(), true);
+                            member->RemoveBattlegroundQueueId(q);
+                        }
+                    }
+            handler->SendSysMessage(left ? "You left the arena queue." : "You are not in an arena queue.");
+            return true;
+        }
+        uint8 slot = 0xFF;
+        if (w == "2" || w == "2v2") slot = 0;          // ArenaTeam::GetTypeBySlot: 0 = 2v2, 1 = 3v3
+        else if (w == "3" || w == "3v3") slot = 1;
+        if (slot == 0xFF)
+        {
+            handler->SendSysMessage("Usage: .bot arena 2 (2v2, a party of 2), .bot arena 3 (3v3, a party of 3), .bot arena enter, .bot arena leave");
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+        if (Group const* grp = player->GetGroup(); grp && grp->GetLeaderGUID() != player->GetGUID())
+        {
+            handler->SendSysMessage("Only the party leader can queue the party for an arena.");
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+        if (player->InBattleground())
+        {
+            handler->SendSysMessage("You are already in a battleground or arena.");
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+        // HandleBattlemasterJoinArena answers on its own (queued, wrong party size, arenas off)
+        BattlegroundMgr::QueuePlayerForArena(player, slot, 0);
+        return true;
+    }
+
     static bool HandleBotLfg(ChatHandler* handler, Optional<std::string> ownRoleArg)
     {
         Playerbot::BotLanguage::LocalizedHandler localized(handler); handler = localized.Get();   // replies in the player's language
@@ -3620,7 +3718,7 @@ public:
     // Mirrors LFGMgr's direct group creation (Group::Create + AddMember,
     // no invite round-trip â headless bot sessions can't click invites
     // from the console anyway).
-    static bool HandleGroup(ChatHandler* handler, char const* args)
+    static bool HandleGroup(ChatHandler* handler, Tail args)
     {
         if (handler && handler->GetSession() && handler->GetSession()->GetPlayer()
             && PlayerMode::IsLone(handler->GetSession()->GetPlayer()))
@@ -3629,7 +3727,7 @@ public:
             return false;
         }
 
-        if (!args || !*args)
+        if (args.empty())
         {
             handler->SendSysMessage(
                 "Usage: .playerbot group <leader> <member> [member...]");
@@ -4198,7 +4296,7 @@ public:
         return Trinity::StringFormat(
             "{} paths_run={} with_road={} ({:.1f}%) disabled={} ({:.1f}%) "
             "in_instance={} slope_penalty={} ({:.1f}%) "
-            "road_polys={}/{} ({:.2f}%)",
+            "road_polys={}/{} ({:.2f}%) out_of_nodes={} ({:.2f}%) poly_cap={} ({:.2f}%)",
             label,
             st.pathsRun,
             st.pathsWithRoadPoly,
@@ -4209,7 +4307,9 @@ public:
             st.pathsWithSlopePenalty,
             st.pathsRun ? 100.0 * st.pathsWithSlopePenalty / st.pathsRun : 0.0,
             st.roadPolysVisited, st.totalPolysVisited,
-            st.totalPolysVisited ? 100.0 * st.roadPolysVisited / st.totalPolysVisited : 0.0);
+            st.totalPolysVisited ? 100.0 * st.roadPolysVisited / st.totalPolysVisited : 0.0,
+            st.pathsOutOfNodes, st.pathsRun ? 100.0 * st.pathsOutOfNodes / st.pathsRun : 0.0,
+            st.pathsPolyCapHit, st.pathsRun ? 100.0 * st.pathsPolyCapHit / st.pathsRun : 0.0);
     }
 
     static bool HandleRoadStats(ChatHandler* handler, Optional<std::string> argOpt)
@@ -6118,7 +6218,9 @@ public:
         }
 
         int32 const before = p->GetPower(POWER_RAGE);
-        float const expected = ClassicRage::RageFromDamage(float(damage), float(p->GetLevel()), false) * sWorld->getRate(RATE_POWER_RAGE_INCOME) * 10.0f;
+        float const expected = ClassicRage::RageFromDamageTaken(float(damage), float(attacker->GetLevelForTarget(p)),
+            (attacker->GetPowerType() == POWER_MANA || attacker->GetPowerType() == POWER_ENERGY) ? ClassicRage::NonRageAttackerMultiplier : 1.0f)
+            * sWorld->getRate(RATE_POWER_RAGE_INCOME) * 10.0f;
         CleanDamage clean(0, 0, BASE_ATTACK, MELEE_HIT_NORMAL);
         Unit::DealDamage(attacker, p, damage, &clean, DIRECT_DAMAGE, SPELL_SCHOOL_MASK_NORMAL, nullptr, false);
         int32 const after = p->GetPower(POWER_RAGE);
@@ -9708,6 +9810,7 @@ class playerbot_v2_addon_listener : public PlayerScript
 public:
     playerbot_v2_addon_listener() : PlayerScript("playerbot_v2_addon_listener") {}
 
+    using PlayerScript::OnChat;
     void OnChat(Player* player, uint32 /*type*/, uint32 lang,
                 std::string& msg, Player* receiver) override
     {

@@ -103,7 +103,7 @@ constexpr uint32 SOUL_FRAGMENTS       = 203981;       // counter aura (stacks)
 constexpr uint32 DISRUPT              = 183752;
 constexpr uint32 TORMENT              = 185245;
 constexpr uint32 DARKNESS             = 196718;       // talent [R]
-constexpr uint32 IMPRISON             = 217832;       // talent [M] (no rule yet)
+[[maybe_unused]] constexpr uint32 IMPRISON             = 217832;       // talent [M] (no rule yet)
 constexpr uint32 FEL_DEVASTATION      = 212084;       // talent [R] (320639 = rank-2 passive)
 constexpr uint32 SOUL_CARVER          = 207407;       // talent - 1min CD
 constexpr uint32 THROW_GLAIVE         = 185123;       // baseline

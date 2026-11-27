@@ -41,7 +41,9 @@
 #include "SpellHistory.h"
 #include "SpellInfo.h"
 #include "SpellMgr.h"
+#include "ScriptedCreature.h"
 #include "SpellScript.h"
+#include "TemporarySummon.h"
 #include "Unit.h"
 #include <atomic>
 #include <mutex>
@@ -224,6 +226,10 @@ class classic_spell_warr_blood_craze : public AuraScript
         if (!damageInfo || !damageInfo->GetDamage())
             return false;
 
+        // WoW Forever 1.60.1.70755: "Blood Craze will no longer activate when sitting." (a sitting target takes crits every hit)
+        if (!GetTarget()->IsStandState())
+            return false;
+
         if (eventInfo.GetHitMask() & PROC_HIT_CRITICAL)
             return true;
 
@@ -370,6 +376,36 @@ class classic_spell_warr_flurry : public AuraScript
 // 12966 - Flurry (the buff): which swings spend a charge beyond its client proc flags. Windfury Totem's strike spends none,
 // and a crit always leaves 3 charges: the talent 12319 recasts the buff on the same event, and the charge drop ran after that recast in
 // part of the cases (wowsims/forever, MIT, docs/evidence EV-0140: 60 of 60 crits end at 3; EV-0138).
+class classic_spell_warr_intercept_stun : public SpellScript
+{
+    bool IsImmune(Unit const* target) const
+    {
+        Unit const* warrior = GetCaster();
+        return target && warrior && !target->IsPlayer()
+            && int32(target->GetLevelForTarget(warrior)) >= int32(warrior->GetLevelForTarget(target)) + 3;
+    }
+
+    void HandleHit(SpellEffIndex effIndex)
+    {
+        Unit* target = GetHitUnit();
+        if (!IsImmune(target))
+            return;
+
+        PreventHitDefaultEffect(effIndex);
+        PreventHitAura();
+        if (GetEffectInfo().IsEffect(SPELL_EFFECT_SCHOOL_DAMAGE))
+        {
+            PreventHitDamage();
+            GetCaster()->SendSpellDamageImmune(target, GetSpellInfo()->Id, false);
+        }
+    }
+
+    void Register() override
+    {
+        OnEffectHitTarget += SpellEffectFn(classic_spell_warr_intercept_stun::HandleHit, EFFECT_ALL, SPELL_EFFECT_ANY);
+    }
+};
+
 class classic_spell_warr_flurry_buff : public AuraScript
 {
     bool CheckProc(ProcEventInfo& eventInfo)
@@ -395,6 +431,11 @@ class classic_spell_warr_flurry_buff : public AuraScript
 
 // 12322 - Unbridled Wrath (talent): "Gives you a $m1% chance to generate an additional Rage point when you deal melee damage with a weapon."
 // The client talent triggers 12964 (one rage) with the spell's own 100% proc chance; the rank (aura amount) is the chance.
+// WoW Forever: only landed white swings, Windfury Totem's strike, Heroic Strike and each target a Cleave lands on roll it (hotfix of 16 Nov:
+// "now activates from Cleave and Heroic Strike"; wowsims/forever, MIT, EV-0148: white swings 1,241 of 2,109, Heroic Strike 248 of 402,
+// Windfury Totem 16 of 27, Cleave 0.60 a target; Shield Slam 0 of 977, Revenge 0 of 601, Thunder Clap 0 of 2,238, Retaliation, Victory
+// Rush and Shield Bash none; Whirlwind none in EV-0138). Every other melee ability rolled it here. Heroic Strike and Cleave are the
+// warrior's on-next-swing abilities.
 class classic_spell_warr_unbridled_wrath : public AuraScript
 {
     bool Validate(SpellInfo const* spellInfo) override
@@ -404,8 +445,26 @@ class classic_spell_warr_unbridled_wrath : public AuraScript
         return true;
     }
 
-    bool CheckProc(ProcEventInfo& /*eventInfo*/)
+    static bool RollsUnbridledWrath(SpellInfo const* spellInfo)
     {
+        if (!spellInfo)
+            return true;    // a white swing
+
+        switch (spellInfo->Id)
+        {
+            case 8516: case 10608: case 10610:  // Windfury Totem's strike, a main hand swing
+                return true;
+            default:
+                break;
+        }
+        return spellInfo->IsNextMeleeSwingSpell();  // Heroic Strike, Cleave
+    }
+
+    bool CheckProc(ProcEventInfo& eventInfo)
+    {
+        if (!RollsUnbridledWrath(eventInfo.GetSpellInfo()))
+            return false;
+
         AuraEffect const* talent = GetEffect(EFFECT_0);
         return talent && roll_chance(talent->GetAmountAsInt());
     }
@@ -419,6 +478,8 @@ class classic_spell_warr_unbridled_wrath : public AuraScript
 // 12292 - Sweeping Strikes: "Your next 5 melee attacks strike an additional nearby opponent." The client ability is a dummy aura with 5
 // charges; nothing was bound to it (the retail script is bound to 12328, which is Death Wish here). Each melee hit that does damage
 // uses a charge; the copy is 12723 with the damage of the attack, on a nearby enemy of the target when there is one.
+// WoW Forever 1.60.1.70888: "Sweeping Strikes no longer loses charges if no second target is hit." A hit with no second target in reach
+// does not proc (so keeps its charge).
 class classic_spell_warr_sweeping_strikes : public AuraScript
 {
     bool Validate(SpellInfo const* spellInfo) override
@@ -435,7 +496,10 @@ class classic_spell_warr_sweeping_strikes : public AuraScript
             return false;
 
         SpellInfo const* spellInfo = damageInfo->GetSpellInfo();
-        return !spellInfo || (spellInfo->Id != SPELL_WARRIOR_SWEEPING_STRIKES_STRIKE && spellInfo->Id != SPELL_WARRIOR_SWEEPING_STRIKES_NORMALIZED);
+        if (spellInfo && (spellInfo->Id == SPELL_WARRIOR_SWEEPING_STRIKES_STRIKE || spellInfo->Id == SPELL_WARRIOR_SWEEPING_STRIKES_NORMALIZED))
+            return false;
+
+        return SelectSecondTarget(GetTarget(), eventInfo.GetActionTarget()) != nullptr;
     }
 
     // Unit::SelectNearbyTarget, plus: "Sweeping Strikes will now ignore dead targets, and will ignore PvP enabled targets if you are not
@@ -863,10 +927,22 @@ private:
 
 // 12281 - Weaponmaster (sword), 1290312 - Hack and Slash (axe/sword): extra attack passives of the talents above. The proc chance is the
 // talent rank ($s3, put into this aura amount by classic_spell_weapon_type_talent; spell_proc Chance 100).
+// WoW Forever 1.60.1.70450: "Fixed an issue where Weaponmaster's Sword Specialization could be activated by Shield Bash and Shield Slam."
 class classic_spell_weapon_extra_attack_chance : public AuraScript
 {
-    bool CheckProc(ProcEventInfo& /*eventInfo*/)
+    bool CheckProc(ProcEventInfo& eventInfo)
     {
+        if (GetId() == 12281)
+            if (SpellInfo const* spellInfo = eventInfo.GetSpellInfo())
+                switch (spellInfo->Id)
+                {
+                    case 72: case 1671: case 1672:                      // Shield Bash
+                    case 23922: case 23923: case 23924: case 23925:     // Shield Slam
+                        return false;
+                    default:
+                        break;
+                }
+
         AuraEffect const* chance = GetEffect(EFFECT_0);
         return chance && roll_chance(chance->GetAmountAsInt());
     }
@@ -951,33 +1027,56 @@ class classic_spell_warr_execute : public SpellScript
 
     // VMaNGOS (scripts/spells/spell_warrior.cpp, WarriorExecuteDummyScript): the damage spell is cast from OnCast, not from the effect, with
     // the base points plus the rage still held times the per-rage factor, and the rage is gone afterwards.
+    // WoW Forever: an Execute that misses, is dodged or parried costs its base rage alone; the extra rage stays and none of the cost comes
+    // back (MythicSim docs/mechanics.md, MIT: 36 of 36 avoided Executes from 14 warriors, client 70862 logs). The extra rage is the
+    // warrior's until the damage spell lands: classic_spell_warr_execute_damage takes it then.
     void HandleCast()
     {
         Unit* warrior = GetCaster();
         Unit* target = GetExplTargetUnit();
         if (!target)
         {
-            TC_LOG_ERROR("scripts.classic", "Execute {}: cast without a target unit", GetSpellInfo()->Id);
+            TC_LOG_DEBUG("scripts.classic", "Execute {}: cast without a target unit", GetSpellInfo()->Id);
             return;
         }
 
         // The cost is taken before the cast: what is left of the rage, plus whatever the cast took beyond the 15 rage
         // (a cost row that drains everything), is what Execute turns into damage.
         int32 spent = GetSpell()->GetPowerTypeCostAmount(POWER_RAGE).value_or(0);
-        int32 extraRage = std::max(0, spent - EXECUTE_RAGE_COST) + int32(warrior->GetPower(POWER_RAGE));
+        int32 const takenBeyondCost = std::max(0, spent - EXECUTE_RAGE_COST);
+        int32 extraRage = takenBeyondCost + int32(warrior->GetPower(POWER_RAGE));
         int32 damage = GetSpellInfo()->GetEffect(EFFECT_0).CalcValue(warrior) + (extraRage / 10) * GetDamagePerRage(GetSpellInfo()->Id);
+
+        // an avoided Execute keeps the extra rage, so what a draining cost row took beyond the base cost goes back before the roll
+        if (takenBeyondCost > 0)
+            warrior->SetPower(POWER_RAGE, warrior->GetPower(POWER_RAGE) + takenBeyondCost);
 
         SpellCastResult result = warrior->CastSpell(target, SPELL_WARRIOR_EXECUTE_DAMAGE, CastSpellExtraArgs(TRIGGERED_FULL_MASK)
             .SetTriggeringSpell(GetSpell())
             .AddSpellBP0(damage));
         TC_LOG_DEBUG("scripts.classic", "Execute {}: damage spell {} on {} for {} (extra rage {}) -> cast result {}",
             GetSpellInfo()->Id, SPELL_WARRIOR_EXECUTE_DAMAGE, target->GetGUID().ToString(), damage, extraRage, uint32(result));
-        warrior->SetPower(POWER_RAGE, 0);
     }
 
     void Register() override
     {
         OnCast += SpellCastFn(classic_spell_warr_execute::HandleCast);
+    }
+};
+
+// 20647 - Execute (the damage spell): a hit that lands (a partial block included) takes the warrior's extra rage, which classic_spell_warr_execute
+// already turned into damage; a miss, dodge or parry runs no effect and leaves it (MythicSim docs/mechanics.md, see classic_spell_warr_execute).
+class classic_spell_warr_execute_damage : public SpellScript
+{
+    void HandleLanded(SpellEffIndex /*effIndex*/)
+    {
+        if (Unit* warrior = GetCaster())
+            warrior->SetPower(POWER_RAGE, 0);
+    }
+
+    void Register() override
+    {
+        OnEffectHitTarget += SpellEffectFn(classic_spell_warr_execute_damage::HandleLanded, EFFECT_0, SPELL_EFFECT_ANY);
     }
 };
 
@@ -1326,6 +1425,102 @@ class classic_spell_rog_ghostly_strike : public SpellScript
     {
         CalcDamage += SpellCalcDamageFn(classic_spell_rog_ghostly_strike::CalculateDamage);
     }
+};
+
+// 16511 - Hemorrhage (rogue talent): "An instant strike that deals $m4% weapon damage ($m5% if a Dagger is equipped) and causes the target
+// to take $m3% increased Rupture and Garrote damage from the Rogue." Effect 3 is the weapon damage percent and effect 4 the dagger percent
+// as a dummy, so a dagger got the lower one, as Ghostly Strike's did (wowsims/forever, MIT, sim/rogue/talents_subtlety.go
+// registerHemorrhage: EffectN(5) with a main hand dagger, else EffectN(4)). The Rupture and Garrote bonus is the client's aura 271.
+class classic_spell_rog_hemorrhage : public SpellScript
+{
+    bool Validate(SpellInfo const* spellInfo) override
+    {
+        return ValidateSpellEffect({ { spellInfo->Id, EFFECT_4 } });
+    }
+
+    void CalculateDamage(SpellEffectInfo const& /*spellEffectInfo*/, Unit* /*victim*/, int32& /*damage*/, int32& /*flatMod*/, float& pctMod) const
+    {
+        Player* rogue = GetCaster()->ToPlayer();
+        if (!rogue)
+            return;
+
+        Item const* mainHand = rogue->GetWeaponForAttack(BASE_ATTACK, true);
+        if (!mainHand || mainHand->GetTemplate()->GetSubClass() != ITEM_SUBCLASS_WEAPON_DAGGER)
+            return;
+
+        float const normal = GetSpellInfo()->GetEffect(EFFECT_3).CalcValue(rogue);
+        float const dagger = GetSpellInfo()->GetEffect(EFFECT_4).CalcValue(rogue);
+        if (normal > 0.0f)
+            pctMod *= dagger / normal;
+    }
+
+    void Register() override
+    {
+        CalcDamage += SpellCalcDamageFn(classic_spell_rog_hemorrhage::CalculateDamage);
+    }
+};
+
+// 14183 - Premeditation (rogue talent): "Adds $s1 Combo Points to your target. You must add to or use those combo points within $d or the
+// combo points are lost." Effect 0 (energize) puts the points on the explicit target (Spell::EffectEnergize, ClassicComboTarget) and the
+// dummy (effect 2) only gives the spell that enemy target. Effect 1, aura 560 (retain combo points), had no handler, so the points never
+// went away. The aura keeps the points and target it was applied with: an ability that changes either (adds to or spends the points)
+// removes it, and when it runs out with both unchanged the $s1 points are lost (wowsims/forever, MIT, sim/rogue/talents_subtlety.go
+// registerPremeditation adds the points and does not model the loss).
+class classic_spell_rog_premeditation : public AuraScript
+{
+    bool Validate(SpellInfo const* spellInfo) override
+    {
+        return ValidateSpellEffect({ { spellInfo->Id, EFFECT_1 } });
+    }
+
+    void HandleApply(AuraEffect const* /*aurEff*/, AuraEffectHandleModes /*mode*/)
+    {
+        // effect 0 (the energize) is handled before this aura effect: these are the points with Premeditation's in them
+        Unit* rogue = GetTarget();
+        _comboPoints = rogue->GetPower(POWER_COMBO_POINTS);
+        _comboTarget = rogue->GetClassicComboTarget();
+    }
+
+    bool Unchanged() const
+    {
+        Unit* rogue = GetTarget();
+        return rogue->GetPower(POWER_COMBO_POINTS) == _comboPoints && rogue->GetClassicComboTarget() == _comboTarget;
+    }
+
+    bool CheckProc(ProcEventInfo& eventInfo)
+    {
+        if (eventInfo.GetSpellInfo() && eventInfo.GetSpellInfo()->Id == GetId())
+            return false;
+        return !Unchanged();
+    }
+
+    void HandleProc(ProcEventInfo& /*eventInfo*/)
+    {
+        // the points were added to or used: they are the rogue's to keep
+        Remove();
+    }
+
+    void HandleRemove(AuraEffect const* /*aurEff*/, AuraEffectHandleModes /*mode*/)
+    {
+        if (GetTargetApplication()->GetRemoveMode() != AURA_REMOVE_BY_EXPIRE || !Unchanged())
+            return;
+
+        Unit* rogue = GetTarget();
+        int32 const added = GetSpellInfo()->GetEffect(EFFECT_0).CalcValueAsInt(rogue);
+        // SetPower to 0 also clears ClassicComboTarget (Unit::SetPower)
+        rogue->SetPower(POWER_COMBO_POINTS, std::max(0, _comboPoints - added));
+    }
+
+    void Register() override
+    {
+        AfterEffectApply += AuraEffectApplyFn(classic_spell_rog_premeditation::HandleApply, EFFECT_1, SPELL_AURA_560, AURA_EFFECT_HANDLE_REAL);
+        DoCheckProc += AuraCheckProcFn(classic_spell_rog_premeditation::CheckProc);
+        OnProc += AuraProcFn(classic_spell_rog_premeditation::HandleProc);
+        AfterEffectRemove += AuraEffectRemoveFn(classic_spell_rog_premeditation::HandleRemove, EFFECT_1, SPELL_AURA_560, AURA_EFFECT_HANDLE_REAL);
+    }
+
+    int32 _comboPoints = 0;
+    ObjectGuid _comboTarget;
 };
 
 // 438040 - Redirect (rogue ability): "Removes all your existing combo points from your target and stores them for up to 15 sec. These
@@ -1872,14 +2067,114 @@ class classic_spell_hun_summon_hawk : public SpellScript
     }
 };
 
+// 264850 - Hawk, the guardian of Summon Hawk. WoW Forever notes: "Summon Hawk will now stick your Hawk to the target that it was summoned
+// on" (70450, Oct 16); "Summoned Hawks now attack the target they're summoned on even if the player's pet is set to Passive" and
+// "Summoned Hawks will attack your current target if they are not actively attacking a target" (71139, Nov 25). The sniffed SmartAI
+// only cast 415431 on reset, so the hawk picked victims like any guardian (react state, owner's attackers, whoever hit it).
+// The summon target is the hunter's target when the hawk appears (Summon Hawk is cast on the targeted enemy). The hawk keeps it while it
+// lives, then takes the hunter's current target while the hunter is in combat, and goes back to the hunter when there is none.
+struct classic_npc_hun_summoned_hawk : public ScriptedAI
+{
+    static constexpr uint32 SPELL_HAWK_ON_RESET = 415431;
+
+    classic_npc_hun_summoned_hawk(Creature* creature) : ScriptedAI(creature) { }
+
+    void Reset() override
+    {
+        DoCastSelf(SPELL_HAWK_ON_RESET);
+    }
+
+    void IsSummonedBy(WorldObject* summoner) override
+    {
+        Player* hunter = summoner ? summoner->ToPlayer() : nullptr;
+        Unit* target = hunter ? hunter->GetSelectedUnit() : nullptr;
+        if (!IsGoodTarget(target))
+            return;
+
+        _summonTarget = target->GetGUID();
+        AttackStart(target);
+    }
+
+    // the hawk chooses its own victim: nothing from line of sight, the owner's fights or whoever hits it
+    void MoveInLineOfSight(Unit* /*who*/) override { }
+    void OwnerAttacked(Unit* /*target*/) override { }
+    void OwnerAttackedBy(Unit* /*attacker*/) override { }
+
+    void UpdateAI(uint32 /*diff*/) override
+    {
+        Unit* victim = me->GetVictim();
+        Unit* next = nullptr;
+        if (Unit* summonTarget = _summonTarget.IsEmpty() ? nullptr : ObjectAccessor::GetUnit(*me, _summonTarget); IsGoodTarget(summonTarget))
+            next = summonTarget;
+        else
+        {
+            _summonTarget.Clear();
+            if (IsGoodTarget(victim))
+                next = victim;
+            else if (Player* hunter = GetHunter(); hunter && hunter->IsInCombat())
+                if (Unit* hunterTarget = hunter->GetSelectedUnit(); IsGoodTarget(hunterTarget))
+                    next = hunterTarget;
+        }
+
+        if (next)
+        {
+            if (next != victim)
+                AttackStart(next); // melee swings run in Creature::Update
+        }
+        else if (victim || me->IsEngaged())
+            EnterEvadeMode(EvadeReason::NoHostiles); // follows the hunter again
+    }
+
+private:
+    Player* GetHunter() const
+    {
+        if (Unit* owner = me->GetCharmerOrOwner())
+            return owner->ToPlayer();
+        TempSummon const* summon = me->ToTempSummon();
+        Unit* summoner = summon ? summon->GetSummonerUnit() : nullptr;
+        return summoner ? summoner->ToPlayer() : nullptr;
+    }
+
+    bool IsGoodTarget(Unit* target) const
+    {
+        return target && target != me && target->IsAlive() && target->IsInMap(me) && me->IsValidAttackTarget(target);
+    }
+
+    ObjectGuid _summonTarget;
+};
+
+// 2641 - Dismiss Pet: "Summoned Hawks are now dismissed when the Dismiss Pet spell is completed" (WoW Forever 71139, Nov 25). Nothing linked
+// the hawks to the spell. They are the hunter's guardians (owner) or, when summoned as plain temporary summons, the hunter's summons.
+class classic_spell_hun_dismiss_pet_hawks : public SpellScript
+{
+    static constexpr uint32 NPC_SUMMONED_HAWK = 264850;
+    static constexpr float HawkSearchRange = 100.0f;
+
+    void DismissHawks()
+    {
+        Unit* hunter = GetCaster();
+        std::list<Creature*> hawks;
+        hunter->GetCreatureListWithEntryInGrid(hawks, NPC_SUMMONED_HAWK, HawkSearchRange);
+        for (Creature* hawk : hawks)
+        {
+            TempSummon* summon = hawk->ToTempSummon();
+            if (summon && (hawk->GetOwnerGUID() == hunter->GetGUID() || summon->GetSummonerGUID() == hunter->GetGUID()))
+                summon->UnSummon();
+        }
+    }
+
+    void Register() override
+    {
+        AfterCast += SpellCastFn(classic_spell_hun_dismiss_pet_hawks::DismissHawks);
+    }
+};
+
 /*######
 ## Damage done talents without a client aura effect
 ######*/
 
 // 1223755 - Focused Fire (hunter): "Increases all damage you and your pet deal by $s1% while your pet is active."
-// 1310728 - Quietus (rogue): "Your Sinister Strike, Ghostly Strike, and Hemorrhage abilities cause $m1% more damage against targets
-// below $m2% health." (rogue family flags 0x2 Sinister Strike, 0x4000000 Ghostly Strike, 0x2000000 Hemorrhage; Shiv and Poisoned Knife
-// "benefit from all talents that modify Sinister Strike")
+// (Rogue Quietus is gone: build 70755 notes "Quietus has been removed", and its spell 1310728 is now the talent Quick Getaway.)
 class classic_unit_talent_damage_mods : public UnitScript
 {
 public:
@@ -1913,34 +2208,18 @@ public:
         return 0.0f;
     }
 
-    static float GetQuietusPct(Unit const* target, Unit const* attacker, SpellInfo const* spellInfo)
-    {
-        if (!target || !attacker || !spellInfo || !attacker->IsPlayer() || spellInfo->SpellFamilyName != SPELLFAMILY_ROGUE)
-            return 0.0f;
-
-        if (!(spellInfo->SpellFamilyFlags[0] & 0x06000002) && spellInfo->Id != SPELL_ROGUE_SHIV_STRIKE && spellInfo->Id != SPELL_ROGUE_POISONED_KNIFE_STRIKE)
-            return 0.0f;
-
-        AuraEffect const* bonus = attacker->GetAuraEffect(SPELL_ROGUE_QUIETUS, EFFECT_0);
-        AuraEffect const* threshold = attacker->GetAuraEffect(SPELL_ROGUE_QUIETUS, EFFECT_1);
-        if (!bonus || !threshold || !target->HealthBelowPct(float(threshold->GetAmount())))
-            return 0.0f;
-
-        return float(bonus->GetAmount());
-    }
-
     void ModifyMeleeDamage(Unit* /*target*/, Unit* attacker, uint32& damage) override
     {
         if (float pct = GetFocusedFirePct(attacker); pct > 0.0f)
             AddPct(damage, pct);
     }
 
-    void ModifySpellDamageTaken(Unit* target, Unit* attacker, int32& damage, SpellInfo const* spellInfo) override
+    void ModifySpellDamageTaken(Unit* /*target*/, Unit* attacker, int32& damage, SpellInfo const* /*spellInfo*/) override
     {
         if (damage <= 0)
             return;
 
-        float pct = GetFocusedFirePct(attacker) + GetQuietusPct(target, attacker, spellInfo);
+        float pct = GetFocusedFirePct(attacker);
         if (pct > 0.0f)
             AddPct(damage, pct);
     }
@@ -2183,8 +2462,22 @@ class classic_spell_talent_ability_proc_chance : public AuraScript
     }
 };
 
+// 20500 - Improved Berserker Rage (70959): "Your Berserker Rage ability will instantly generate $/10;m1 Rage and has a $m2% chance to remove
+// all movement impairing effects when activated." Both effects are dummies with no triggered spell and the proc has no class mask, so
+// the talent fired on every helpful or harmful spell and did nothing. Bound here to Berserker Rage: effect 0 is the rage (x10) given
+// through 23690, effect 1 the chance to remove movement impairing effects.
+
+// 14144 - Remorseless Attacks: "After killing a non-trivial enemy, gives you a $m1% increased critical strike chance on your next Sinister
+// Strike, Backstab, Ambush, Mutilate, or Ghostly Strike. Lasts $14143d." The client talent is a kill-proc dummy with
+// no triggered spell, so nothing happened (60 "does not have triggered spell" lines in the af54 log). Its proc already needs a kill that
+// gives experience or honor (SpellMgr adds PROC_ATTR_REQ_EXP_OR_HONOR for PROC_FLAG_KILL). The kill gives Remorseless 14143 with the
+// talent amount (20 / 40); its charge is used by the next of those strikes (charged spell mod).
+
+
 void AddSC_classic_talents_warrior_rogue_hunter()
 {
+    RegisterSpellScript(classic_spell_warr_improved_berserker_rage);
+    RegisterSpellScript(classic_spell_rog_remorseless_attacks);
     // warrior
     RegisterSpellScript(classic_spell_warr_stance_rage);
     RegisterSpellScript(classic_spell_warr_enrage_talent);
@@ -2193,12 +2486,12 @@ void AddSC_classic_talents_warrior_rogue_hunter()
     RegisterSpellScript(classic_spell_warr_deep_wound_bleed);
     RegisterSpellScript(classic_spell_warr_flurry);
     RegisterSpellScript(classic_spell_warr_flurry_buff);
+    RegisterSpellScript(classic_spell_warr_intercept_stun);
     RegisterSpellScript(classic_spell_warr_bloodthirst);
     RegisterSpellScript(classic_spell_warr_unbridled_wrath);
     RegisterSpellScript(classic_spell_warr_sweeping_strikes);
     RegisterSpellScript(classic_spell_warr_last_stand);
     RegisterSpellScript(classic_spell_warr_retaliation);
-    RegisterSpellScript(classic_spell_warr_improved_berserker_rage);
     RegisterSpellScript(classic_spell_warr_shield_slam);
     RegisterSpellScript(classic_spell_warr_victory_rush);
     RegisterSpellScriptWithArgs(classic_spell_weapon_type_talent, "classic_spell_warr_weaponmaster", 12700u, 12284u, 12281u);
@@ -2207,6 +2500,7 @@ void AddSC_classic_talents_warrior_rogue_hunter()
     RegisterSpellScript(classic_spell_warr_execute);
     RegisterSpellScript(classic_spell_warr_overpower_probe);
     RegisterSpellScript(classic_spell_warr_execute_damage_probe);
+    RegisterSpellScript(classic_spell_warr_execute_damage);
     RegisterSpellScript(classic_spell_warr_spearing_strike);
     RegisterSpellScript(classic_spell_warr_improved_whirlwind_closest);
 
@@ -2215,12 +2509,13 @@ void AddSC_classic_talents_warrior_rogue_hunter()
     RegisterSpellScript(classic_spell_rog_setup);
     RegisterSpellScript(classic_spell_rog_seal_fate);
     RegisterSpellScript(classic_spell_rog_cutthroat);
-    RegisterSpellScript(classic_spell_rog_remorseless_attacks);
     RegisterSpellScript(classic_spell_rog_offhand_strike);
     RegisterSpellScript(classic_spell_rog_offhand_poison);
     RegisterSpellAndAuraScriptPair(classic_spell_rog_redirect, classic_spell_rog_redirect_aura);
     RegisterSpellScript(classic_spell_rog_mutilate_strike);
     RegisterSpellScript(classic_spell_rog_ghostly_strike);
+    RegisterSpellScript(classic_spell_rog_hemorrhage);
+    RegisterSpellScript(classic_spell_rog_premeditation);
 
     // hunter
     RegisterSpellScript(classic_spell_hun_entrapment_trap);
@@ -2234,6 +2529,8 @@ void AddSC_classic_talents_warrior_rogue_hunter()
     RegisterSpellScript(classic_spell_hun_readiness);
     RegisterSpellScript(classic_spell_hun_refocus);
     RegisterSpellScript(classic_spell_hun_summon_hawk);
+    RegisterCreatureAI(classic_npc_hun_summoned_hawk);
+    RegisterSpellScript(classic_spell_hun_dismiss_pet_hawks);
     new classic_unit_hun_rapid_killing();
     RegisterSpellScript(classic_spell_hun_expose_prey);
     RegisterSpellScript(classic_spell_hun_mongoose_bite);

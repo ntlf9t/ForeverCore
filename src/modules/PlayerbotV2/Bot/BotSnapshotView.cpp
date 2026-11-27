@@ -25,18 +25,6 @@ namespace Playerbot {
 
 namespace {
 
-// Legacy linear scan, kept as a fallback for callers that don't have a
-// CooldownsState in scope. Hot-path callers (is_ready/cd_remaining/
-// charges in this file) take the FindCooldownIndexed path below — O(1)
-// lookup via the spell_cooldowns_index map.
-CooldownEntry const* FindCooldown(std::vector<CooldownEntry> const& list, uint32 spell_id)
-{
-    for (auto const& e : list)
-        if (e.spell_id == spell_id)
-            return &e;
-    return nullptr;
-}
-
 CooldownEntry const* FindCooldownIndexed(CooldownsState const& cds, uint32 spell_id)
 {
     // Tier 3.3: spell_cooldowns_index is a sorted flat vector; find() returns
@@ -337,7 +325,6 @@ uint8 BotSnapshotView::aura_stacks(uint32 spell_id, ObjectGuid on) const
 NearbyUnit const* BotSnapshotView::enemy_without_my_aura(uint32 spell_id, float range) const
 {
     const float r2 = range * range;
-    const ObjectGuid me = s_->guid;
     for (auto const& e : s_->combat.nearby_enemies)
     {
         if (e.hp <= 0) continue;

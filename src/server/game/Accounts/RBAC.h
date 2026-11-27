@@ -765,6 +765,7 @@ enum RBACPermissions
     RBAC_PERM_COMMAND_MODE                                    = 1005,
     RBAC_PERM_COMMAND_DUNGEON_DIFFICULTY                     = 1006,
     RBAC_PERM_COMMAND_RELOAD_GAMEOBJECT_TEMPLATE             = 1007,
+    RBAC_PERM_COMMAND_PROFESSION                             = 1008, // .profession show/hide (players)
     RBAC_PERM_MAX
 };
 

@@ -472,6 +472,18 @@ namespace WorldPackets
             float Speed = 0.0f;
         };
 
+        // Sent by the client when the TurnSpeed CVar changes: the requested
+        // key turn rate in radians per second, nothing else.
+        class MoveSetTurnRateCheat final : public ClientPacket
+        {
+        public:
+            explicit MoveSetTurnRateCheat(WorldPacket&& packet) : ClientPacket(std::move(packet)) { }
+
+            void Read() override;
+
+            float Speed = 0.0f;
+        };
+
         class MovementSpeedRangeAck final : public ClientPacket
         {
         public:

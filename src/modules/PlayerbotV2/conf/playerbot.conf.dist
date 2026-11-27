@@ -316,12 +316,12 @@ Playerbot.World.HomeFriendlyPct = 100
 #            warlock Corruption, priest Shadow Word: Pain, druid Moonfire, paladin Judgement / Hammer of Justice, shaman Earth
 #            Shock / Lightning Bolt, hunter Serpent Sting, rogue from stealth (Cheap Shot / Ambush). AttackBots = 1: enemy world bots too.
 #   Everyone else never starts a fight with a player; it fights back when attacked.
-# Never a companion or bot in a group; never in a battleground, dungeon, raid, capital or sanctuary. On free-for-all
+# Never a companion, hired bot or bot in a group; never in a battleground, dungeon, raid, capital or sanctuary. On free-for-all
 # realms hunters also jump bots and players of their own faction. Log lines: [world_pvp] in Playerbot.log.
 # BorderFriendlyPct / ContestedFriendlyPct: on those realms the share of the player's own faction among the bots around him in
 # border and contested zones is at most this (so enemies are about); home zones and capitals keep the numbers above.
 # Enable = 0 switches all of it off.
-Playerbot.World.Pvp.Enable = 0
+Playerbot.World.Pvp.Enable = 1
 Playerbot.World.Pvp.FlaggedPct = 50
 Playerbot.World.Pvp.HunterPct = 30
 Playerbot.World.Pvp.AttackPct = 40
@@ -561,6 +561,10 @@ Playerbot.Bg.AutoSeed.Matches = 0
 
 # Also auto-seed Arena matches (bot-only). 0 = off.
 Playerbot.Bg.AutoSeed.Arena = 0
+
+# Arena opponents: when a real party queues for a 2v2 or 3v3 arena, idle bots of the other faction in the same level
+# bracket form a party of the same size and queue against it. 1 = on, 0 = off (the party then waits for another party).
+Playerbot.Arena.BotOpponents = 1
 
 # Force a specific Arena bracket type for auto-seeding (0 = let the system
 # choose; otherwise an arena type id, e.g. 2 = 2v2, 3 = 3v3).
@@ -1324,6 +1328,16 @@ PlayerbotV2.SessionRhythm.MaxLogoutsPerCycle = 25
 # avoid putting bot chars on the operator's GM account, where they'd
 # trigger the existing "one online char per account" assumption in the
 # Trinity character-select / online-status code paths.
+#
+#    Playerbot.AccountPrefix
+#        Description: Start of the pool account names: "<prefix>0001", "<prefix>0002", ... The names live in the
+#                     login database, which all realms on one login server share, while each realm numbers its own
+#                     pool. Give every realm that runs bots its own prefix, or they take each other's names and
+#                     account creation fails. 1-10 letters, digits or '_'; anything else falls back to the default.
+#                     Never change it on a realm whose pool exists: its accounts keep the old names.
+#        Default:     "PBV2_"
+
+Playerbot.AccountPrefix = "PBV2_"
 
 #-----------------------------------------------------------------------------
 # Player-facing alt summon (Wave E)
@@ -1830,6 +1844,13 @@ Playerbot.Chatter.Callouts.Taunts            = 0
 # its view of the world; the parked tier stops at half of it, so the light tiers slow down first when the server is busy and
 # no bot waits longer than four of its normal periods. 0 = no time budget (count cap only).
 Playerbot.Perf.TickBudgetMs = 0
+
+# Lean bot sessions: a bot on a bot pool account gets no collections (toys, mounts, heirlooms, appearances, illusions, outfits)
+# and no battle pet journal. It has no client to show them to; each one cost memory (the appearance list grows with every item
+# the bot touches) and login-database work at every login and save. The bot keeps every mount it learns itself, but no longer
+# shares mounts with the other bots on its pool account. A player's own alt played as a bot always keeps its collections.
+# Applies to bot sessions made after the change (`.reload config`, then the next login of each bot). 0 = off, 1 = on.
+Playerbot.Perf.LeanBotSessions = 1
 
 ###################################################################################################
 # Diagnostics

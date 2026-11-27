@@ -1,3 +1,4 @@
+-- Everlake: the five spawns 920xxxxxx (Everlake world data) are left out of this copy; their heights belong in world data.
 -- Riverglades (zone 16591): put our spawns on the ground. Their heights were guessed when the zone's data came in (2026_11_08_96,
 -- 2026_11_10_73, 2026_11_11_74 and later), so some NPCs stood under the ground or in the air (GitHub issue #20, 2026-11-21, with
 -- screenshots). 2026_11_12_33 only moved the 57 creatures that could not walk. The new heights come from the server's own map 0 navmesh

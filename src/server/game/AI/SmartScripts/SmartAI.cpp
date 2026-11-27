@@ -850,7 +850,8 @@ void SmartAI::StopFollow(bool complete)
 
     // the guid and credit type are read before the reset above: reading the members here found them already cleared
     Player* player = ObjectAccessor::GetPlayer(*me, followGUID);
-    if (player)
+    // credit 0 means the follow gives no credit: KilledMonsterCredit(0, me) would count the follower as killed for criteria
+    if (player && followCredit)
     {
         if (!followCreditType)
             player->RewardPlayerAndGroupAtEvent(followCredit, me);

@@ -42,13 +42,18 @@
 
 namespace
 {
-// Base mana cost of a spell (flat cost plus the percentage of base mana), before cost modifiers
+// Base mana cost of a spell (flat cost plus the percentage of base mana), before cost modifiers. A spell whose mana cost is held at
+// its vanilla value (classic_spell_cost) has that one as its base, as SpellInfo::CalcPowerCost charges it.
 int32 GetClassicBaseManaCost(SpellInfo const* spellInfo, Unit const* caster)
 {
     for (SpellPowerEntry const* power : spellInfo->PowerCosts)
     {
         if (!power || power->PowerType != POWER_MANA)
             continue;
+
+        if (ClassicSpellValue::AppliesToSpell(spellInfo->Id))
+            if (ClassicSpellValue::Cost const* vanillaCost = sSpellMgr->GetClassicSpellCost(spellInfo->Id))
+                return ClassicSpellValue::ManaCost(*vanillaCost, int32(caster->GetCreateMana()));
 
         int32 cost = power->ManaCost;
         if (power->PowerCostPct > 0.0f)
@@ -76,6 +81,8 @@ enum ClassicPriestTalents
     SPELL_PRI_EARLY_DEMISE              = 1310076,
     SPELL_PRI_LITANY_OF_LIGHT_ENERGIZE  = 1317007,
     SPELL_PRI_IMPROVED_MIND_FLAY        = 1225139,
+    SPELL_PRI_DARK_INSPIRATION          = 1326159,
+    SPELL_PRI_DARK_INSPIRATION_BUFF     = 1326168,
     SPELL_PRI_DEVOURING_CONTAGION       = 1309950
 };
 
@@ -411,6 +418,30 @@ class classic_spell_pri_renewed_hope : public AuraScript
         return ValidateSpellInfo({ SPELL_PRI_WEAKENED_SOUL }) && ValidateSpellEffect({ { spellInfo->Id, EFFECT_1 } });
     }
 
+    // Penance heals with a bolt at once and every second of its channel; live shortens Weakened Soul once per Penance cast, not per bolt
+    // (forever-bugs #288, not a bug). The bolts are separate heals triggered by the priest's channel aura, so only the first bolt of each
+    // channel (told apart by the channel aura's cast id) procs. The crit bonus (classic_spell_pri_renewed_hope_crit) stays per bolt.
+    bool CheckProc(ProcEventInfo& eventInfo)
+    {
+        SpellInfo const* spellInfo = eventInfo.GetSpellInfo();
+        if (!spellInfo || !spellInfo->IsAffected(SPELLFAMILY_PRIEST, flag128(0, 0x10000, 0, 0)))
+            return true;    // not a Penance heal bolt
+
+        static constexpr std::array<uint32, 4> PenanceHealChannels = { 402277, 1240732, 1240733, 1316992 };
+        Unit* priest = GetTarget();
+        for (uint32 channelId : PenanceHealChannels)
+        {
+            if (Aura const* channel = priest->GetAura(channelId, priest->GetGUID()))
+            {
+                if (channel->GetCastId() == _lastPenanceCastId)
+                    return false;
+                _lastPenanceCastId = channel->GetCastId();
+                return true;
+            }
+        }
+        return true;
+    }
+
     void HandleProc(AuraEffect const* /*aurEff*/, ProcEventInfo& eventInfo)
     {
         Unit* target = eventInfo.GetActionTarget();
@@ -430,8 +461,11 @@ class classic_spell_pri_renewed_hope : public AuraScript
 
     void Register() override
     {
+        DoCheckProc += AuraCheckProcFn(classic_spell_pri_renewed_hope::CheckProc);
         OnEffectProc += AuraEffectProcFn(classic_spell_pri_renewed_hope::HandleProc, EFFECT_0, SPELL_AURA_DUMMY);
     }
+
+    ObjectGuid _lastPenanceCastId;
 };
 
 // ... and the heals themselves get the crit bonus (effect 0) on targets with Weakened Soul: Flash Heal, Binding Heal, Lesser Heal, Heal,
@@ -521,9 +555,6 @@ class classic_spell_pri_power_in_light : public SpellScript
 // by $m1% for $1326168d." The talent is a bare dummy with no proc data, so nothing cast the buff 1326168 (party Spirit, target 20). A landed
 // Mind Blast, or a Mind Flay channel that runs its full length, casts it with the talent's percent (3..15 by rank). Behaviour from the
 // tooltip and wowsims/forever (MIT, sim/priest/talents_shadow.go); no log reading.
-static constexpr uint32 SPELL_PRI_DARK_INSPIRATION = 1326159;
-static constexpr uint32 SPELL_PRI_DARK_INSPIRATION_BUFF = 1326168;
-
 static void CastClassicDarkInspiration(Unit* priest)
 {
     if (!priest)
@@ -784,6 +815,41 @@ class classic_spell_pri_mind_flay : public AuraScript
     void Register() override
     {
         DoEffectCalcDamageAndHealing += AuraEffectCalcDamageFn(classic_spell_pri_mind_flay::CalculateDamage, EFFECT_0, SPELL_AURA_PERIODIC_DAMAGE);
+        AfterEffectRemove += AuraEffectRemoveFn(classic_spell_pri_mind_flay::HandleDarkInspiration, EFFECT_0, SPELL_AURA_PERIODIC_DAMAGE, AURA_EFFECT_HANDLE_REAL);
+    }
+
+    // 1326159 Dark Inspiration: "Your Mind Blast and fully channeled Mind Flay causes Dark Inspiration" (1326168). Fully channeled = every
+    // tick went out; counting ticks, not the remove mode, also covers the target dying on the last tick or the channel ending first.
+    void HandleDarkInspiration(AuraEffect const* aurEff, AuraEffectHandleModes /*mode*/)
+    {
+        Unit* priest = GetCaster();
+        if (!priest || !aurEff->GetTotalTicks() || aurEff->GetTickNumber() < aurEff->GetTotalTicks())
+            return;
+
+        if (priest->HasAura(SPELL_PRI_DARK_INSPIRATION))
+            priest->CastSpell(priest, SPELL_PRI_DARK_INSPIRATION_BUFF, CastSpellExtraArgs(TRIGGERED_FULL_MASK));
+    }
+};
+
+// 1326159 - Dark Inspiration: "Your Mind Blast and fully channeled Mind Flay causes Dark Inspiration, increasing yours and your party's
+// Spirit by $m1% for $1326168d." The talent is a dummy aura with no trigger; spell_proc sends it Mind Blast hits (priest 0x2000), Mind Flay
+// is in classic_spell_pri_mind_flay. The buff 1326168 (aura 137, misc B 16) raises total Spirit (forever-bugs #372, fixed on live: it
+// went by base Spirit there).
+class classic_spell_pri_dark_inspiration : public AuraScript
+{
+    bool Validate(SpellInfo const* /*spellInfo*/) override
+    {
+        return ValidateSpellInfo({ SPELL_PRI_DARK_INSPIRATION_BUFF });
+    }
+
+    void HandleProc(AuraEffect const* /*aurEff*/, ProcEventInfo& /*eventInfo*/)
+    {
+        GetTarget()->CastSpell(GetTarget(), SPELL_PRI_DARK_INSPIRATION_BUFF, CastSpellExtraArgs(TRIGGERED_FULL_MASK));
+    }
+
+    void Register() override
+    {
+        OnEffectProc += AuraEffectProcFn(classic_spell_pri_dark_inspiration::HandleProc, EFFECT_0, SPELL_AURA_DUMMY);
     }
 };
 
@@ -798,6 +864,10 @@ public:
 
     void OnUnitDeath(Unit* victim, Unit* /*killer*/) override
     {
+        // Blizzard, build 70755: "Devouring Contagion no longer spreads Devouring Plague if it is spreading from a critter."
+        if (victim->GetCreatureType() == CREATURE_TYPE_CRITTER)
+            return;
+
         std::vector<std::pair<ObjectGuid, std::pair<uint32, int32>>> plagues;
         for (AuraEffect const* leech : victim->GetAuraEffectsByType(SPELL_AURA_PERIODIC_LEECH))
         {
@@ -858,6 +928,7 @@ enum ClassicPaladinTalents
     SPELL_PAL_SACRED_SHIELD_FLASH_OF_LIGHT  = 412020,
     SPELL_PAL_RECKONING_STORED              = 1326084,  // dummy aura, one stack per stored extra attack
     SPELL_PAL_GUARDED_BY_THE_LIGHT_MANA     = 415058,
+    // Karrz 0.1.39
     SPELL_PAL_VINDICATION_DEBUFF            = 440667,   // attack power and ranged attack power, scaled by the paladin's level
     SPELL_PAL_OATH_OF_LIGHT                 = 1328548,  // on the ally: effect 0 Holy Light, 1 Flash of Light, 2 Holy Shock bonus healing
     SPELL_PAL_BOUNDLESS_LIGHT               = 1328550   // effect 0: Holy Shock crit chance on allies without the paladin's Oath of Light
@@ -910,6 +981,10 @@ class classic_spell_pal_reckoning : public AuraScript
     bool CheckProc(AuraEffect const* aurEff, ProcEventInfo& eventInfo)
     {
         if (eventInfo.GetTypeMask() & (PROC_FLAG_TAKE_HARMFUL_PERIODIC | PROC_FLAG_DEAL_HARMFUL_PERIODIC))
+            return false;
+
+        // WoW Forever 1.60.1.70755: "Reckoning will no longer gain stacks while sitting." (a sitting paladin takes a crit from every hit)
+        if (!GetTarget()->IsStandState())
             return false;
 
         float chance = 0.0f;
@@ -1369,8 +1444,13 @@ class classic_spell_pal_improved_seal_of_fury : public AuraScript
 //   target by up to X and the effect Flash of Light spells used on the target by up to Y". Effect 0 is the Holy Light bonus, effect 1 the
 //   Flash of Light bonus; the best blessing on the target counts (no stacking between paladins), scaled by the heal coefficient (vanilla).
 // - 412019 Sacred Shield: Flash of Light gets the shield's crit bonus (412018 effect 1, +50%) on targets with the paladin's Sacred Shield.
+// - 28851 Libram of Light 23006 (and 23204): "Increases healing done by Flash of Light by up to 83." The equip aura is a dummy nothing read;
+//   its amount is the paladin's own bonus healing for Flash of Light, scaled by the heal coefficient like any (wowsims/forever, MIT,
+//   sim/paladin/item_librams.go).
 class classic_spell_pal_holy_light_flash_of_light : public SpellScript
 {
+    static constexpr uint32 SPELL_ITEM_LIBRAM_OF_LIGHT = 28851;
+
     static bool IsHolyLight(SpellInfo const* spellInfo)
     {
         return (spellInfo->SpellFamilyFlags[0] & 0x80000000) != 0;
@@ -1391,6 +1471,10 @@ class classic_spell_pal_holy_light_flash_of_light : public SpellScript
         for (AuraEffect const* aurEff : victim->GetAuraEffectsByType(SPELL_AURA_DUMMY))
             if (aurEff->GetEffIndex() == blessingEffect && IsBlessingOfLight(aurEff->GetId()))
                 bonus = std::max(bonus, aurEff->GetAmountAsInt());
+
+        if (!IsHolyLight(GetSpellInfo()))
+            if (AuraEffect const* libram = GetCaster()->GetAuraEffect(SPELL_ITEM_LIBRAM_OF_LIGHT, EFFECT_0))
+                bonus += libram->GetAmountAsInt();
 
         if (bonus > 0)
             flatMod += int32(bonus * spellEffectInfo.BonusCoefficient);
@@ -1709,6 +1793,24 @@ class classic_spell_pal_forbearance : public SpellScript
     }
 };
 
+// Lay on Hands (633, 2800, 10310): "Drains all of the Paladin's remaining Mana when used, but does not interrupt Mana regeneration." The
+// client spell has no power cost and no Use All Mana attribute, so nothing drained the mana. The cast empties the paladin's mana pool
+// directly; no cost is paid, so the five second rule does not start.
+class classic_spell_pal_lay_on_hands_drain : public SpellScript
+{
+    void HandleCast()
+    {
+        Unit* paladin = GetCaster();
+        if (paladin->GetPower(POWER_MANA) > 0)
+            paladin->SetPower(POWER_MANA, 0);
+    }
+
+    void Register() override
+    {
+        OnCast += SpellCastFn(classic_spell_pal_lay_on_hands_drain::HandleCast);
+    }
+};
+
 // Rank of a talent: Forever's talents are trait nodes with one spell, the ranks are held on the node entry of the active spec's trait config.
 // Returns 0 when the player does not have the talent.
 static int32 GetClassicTalentRank(Player const* player, uint32 spellId)
@@ -1727,24 +1829,53 @@ static int32 GetClassicTalentRank(Player const* player, uint32 spellId)
     return 0;
 }
 
-// 20210 - Illumination: "After getting a critical effect from your Flash of Light, Holy Light, or Holy Shock heal spell, gives you a 20% chance
-// per rank to gain mana equal to the base cost of the spell." The client aura procs the dummy-only spell 18350, so nothing returned mana. VMaNGOS
-// casts the energize 20272 on the paladin with the mana cost of the spell as the amount; the chance is 20% x the talent rank (read from the node).
-// The cost of the heal is read from the cast; the Holy Shock heals are triggered with no cost of their own and give nothing here.
+// 20210 - Illumination (1.60 live): "After getting a critical effect from your Flash of Light, Holy Light, Light's Vigil, or Holy Shock heal
+// spell you have a $m1% chance to gain Mana equal to $m3% of the base cost of the spell." The client aura procs the dummy-only spell 18350,
+// so nothing returned mana; the energize is 20272 (VMaNGOS). The chance is 20% x the talent rank (read from the node), the refund effect 2
+// (50%) of the base cost, before cost reductions (player tests: "Returns 50% of the base cost. Cost decreases do not decrease the return",
+// forever-paladin-feedback; wowsims Forever applyIllumination). The Holy Shock and Light's Vigil heals are triggered spells with no cost of
+// their own: their refund is from the cast that triggered them.
 class classic_spell_pal_illumination : public AuraScript
 {
     static constexpr uint32 SPELL_PALADIN_ILLUMINATION_ENERGIZE = 20272;
 
-    bool Validate(SpellInfo const* /*spellInfo*/) override
+    bool Validate(SpellInfo const* spellInfo) override
     {
-        return ValidateSpellInfo({ SPELL_PALADIN_ILLUMINATION_ENERGIZE });
+        return ValidateSpellInfo({ SPELL_PALADIN_ILLUMINATION_ENERGIZE }) && ValidateSpellEffect({ { spellInfo->Id, EFFECT_2 } });
+    }
+
+    // The spell whose base cost is refunded: the heal itself, or the cast behind a triggered Holy Shock / Light's Vigil heal
+    static uint32 GetCostSpell(uint32 healId)
+    {
+        switch (healId)
+        {
+            case 25914:   return 20473;     // Holy Shock rank 1
+            case 25913:   return 20929;     // Holy Shock rank 2
+            case 25903:   return 20930;     // Holy Shock rank 3
+            case 1311605: return 1311606;   // Holy Shock (Forever talent)
+            case 1310912: return 1310911;   // Light's Vigil rank 1
+            case 1311591: return 1311590;   // Light's Vigil rank 2
+            case 1311596: return 1311595;   // Light's Vigil rank 3
+            default:      return healId;
+        }
+    }
+
+    int32 GetRefund(ProcEventInfo& eventInfo) const
+    {
+        HealInfo* healInfo = eventInfo.GetHealInfo();
+        SpellInfo const* heal = healInfo ? healInfo->GetSpellInfo() : nullptr;
+        AuraEffect const* pct = GetEffect(EFFECT_2);
+        if (!heal || !pct)
+            return 0;
+
+        SpellInfo const* costSpell = sSpellMgr->GetSpellInfo(GetCostSpell(heal->Id), DIFFICULTY_NONE);
+        return costSpell ? CalculatePct(GetClassicBaseManaCost(costSpell, GetTarget()), pct->GetAmount()) : 0;
     }
 
     bool CheckProc(ProcEventInfo& eventInfo)
     {
-        Spell const* spell = eventInfo.GetProcSpell();
         Player const* paladin = GetTarget()->ToPlayer();
-        return spell && paladin && spell->GetPowerTypeCostAmount(POWER_MANA).value_or(0) > 0
+        return paladin && GetRefund(eventInfo) > 0
             && roll_chance(20 * std::max(1, GetClassicTalentRank(paladin, GetId())));
     }
 
@@ -1752,7 +1883,7 @@ class classic_spell_pal_illumination : public AuraScript
     {
         PreventDefaultAction();
         CastSpellExtraArgs args(TRIGGERED_FULL_MASK);
-        args.AddSpellBP0(*eventInfo.GetProcSpell()->GetPowerTypeCostAmount(POWER_MANA));
+        args.AddSpellBP0(GetRefund(eventInfo));
         GetTarget()->CastSpell(GetTarget(), SPELL_PALADIN_ILLUMINATION_ENERGIZE, args);
     }
 
@@ -1801,11 +1932,52 @@ class classic_spell_pri_holy_binding : public SpellScript
     }
 };
 
+// 14751 - Inner Focus: WoW Forever restarts the 3 min cooldown when the buff is spent or runs out, not when it is cast, though the row
+// has no cooldown-on-event bit; a buff held for a minute no longer takes that minute off the next cooldown (wowsims/forever, MIT,
+// sim/priest/talents_discipline.go, docs/rulings R-0015; evidence pending)
+class classic_spell_pri_inner_focus : public AuraScript
+{
+    void HandleRemove(AuraEffect const* /*aurEff*/, AuraEffectHandleModes /*mode*/)
+    {
+        Player* priest = GetTarget()->ToPlayer();
+        if (!priest)
+            return;
+
+        priest->GetSpellHistory()->ResetCooldown(GetId(), false);
+        priest->GetSpellHistory()->StartCooldown(GetSpellInfo(), 0, nullptr, false);
+    }
+
+    void Register() override
+    {
+        AfterEffectRemove += AuraEffectRemoveFn(classic_spell_pri_inner_focus::HandleRemove, EFFECT_0, SPELL_AURA_ADD_PCT_MODIFIER, AURA_EFFECT_HANDLE_REAL);
+    }
+};
+
+// 9452 - Vindication (70532): "Gives your damaging melee attacks a chance to reduce the target's Attack Power by ${$m1/-3*$440667m1} for
+// $440667d." Both talent effects are dummies without a triggered spell, so nothing happened (123 + 123 "does not have triggered spell"
+// lines in the af54 log). Effect 0 is the rank (1 / 2 / 3); the debuff 440667 is the full reduction at rank 3 (its value grows with the
+// paladin's level: 204 at 60), so a rank gives a third of it, on attack power and ranged attack power alike. The client row states no
+// rate (chance 100); in game it is 5 procs a minute on the weapon's speed (spell_proc), on white hits and melee specials, and the debuff
+// is a spell of its own that can miss (wowsims/forever, MIT: sim/paladin/talents_retribution.go).
+
+// 1328548 - Oath of Light, 1328550 - Boundless Light (Forever paladin talents, live hotfix data). Oath of Light: "Swear an Oath to protect
+// target ally for $d, increasing the healing of your Holy Light on them by up to $s1, your Flash of Light by up to $s2, and your Holy Shock
+// by up to $s3." Boundless Light: "Increases the critical strike chance of your Holy Shock spell by $s1% when cast on allies not affected by
+// your Oath of Light." Every effect of both is a dummy and nothing read them, so neither did anything. The Oath's three effects carry the
+// bonuses, scaled by the paladin's level (400 / 115 / 230 at 60), and are added to the base heal of the paladin's own Holy Light, Flash of
+// Light and Holy Shock heal on the ally with the Oath; Holy Shock heals on any other ally get the Boundless Light crit. One Oath per paladin
+// is the spell's own single-target attribute. The full bonus whatever the rank, as wowsims/forever (MIT) does (sim/paladin/oath_of_light.go,
+// holy_shock.go).
+
+
 void AddSC_classic_spells_priest();
 
 void AddSC_classic_talents_priest_paladin()
 {
+    RegisterSpellScript(classic_spell_pal_vindication);
+    RegisterSpellScript(classic_spell_pal_oath_of_light_heal);
     AddSC_classic_spells_priest();
+    RegisterSpellScript(classic_spell_pri_inner_focus);
     RegisterSpellScript(classic_spell_pri_holy_binding);
     // Priest
     RegisterSpellScript(classic_spell_pri_inspiration);
@@ -1827,6 +1999,7 @@ void AddSC_classic_talents_priest_paladin()
     RegisterSpellScript(classic_spell_pri_litany_of_light);
     RegisterSpellScript(classic_spell_pri_contingency_plan);
     RegisterSpellScript(classic_spell_pri_mind_flay);
+    RegisterSpellScript(classic_spell_pri_dark_inspiration);
     new classic_unit_pri_devouring_contagion();
 
     // Paladin
@@ -1847,10 +2020,9 @@ void AddSC_classic_talents_priest_paladin()
     RegisterSpellScript(classic_spell_pal_sanctified_judgement);
     RegisterSpellScript(classic_spell_pal_improved_seal_of_fury);
     RegisterSpellScript(classic_spell_pal_holy_light_flash_of_light);
-    RegisterSpellScript(classic_spell_pal_vindication);
-    RegisterSpellScript(classic_spell_pal_oath_of_light_heal);
     RegisterSpellScript(classic_spell_pal_sacred_shield);
     RegisterSpellScript(classic_spell_pal_templars_bulwark);
     RegisterSpellScript(classic_spell_pal_forbearance);
     RegisterSpellScript(classic_spell_pal_illumination);
+    RegisterSpellScript(classic_spell_pal_lay_on_hands_drain);
 }

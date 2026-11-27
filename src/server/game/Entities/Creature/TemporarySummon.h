@@ -29,7 +29,7 @@ enum PetEntry
     PET_SUCCUBUS        = 1863,
     PET_DOOMGUARD       = 18540,
     PET_FELGUARD        = 30146,
-    PET_INCUBUS         = 184600,
+    PET_INCUBUS         = 185317,   // WoW Forever: Summon Incubus 713 summons 185317 (client DB2); the Sayaad like the Succubus
 
     // Death Knight pets
     PET_GHOUL           = 26125,

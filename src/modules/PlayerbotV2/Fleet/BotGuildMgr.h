@@ -33,6 +33,7 @@
 #pragma once
 
 #include "Define.h"
+
 #include <array>
 #include <cstdint>
 #include <memory>

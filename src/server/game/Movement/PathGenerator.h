@@ -177,6 +177,7 @@ class TC_GAME_API PathGenerator
         WorldObject const* const _source;       // the object that is moving
         dtNavMesh const* _navMesh;              // the nav mesh
         dtNavMeshQuery const* _navMeshQuery;    // the nav mesh query used to find the path
+        dtStatus _findPathStatus = 0;           // detail bits of this CalculatePath's findPath calls (out of nodes, poly cap), for TallyPath
 
         // Custom filter: stock dtQueryFilter behavior PLUS slope penalty PLUS
         // per-instance road-bonus disable (for tanks pulling / healers

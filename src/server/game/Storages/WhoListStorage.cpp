@@ -66,6 +66,6 @@ void WhoListStorageMgr::Update()
 
         _whoListStorage.emplace_back(itr->second->GetGUID(), itr->second->GetTeam(), itr->second->GetSession()->GetSecurity(), itr->second->GetLevel(),
             itr->second->GetClass(), itr->second->GetRace(), itr->second->GetZoneId(), itr->second->GetNativeGender(), itr->second->IsVisible(),
-            itr->second->IsGameMaster(), widePlayerName, wideGuildName, playerName, guildName, guildGuid);
+            itr->second->IsGameMaster(), widePlayerName, wideGuildName, playerName, guildName, guildGuid, itr->second->GetAreaId());
     }
 }

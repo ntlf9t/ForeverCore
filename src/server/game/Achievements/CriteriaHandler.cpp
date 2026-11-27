@@ -696,6 +696,8 @@ void CriteriaHandler::UpdateCriteria(Criteria const* criteria, uint64 miscValue1
         case CriteriaType::LeaveArea:
         case CriteriaType::RecruitGarrisonFollower:
         case CriteriaType::LearnHeirloom:
+        case CriteriaType::LearnToy:
+        case CriteriaType::LearnTransmog:
         case CriteriaType::ActivelyReachLevel:
         case CriteriaType::CollectTransmogSetFromGroup:
         case CriteriaType::EnterTopLevelArea:
@@ -789,11 +791,20 @@ void CriteriaHandler::UpdateCriteria(Criteria const* criteria, uint64 miscValue1
             break;
         }
         case CriteriaType::UniquePetsOwned:
-            SetCriteriaProgress(criteria, referencePlayer->GetSession()->GetBattlePetMgr()->GetPetUniqueSpeciesCount(), referencePlayer);
+            if (BattlePets::BattlePetMgr const* battlePetMgr = referencePlayer->GetSession()->GetBattlePetMgr())
+                SetCriteriaProgress(criteria, battlePetMgr->GetPetUniqueSpeciesCount(), referencePlayer);
             break;
         case CriteriaType::GuildAttainedLevel:
             SetCriteriaProgress(criteria, miscValue1, referencePlayer);
             break;
+        case CriteriaType::LearnAnyToy:
+        {
+            if (miscValue1)
+                SetCriteriaProgress(criteria, 1, referencePlayer, PROGRESS_ACCUMULATE);
+            else if (CollectionMgr const* collectionMgr = referencePlayer->GetSession()->GetCollectionMgr()) // login
+                SetCriteriaProgress(criteria, collectionMgr->GetAccountToys().size(), referencePlayer, PROGRESS_HIGHEST);
+            break;
+        }
         case CriteriaType::BankTabPurchased:
             switch (BankType(criteria->Entry->Asset.BankType))
             {
@@ -844,8 +855,6 @@ void CriteriaHandler::UpdateCriteria(Criteria const* criteria, uint64 miscValue1
         case CriteriaType::CollectGarrisonShipment:
         case CriteriaType::ItemLevelChangedForGarrisonFollower:
         case CriteriaType::LevelChangedForGarrisonFollower:
-        case CriteriaType::LearnToy:
-        case CriteriaType::LearnAnyToy:
         case CriteriaType::FindResearchObject:
         case CriteriaType::ExhaustAnyResearchSite:
         case CriteriaType::CompleteInternalCriteria:
@@ -874,7 +883,6 @@ void CriteriaHandler::UpdateCriteria(Criteria const* criteria, uint64 miscValue1
         case CriteriaType::SocketAnySoulbindConduit:
         case CriteriaType::ObtainAnyItemWithCurrencyValue:
         case CriteriaType::EarnExpansionLevel:
-        case CriteriaType::LearnTransmog:
         default:
             break;                          // Not implemented yet :(
     }
@@ -1238,6 +1246,9 @@ bool CriteriaHandler::IsCompletedCriteria(Criteria const* criteria, uint64 requi
         case CriteriaType::PlaceGarrisonBuilding:
         case CriteriaType::LearnHeirloom:
         case CriteriaType::LearnAnyHeirloom:
+        case CriteriaType::LearnToy:
+        case CriteriaType::LearnAnyToy:
+        case CriteriaType::LearnTransmog:
         case CriteriaType::EarnArtifactXP:
         case CriteriaType::AnyArtifactPowerRankPurchased:
         case CriteriaType::LearnAnyTransmogInSlot:
@@ -1549,8 +1560,23 @@ bool CriteriaHandler::RequirementsSatisfied(Criteria const* criteria, uint64 mis
         case CriteriaType::LootItem:
         case CriteriaType::EquipItem:
         case CriteriaType::LearnHeirloom:
-            if (!miscValue1 || uint32(criteria->Entry->Asset.ItemID )!= miscValue1)
+            if (!miscValue1 || uint32(criteria->Entry->Asset.ItemID) != miscValue1)
                 return false;
+            break;
+        case CriteriaType::LearnToy:
+            if (uint32(criteria->Entry->Asset.ItemID) != miscValue1)
+                if (miscValue1 || !referencePlayer->GetSession()->GetCollectionMgr() || !referencePlayer->GetSession()->GetCollectionMgr()->HasToy(criteria->Entry->Asset.ItemID))
+                    return false;
+            break;
+        case CriteriaType::LearnTransmog:
+            if (uint32(criteria->Entry->Asset.ItemModifiedAppearanceID) != miscValue1)
+            {
+                if (miscValue1 || !referencePlayer->GetSession()->GetCollectionMgr())
+                    return false;
+                auto [hasAppearance, isTemporary] = referencePlayer->GetSession()->GetCollectionMgr()->HasItemAppearance(criteria->Entry->Asset.ItemModifiedAppearanceID);
+                if (!hasAppearance || isTemporary)
+                    return false;
+            }
             break;
         case CriteriaType::RevealWorldMapOverlay:
         {
@@ -1934,6 +1960,8 @@ bool CriteriaHandler::ModifierSatisfied(ModifierTreeEntry const* modifier, uint6
             break;
         }
         case ModifierTreeType::BattlePetTeamLevel: // 34
+            if (!referencePlayer->GetSession()->GetBattlePetMgr())
+                return false;
             for (WorldPackets::BattlePet::BattlePetSlot const& slot : referencePlayer->GetSession()->GetBattlePetMgr()->GetSlots())
                 if (slot.Pet.Level < reqValue)
                     return false;
@@ -2153,7 +2181,7 @@ bool CriteriaHandler::ModifierSatisfied(ModifierTreeEntry const* modifier, uint6
             break;
         }
         case ModifierTreeType::UniqueBattlePetsEqualOrGreaterThan: // 77
-            if (referencePlayer->GetSession()->GetBattlePetMgr()->GetPetUniqueSpeciesCount() < reqValue)
+            if (!referencePlayer->GetSession()->GetBattlePetMgr() || referencePlayer->GetSession()->GetBattlePetMgr()->GetPetUniqueSpeciesCount() < reqValue)
                 return false;
             break;
         case ModifierTreeType::BattlePetType: // 78
@@ -2219,7 +2247,7 @@ bool CriteriaHandler::ModifierSatisfied(ModifierTreeEntry const* modifier, uint6
                 return false;
             break;
         case ModifierTreeType::PlayerHasBattlePetJournalLock: // 93
-            if (!referencePlayer->GetSession()->GetBattlePetMgr()->HasJournalLock())
+            if (!referencePlayer->GetSession()->GetBattlePetMgr() || !referencePlayer->GetSession()->GetBattlePetMgr()->HasJournalLock())
                 return false;
             break;
         case ModifierTreeType::FriendshipRepReactionIsMet: // 94
@@ -2739,6 +2767,8 @@ bool CriteriaHandler::ModifierSatisfied(ModifierTreeEntry const* modifier, uint6
         }
         case ModifierTreeType::BattlePetTeamWithSpeciesEqualOrGreaterThan: // 151
         {
+            if (!referencePlayer->GetSession()->GetBattlePetMgr())
+                return false;
             uint32 count = 0;
             for (WorldPackets::BattlePet::BattlePetSlot const& slot : referencePlayer->GetSession()->GetBattlePetMgr()->GetSlots())
                 if (slot.Pet.Species == secondaryAsset)
@@ -2749,6 +2779,8 @@ bool CriteriaHandler::ModifierSatisfied(ModifierTreeEntry const* modifier, uint6
         }
         case ModifierTreeType::BattlePetTeamWithTypeEqualOrGreaterThan: // 152
         {
+            if (!referencePlayer->GetSession()->GetBattlePetMgr())
+                return false;
             uint32 count = 0;
             for (WorldPackets::BattlePet::BattlePetSlot const& slot : referencePlayer->GetSession()->GetBattlePetMgr()->GetSlots())
                 if (BattlePetSpeciesEntry const* species = sBattlePetSpeciesStore.LookupEntry(slot.Pet.Species))
@@ -2763,6 +2795,8 @@ bool CriteriaHandler::ModifierSatisfied(ModifierTreeEntry const* modifier, uint6
             return false;
         case ModifierTreeType::BattlePetTeamWithAliveEqualOrGreaterThan: // 155
         {
+            if (!referencePlayer->GetSession()->GetBattlePetMgr())
+                return false;
             uint32 count = 0;
             for (WorldPackets::BattlePet::BattlePetSlot const& slot : referencePlayer->GetSession()->GetBattlePetMgr()->GetSlots())
                 if (slot.Pet.Health > 0)
@@ -2959,6 +2993,12 @@ bool CriteriaHandler::ModifierSatisfied(ModifierTreeEntry const* modifier, uint6
             return false;
         case ModifierTreeType::PlayerHasMount: // 183
         {
+            // A bot session keeps no mount collection (WorldSession::DropClientOnlyManagers): its own mount spells count
+            if (!referencePlayer->GetSession()->GetCollectionMgr())
+            {
+                MountEntry const* mount = sMountStore.LookupEntry(reqValue);
+                return mount && referencePlayer->HasSpell(mount->SourceSpellID);
+            }
             for (auto&& p : referencePlayer->GetSession()->GetCollectionMgr()->GetAccountMounts())
             {
                 MountEntry const* mount = sDB2Manager.GetMount(p.first);
@@ -3028,17 +3068,19 @@ bool CriteriaHandler::ModifierSatisfied(ModifierTreeEntry const* modifier, uint6
         case ModifierTreeType::PlayerIsInstanceOwner: // 196 NYI
             return false;
         case ModifierTreeType::PlayerHasHeirloom: // 197
-            if (!Trinity::Containers::MapGetValuePtr(referencePlayer->GetSession()->GetCollectionMgr()->GetAccountHeirlooms(), reqValue))
+            if (!referencePlayer->GetSession()->GetCollectionMgr() || !Trinity::Containers::MapGetValuePtr(referencePlayer->GetSession()->GetCollectionMgr()->GetAccountHeirlooms(), reqValue))
                 return false;
             break;
         case ModifierTreeType::TeamPoints: // 198 NYI
             return false;
         case ModifierTreeType::PlayerHasToy: // 199
-            if (!referencePlayer->GetSession()->GetCollectionMgr()->HasToy(reqValue))
+            if (!referencePlayer->GetSession()->GetCollectionMgr() || !referencePlayer->GetSession()->GetCollectionMgr()->HasToy(reqValue))
                 return false;
             break;
         case ModifierTreeType::PlayerHasTransmog: // 200
         {
+            if (!referencePlayer->GetSession()->GetCollectionMgr())
+                return false;
             std::pair<bool, bool> hasAppearance = referencePlayer->GetSession()->GetCollectionMgr()->HasItemAppearance(reqValue);
             if (!hasAppearance.first || hasAppearance.second)
                 return false;
@@ -4031,6 +4073,14 @@ bool CriteriaHandler::ModifierSatisfied(ModifierTreeEntry const* modifier, uint6
             if (!referencePlayer->GetGuildId())
                 return false;
             break;
+        case ModifierTreeType::ItemHasInventoryType: // 364
+        {
+            // miscValue1 is the item id (like MinimumItemLevel)
+            ItemTemplate const* itemTemplate = sObjectMgr->GetItemTemplate(uint32(miscValue1));
+            if (!itemTemplate || itemTemplate->GetInventoryType() != reqValue)
+                return false;
+            break;
+        }
         case ModifierTreeType::PlayerMoneyIsRelOp: // 417
             switch (reqValue)
             {
@@ -4591,6 +4641,7 @@ inline bool IsCriteriaTypeStoredByAsset(CriteriaType type)
         case CriteriaType::LearnTradeskillSkillLine:
         case CriteriaType::DefeatDungeonEncounter:
         case CriteriaType::LearnToy:
+        case CriteriaType::LearnTransmog:
         case CriteriaType::LearnAnyTransmog:
             return true;
         default:
@@ -4998,9 +5049,9 @@ std::span<CriteriaType const> CriteriaMgr::GetRetroactivelyUpdateableCriteriaTyp
         //CriteriaType::AcquireGarrison, /*NYI*/
         //CriteriaType::LearnGarrisonBlueprint, /*NYI*/
         //CriteriaType::LearnGarrisonSpecialization, /*NYI*/
-        //CriteriaType::LearnToy, /*NYI*/ // Learn Toy "{Item}"
-        //CriteriaType::LearnAnyToy, /*NYI*/ // Learn Any Toy
-        //CriteriaType::LearnTransmog, /*NYI*/
+        CriteriaType::LearnToy,
+        CriteriaType::LearnAnyToy,
+        CriteriaType::LearnTransmog,
         CriteriaType::HonorLevelIncrease,
         //CriteriaType::AccountHonorLevelReached, /*NYI*/
         CriteriaType::ReachMaxLevel,

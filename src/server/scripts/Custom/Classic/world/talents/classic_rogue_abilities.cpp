@@ -19,6 +19,7 @@
 
 #include "ScriptMgr.h"
 #include <algorithm>
+#include "DB2Stores.h"
 #include "Player.h"
 #include "Random.h"
 #include "Spell.h"
@@ -461,6 +462,81 @@ class classic_spell_rog_shank_talents : public SpellScript
     }
 };
 
+// 1329286 - Boot Knife: the Shank script above rolls it. The PTR hotfix records (2026_11_22_70) made effect 0 a proc trigger aura on
+// 1329285 with melee ability proc flags and a 100% proc chance, so every melee ability added two combo points on top of the Shank roll.
+// Build 70755 notes: only Shank, "a 20/40/60/80/100% chance to add 2 Combo Points".
+class classic_spell_rog_boot_knife : public AuraScript
+{
+    bool CheckProc(ProcEventInfo& /*eventInfo*/)
+    {
+        return false;
+    }
+
+    void Register() override
+    {
+        DoCheckProc += AuraCheckProcFn(classic_spell_rog_boot_knife::CheckProc);
+    }
+};
+
+// Rank of a talent: Forever's talents are trait nodes with one spell, the ranks are held on the node entry of the active spec's trait config.
+// Returns 0 when the player does not have the talent. (Same as classic_talents_mage_shaman.cpp.)
+static int32 GetClassicTalentRank(Player const* player, uint32 spellId)
+{
+    UF::TraitConfig const* config = player->GetClassicSpecGroupConfig(player->GetActiveTalentGroup() == 1);
+    if (!config)
+        return 0;
+
+    for (UF::TraitEntry const& entry : config->Entries)
+    {
+        TraitNodeEntryEntry const* nodeEntry = sTraitNodeEntryStore.LookupEntry(entry.TraitNodeEntryID);
+        TraitDefinitionEntry const* definition = nodeEntry ? sTraitDefinitionStore.LookupEntry(nodeEntry->TraitDefinitionID) : nullptr;
+        if (definition && uint32(definition->SpellID) == spellId)
+            return entry.Rank + entry.GrantedRanks + entry.BonusRanks;
+    }
+    return 0;
+}
+
+// 2070, 6770, 11297 - Sap, with the Subtlety talent Quick Getaway 1310728 (build 70755 notes): "Increases the maximum number of targets
+// you may have Sapped by 1/1 and increases your movement speed by 15/30% for 3 seconds after sapping a target." The target limit is in
+// Unit::_ApplyAura (single target auras). Here: a landed Sap gives the rogue 1329282 for 3 s, its speed effect at 15% per rank.
+class classic_spell_rog_sap_quick_getaway : public SpellScript
+{
+    static constexpr uint32 SPELL_ROGUE_QUICK_GETAWAY = 1310728;
+    static constexpr uint32 SPELL_ROGUE_QUICK_GETAWAY_BUFF = 1329282;
+
+    bool Validate(SpellInfo const* /*spellInfo*/) override
+    {
+        return ValidateSpellInfo({ SPELL_ROGUE_QUICK_GETAWAY_BUFF });
+    }
+
+    void HandleAfterHit()
+    {
+        Player* rogue = GetCaster()->ToPlayer();
+        if (!rogue || !GetHitAura() || !rogue->HasAura(SPELL_ROGUE_QUICK_GETAWAY))
+            return;
+
+        int32 const rank = std::clamp(GetClassicTalentRank(rogue, SPELL_ROGUE_QUICK_GETAWAY), 1, 2);
+        CastSpellExtraArgs args(TRIGGERED_FULL_MASK);
+        args.AddSpellMod(SPELLVALUE_DURATION, 3000);
+        SpellInfo const* buff = sSpellMgr->AssertSpellInfo(SPELL_ROGUE_QUICK_GETAWAY_BUFF, DIFFICULTY_NONE);
+        for (SpellEffectInfo const& effect : buff->GetEffects())
+        {
+            if (effect.IsAura(SPELL_AURA_MOD_INCREASE_SPEED) || effect.IsAura(SPELL_AURA_MOD_SPEED_ALWAYS)
+                || effect.IsAura(SPELL_AURA_MOD_SPEED_NOT_STACK))
+            {
+                args.AddSpellMod(SpellValueModFloat(SPELLVALUE_BASE_POINT0 + AsUnderlyingType(effect.EffectIndex)), 15 * rank);
+                break;
+            }
+        }
+        rogue->CastSpell(rogue, SPELL_ROGUE_QUICK_GETAWAY_BUFF, args);
+    }
+
+    void Register() override
+    {
+        AfterHit += SpellHitFn(classic_spell_rog_sap_quick_getaway::HandleAfterHit);
+    }
+};
+
 // 1316709, 1325756, 1325757, 1325758 - Death Mark: "Finishing move that marks the target, storing a portion of the damage dealt by your
 // attacks per Combo Point. Garrote and Rupture damage is stored at twice the rate. After $d, the stored damage is dealt, up to a maximum
 // increased by Attack Power and Critical Strike chance". The rows hold only an empty periodic damage effect (one tick at the end) and a
@@ -602,6 +678,8 @@ void AddSC_classic_rogue_abilities()
     RegisterSpellScript(classic_spell_rog_deadly_poison_attack_power);
     RegisterSpellScript(classic_spell_rog_vanish);
     RegisterSpellScript(classic_spell_rog_shank_talents);
+    RegisterSpellScript(classic_spell_rog_boot_knife);
+    RegisterSpellScript(classic_spell_rog_sap_quick_getaway);
     RegisterSpellScript(classic_spell_rog_death_mark);
     RegisterSpellScript(classic_spell_rog_bleed_attack_power);
     RegisterSpellScript(classic_spell_rog_relentless_strikes);

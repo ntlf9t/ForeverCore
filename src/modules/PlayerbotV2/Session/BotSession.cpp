@@ -11,6 +11,7 @@
 #include "ObjectMgr.h"
 #include "BattlenetAccountMgr.h"
 #include "../Services.h"
+#include "../Fleet/BotAccountMgr.h"
 #include "../Fleet/BotGuildCharter.h"
 #include "Opcodes.h"
 #include "../Util/ConfigReader.h"
@@ -67,6 +68,12 @@ BotSession::BotSession(uint32 accountId, std::string name)
         false,                                  // is recruiter
         true)                                   // is_bot=true → IsBot() returns true
 {
+    // A pool bot has no client to show collections or a battle pet journal to: drop both before the account-info queries below, so
+    // their queries and loads are skipped too (Playerbot.Perf.LeanBotSessions). A player's own alt played as a bot keeps them: its
+    // account's mounts, toys and appearances belong to the player.
+    if (Services::Config().perf_lean_bot_sessions() && Services::Accounts().is_pool_account(accountId))
+        DropClientOnlyManagers();
+
     // Kick off the per-realm + login account-info holders so toys / heirlooms
     // / mounts / item appearances / transmog illusions / transmog outfits /
     // warband scenes / per-character account-data and tutorials are loaded
@@ -78,9 +85,9 @@ BotSession::BotSession(uint32 accountId, std::string name)
     // The InitializeSessionCallback emits a flurry of handshake packets
     // (SendAuthResponse, SendSetTimeZoneInformation, SendFeatureSystemStatus,
     // hotfix list, account-data times, tutorials, bnet ConnectionStatus) —
-    // all dropped by our SendPacket override. The data loads themselves
-    // (LoadAccountToys, LoadAccountMounts, etc.) hit CollectionMgr, which
-    // is constructed by the WorldSession base, so they run safely.
+    // all dropped by our SendPacket override. The collection loads
+    // (LoadAccountToys, LoadAccountMounts, etc.) run only when the session
+    // still has its CollectionMgr (see DropClientOnlyManagers above).
     InitializeSession();
 }
 

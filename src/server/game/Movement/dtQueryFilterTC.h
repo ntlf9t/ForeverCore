@@ -106,6 +106,8 @@ public:
         uint64_t roadPolysVisited = 0;        // sum of NAV_AREA_ROAD polys across all paths
         uint64_t totalPolysVisited = 0;       // sum of all polys across all paths
         uint64_t pathsInInstance = 0;         // paths on dungeon/raid maps (road bias auto-disabled)
+        uint64_t pathsOutOfNodes = 0;         // findPath ran out of A* nodes (DT_OUT_OF_NODES): partial path toward the target
+        uint64_t pathsPolyCapHit = 0;         // findPath hit the polygon cap (DT_BUFFER_TOO_SMALL): prefix of the full path
     };
     static RoadStats SampleStats();
     static void ResetStats();
@@ -129,7 +131,9 @@ public:
                           bool roadBonusDisabled,
                           float maxSlopeFactor,
                           bool inInstance,
-                          uint32 mapId = kNoMapId);
+                          uint32 mapId = kNoMapId,
+                          bool outOfNodes = false,
+                          bool polyCapHit = false);
 
     // Per-map stats — fragmented by source-unit map id at tally time.
     // Returns the stats for the named map, or a zero-initialised

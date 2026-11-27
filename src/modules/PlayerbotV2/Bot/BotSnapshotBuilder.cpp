@@ -1,4 +1,4 @@
-﻿#include "BotSnapshotBuilder.h"
+#include "BotSnapshotBuilder.h"
 #include "BotRegistry.h"
 #include "GroupControl.h"
 #include "Bot/SpellFamily.h"
@@ -822,7 +822,6 @@ void CopyAuras(Unit const* u, std::vector<AuraEntry>& out)
 // uint16 cat = 0xFFFF sentinel = "uncached"; 0 = no category; otherwise
 // the actual ChargeCategoryId.
 using ChargeKey = uint64;            // (uint64(spell_id) << 8) | difficulty
-constexpr uint16 kChargeCatUncached = 0xFFFF;
 // Sentinel: GetSpellInfo returned NULL for this (spell, difficulty) — a
 // "ghost" spell the character knows (stale character_spell / spellbook row)
 // whose data no longer exists after a hotfix-DB change. Cached so the probe
@@ -4659,7 +4658,6 @@ std::shared_ptr<BotSnapshot const> BotSnapshotBuilder::Build(Player* p, BotAI* b
                 //       optional bosses are skipped (ICC gunship→Saurfang→
                 //       Lich King without the wing detours, etc.).
                 bool any_boss_known = false;
-                bool all_done       = true;
                 uint8 done_count    = 0;
                 uint8 decided_count = 0;
                 bool any_special    = false;
@@ -4670,7 +4668,6 @@ std::shared_ptr<BotSnapshot const> BotSnapshotBuilder::Build(Player* p, BotAI* b
                     if (st == TO_BE_DECIDED) continue;
                     any_boss_known = true;
                     if (decided_count < 0xFFu) ++decided_count;
-                    if (st != DONE) { all_done = false; }
                     if (st == DONE && done_count < 0xFFu) ++done_count;
                     if (st == SPECIAL) any_special = true;
                 }
@@ -8345,7 +8342,7 @@ std::shared_ptr<BotSnapshot const> BotSnapshotBuilder::Build(Player* p, BotAI* b
                     }
                     if (tmpl->GetClass() == ITEM_CLASS_WEAPON)
                     {
-                        const float dps = tmpl->GetClassicDPS(base_ilvl, tmpl->HasFlag(ITEM_FLAG4_REGULATED_COMMODITY));   // Classic 1.60 (EV-0097)
+                        const float dps = tmpl->GetClassicDPS(base_ilvl, tmpl->HasFlag(ITEM_FLAG5_CLASSIC_REDUCED_CASTER_DPS));   // Classic 1.60 (EV-0097)
                         if (dps > 0.f)
                             approx.weapon_dps_x10 =
                                 static_cast<uint16>(std::clamp<float>(dps * 10.f, 0.f, 65535.f));
@@ -9438,6 +9435,33 @@ std::shared_ptr<BotSnapshot const> BotSnapshotBuilder::Build(Player* p, BotAI* b
         // returns Milliseconds(0) during prep / waiting. Cast to uint32
         // ms; ~50 day overflow is well past any realistic match length.
         snap->bg.in_progress_ms = uint32(bg->GetInProgressDuration().count());
+        // Arena: the nearest enemy player in the whole match, for idle:arena_seek_enemy. Stealthed and invisible players are
+        // left out (a bot must not walk straight to a hidden rogue).
+        if (bg->isArena() && bg->GetStatus() == STATUS_IN_PROGRESS)
+        {
+            float best_dsq = std::numeric_limits<float>::max();
+            for (auto const& [guid, ref] : bg->GetPlayers())
+            {
+                if (guid == p->GetGUID())
+                    continue;
+                Player* other = ObjectAccessor::FindPlayer(guid);
+                if (!other || other->GetMap() != p->GetMap() || !other->IsAlive() || other->IsGameMaster())
+                    continue;
+                if (other->GetBGTeam() == p->GetBGTeam())
+                    continue;
+                if (other->HasStealthAura() || other->HasInvisibilityAura())
+                    continue;
+                float const dsq = p->GetExactDistSq(other);
+                if (dsq < best_dsq)
+                {
+                    best_dsq = dsq;
+                    snap->bg.arena_enemy   = other->GetGUID();
+                    snap->bg.arena_enemy_x = other->GetPositionX();
+                    snap->bg.arena_enemy_y = other->GetPositionY();
+                    snap->bg.arena_enemy_z = other->GetPositionZ();
+                }
+            }
+        }
         snap->bg.score_alliance     = bg->GetTeamScore(TEAM_ALLIANCE);
         snap->bg.score_horde        = bg->GetTeamScore(TEAM_HORDE);
         // Real match clock (audit N54). TC's GetRemainingTime() exposes

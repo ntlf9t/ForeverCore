@@ -2953,6 +2953,17 @@ void Spell::TargetInfo::DoDamageAndTriggers(Spell* spell)
             {
                 caster->SetLastDamagedTargetGuid(spell->unitTarget->GetGUID());
 
+                // Classic 1.60 (WoW Forever): a weapon-damage special (effects 17, 31, 58, 121) takes the white-hit table, where a block
+                // stops the crit; a school-damage special (effect 2) rolls block and crit apart and can do both (wowsims/forever, MIT,
+                // sim/core/spell_outcome.go; no log measurement). The crit chance among unblocked hits is unchanged.
+                if (IsCrit && MissCondition == SPELL_MISS_BLOCK)
+                {
+                    SpellInfo const* info = spell->m_spellInfo;
+                    if (info->HasEffect(SPELL_EFFECT_WEAPON_DAMAGE_NOSCHOOL) || info->HasEffect(SPELL_EFFECT_WEAPON_PERCENT_DAMAGE)
+                        || info->HasEffect(SPELL_EFFECT_WEAPON_DAMAGE) || info->HasEffect(SPELL_EFFECT_NORMALIZED_WEAPON_DMG))
+                        IsCrit = false;
+                }
+
                 // Add bonuses and fill damageInfo struct
                 caster->CalculateSpellDamageTaken(&damageInfo, spell->m_damage, spell->m_spellInfo, spell->m_attackType, IsCrit, MissCondition == SPELL_MISS_BLOCK, spell);
                 Unit::DealDamageMods(damageInfo.attacker, damageInfo.target, damageInfo.damage, &damageInfo.absorb);
@@ -3297,6 +3308,9 @@ void Spell::DoSpellEffectHit(Unit* unit, SpellEffectInfo const& spellEffectInfo,
                     .SetStackAmount(m_spellValue->AuraStackAmount)
                     .SetSpellVisual(m_SpellVisual);
 
+                if (m_targets.HasDst())
+                    createInfo.SetDst(m_targets.GetDstPos());
+
                 if (Aura* aura = Aura::TryRefreshStackOrCreate(createInfo, false))
                 {
                     hitInfo.HitAura = aura->ToUnitAura();
@@ -3531,7 +3545,7 @@ SpellCastResult Spell::prepare(SpellCastTargets const& targets, AuraEffect const
     }
 
     // Prevent casting at cast another spell (ServerSide check)
-    if (!(_triggeredCastFlags & TRIGGERED_IGNORE_CAST_IN_PROGRESS) && m_caster->ToUnit() && m_caster->ToUnit()->IsNonMeleeSpellCast(false, true, true, m_spellInfo->Id == 75))
+    if (!(_triggeredCastFlags & TRIGGERED_IGNORE_CAST_IN_PROGRESS) && m_caster->ToUnit() && m_caster->ToUnit()->IsNonMeleeSpellCast(false, true, true, m_spellInfo->IsAutoShot()))
     {
         SendCastResult(SPELL_FAILED_SPELL_IN_PROGRESS);
         finish(SPELL_FAILED_SPELL_IN_PROGRESS);
@@ -4132,6 +4146,10 @@ void Spell::handle_immediate()
             m_spellState = SPELL_STATE_CHANNELING;
             // GameObjects shouldn't cast channeled spells
             ASSERT_NOTNULL(m_caster->ToUnit())->AddInterruptMask(m_spellInfo->ChannelInterruptFlags, m_spellInfo->ChannelInterruptFlags2);
+
+            // WoW Forever: a Revelation charge spent by a channel covers its first tick (Player::StartRevelationChannel)
+            if (Player* player = m_caster->ToPlayer(); player && player->GetCurrentSpell(CURRENT_CHANNELED_SPELL) == this)
+                player->StartRevelationChannel(this);
         }
     }
 
@@ -4446,6 +4464,7 @@ void Spell::finish(SpellCastResult result)
     m_spellState = SPELL_STATE_FINISHED;
 
     SpendPendingComboPoints();                              // a finisher that never reached its finish phase still pays
+    ClassicSpendReservedCharges();                          // Classic 1.60: a channel spends the charges it held (R-0048)
 
     if (m_scriptResult && (m_scriptWaitsForSpellHit || result != SPELL_CAST_OK))
         m_scriptResult.SetResult(result);
@@ -4837,11 +4856,7 @@ void Spell::SendSpellStart()
             castData.RemainingRunes->Start = m_runesState; // runes state before
             castData.RemainingRunes->Count = player->GetRunesState(); // runes state after
             for (uint8 i = 0; i < player->GetMaxPower(POWER_RUNES); ++i)
-            {
-                // float casts ensure the division is performed on floats as we need float result
-                float baseCd = float(player->GetRuneBaseCooldown());
-                castData.RemainingRunes->Cooldowns.push_back((baseCd - float(player->GetRuneCooldown(i))) / baseCd * 255); // rune cooldown passed
-            }
+                castData.RemainingRunes->Cooldowns.push_back(player->GetRuneCooldown(i) * 255.0f); // rune cooldown passed
         }
         else
         {
@@ -4927,6 +4942,8 @@ void Spell::SendNextMeleeSwingAttackerState()
         unitCaster->SendCombatLogMessage(&packet);
 
         // once per ability, so a test run can see the swing packet went out without a client
+        // Everlake: only while somebody logs it, so a swing takes no process-wide lock for a line nobody reads
+        if (sLog->ShouldLog("playerbot.v2", LOG_LEVEL_INFO))
         {
             static std::mutex loggedMutex;
             static std::unordered_set<uint32> logged;
@@ -5012,11 +5029,7 @@ void Spell::SendSpellGo()
         castData.RemainingRunes->Start = m_runesState; // runes state before
         castData.RemainingRunes->Count = player->GetRunesState(); // runes state after
         for (uint8 i = 0; i < player->GetMaxPower(POWER_RUNES); ++i)
-        {
-            // float casts ensure the division is performed on floats as we need float result
-            float baseCd = float(player->GetRuneBaseCooldown());
-            castData.RemainingRunes->Cooldowns.push_back((baseCd - float(player->GetRuneCooldown(i))) / baseCd * 255); // rune cooldown passed
-        }
+            castData.RemainingRunes->Cooldowns.push_back(player->GetRuneCooldown(i) * 255.0f); // rune cooldown passed
     }
 
     if (castFlags & CAST_FLAG_ADJUST_MISSILE)
@@ -5028,19 +5041,7 @@ void Spell::SendSpellGo()
     // The missile is launched by this packet: without the ammo display the client draws it as a white box. Shots whose cast start is
     // never sent (Auto Shot's repeats, other triggered ranged spells) were left with display 0 (PC 20 Oct, squares on some of a hunter's moves).
     if (castFlags & CAST_FLAG_PROJECTILE)
-    {
         castData.AmmoDisplayID = GetSpellCastDataAmmo();
-        static std::mutex missileLogMutex;
-        static std::unordered_set<uint32> missileLogged;
-        bool first;
-        {
-            std::lock_guard<std::mutex> lock(missileLogMutex);
-            first = m_caster->IsPlayer() && missileLogged.insert(m_spellInfo->Id).second;
-        }
-        if (first)
-            TC_LOG_INFO("playerbot.v2", "[missile] spell {} visual {} ammo display {} cast flags 0x{:X} triggered 0x{:X}", m_spellInfo->Id,
-                m_SpellVisual.SpellXSpellVisualID, castData.AmmoDisplayID, castFlags, uint32(_triggeredCastFlags));
-    }
 
     packet.LogData.Initialize(this);
 
@@ -5745,6 +5746,42 @@ void Spell::TakePower()
     }
 }
 
+void Spell::ClassicReserveCharge(ObjectGuid const& auraCaster, uint32 auraSpellId)
+{
+    std::pair<ObjectGuid, uint32> const key{ auraCaster, auraSpellId };
+    if (std::ranges::find(m_classicReservedCharges, key) == m_classicReservedCharges.end())
+        m_classicReservedCharges.push_back(key);
+}
+
+void Spell::ClassicReleaseCharge(ObjectGuid const& auraCaster, uint32 auraSpellId)
+{
+    std::erase(m_classicReservedCharges, std::pair<ObjectGuid, uint32>{ auraCaster, auraSpellId });
+}
+
+void Spell::ClassicSpendReservedCharges()
+{
+    if (m_classicReservedCharges.empty())
+        return;
+
+    std::vector<std::pair<ObjectGuid, uint32>> const reserved = std::move(m_classicReservedCharges);
+    m_classicReservedCharges.clear();
+    Unit* wearer = m_caster->ToUnit();
+    if (!wearer)
+        return;
+
+    for (auto const& [auraCaster, auraSpellId] : reserved)
+    {
+        Aura* aura = wearer->GetAura(auraSpellId, auraCaster);
+        if (!aura)
+            continue;
+        SpellProcEntry const* procEntry = sSpellMgr->GetSpellProcEntry(aura->GetSpellInfo());
+        if (procEntry && (procEntry->AttributesMask & PROC_ATTR_USE_STACKS_FOR_CHARGES))
+            aura->ModStackAmount(-1);
+        else if (aura->IsUsingCharges())
+            aura->ModCharges(-1);
+    }
+}
+
 void Spell::SpendPendingComboPoints()
 {
     if (!m_comboPointsPending)
@@ -5819,11 +5856,7 @@ SpellCastResult Spell::CheckRuneCost() const
     if (player->GetClass() != CLASS_DEATH_KNIGHT)
         return SPELL_CAST_OK;
 
-    int32 readyRunes = 0;
-    for (int32 i = 0; i < player->GetMaxPower(POWER_RUNES); ++i)
-        if (player->GetRuneCooldown(i) == 0)
-            ++readyRunes;
-
+    int32 readyRunes = std::popcount(player->GetRunesState());
     if (readyRunes < runeCost)
         return SPELL_FAILED_NO_POWER;                       // not sure if result code is correct
 
@@ -5846,11 +5879,11 @@ void Spell::TakeRunePower(bool didHit)
         return totalCost + (cost.Power == POWER_RUNES ? cost.Amount : 0);
     });
 
-    for (int32 i = 0; i < player->GetMaxPower(POWER_RUNES); ++i)
+    for (int32 i = 0; i < player->GetMaxPower(POWER_RUNES) && runeCost > 0; ++i)
     {
-        if (!player->GetRuneCooldown(i) && runeCost > 0)
+        if (m_runesState & (1u << i))
         {
-            player->SetRuneCooldown(i, player->GetRuneBaseCooldown());
+            player->SetRuneCooldown(i, 0.0f);
             --runeCost;
         }
     }
@@ -5866,7 +5899,7 @@ void Spell::RefundRunePower()
     // restore old rune state
     for (int32 i = 0; i < player->GetMaxPower(POWER_RUNES); ++i)
         if (m_runesState & (1 << i))
-            player->SetRuneCooldown(i, 0);
+            player->SetRuneCooldown(i, 1.0f);
 }
 
 void Spell::TakeReagents()
@@ -6412,6 +6445,7 @@ SpellCastResult Spell::CheckCast(bool strict, int32* param1 /*= nullptr*/, int32
     // triggers 29184 / 29195 / 29197 / 29199: SPELL_AURA_OVERRIDE_CLASS_SCRIPTS with misc value 4327, for 60 s. While that lasts the
     // caster's healing spells fizzle (VMaNGOS Spell::CheckCast, "Loatheb Corrupted Mind spell failed"). Nothing here read misc value
     // 4327, so every healer healed through the whole fight. Spells from items (potions, healthstones, bandages) still work.
+    // From Karrz 0.1.39.
     if (!IsTriggered() && !m_CastItem)
     {
         if (Unit const* unitCaster = m_caster->ToUnit())
@@ -6698,6 +6732,12 @@ SpellCastResult Spell::CheckCast(bool strict, int32* param1 /*= nullptr*/, int32
                     return SPELL_FAILED_TARGET_UNSKINNABLE;
 
                 Creature* creature = m_targets.GetUnitTarget()->ToCreature();
+
+                // Classic 1.60: a corpse is skinned once, by one player (forever-bugs #171, acknowledged). Retail skinning loot is
+                // personal, so every player could skin the same corpse.
+                if (creature->HasUnitFlag3(UNIT_FLAG3_ALREADY_SKINNED) && !creature->IsSkinnedBy(m_caster->ToPlayer()))
+                    return SPELL_FAILED_TARGET_UNSKINNABLE;
+
                 Loot* loot = creature->GetLootForPlayer(m_caster->ToPlayer());
                 if (loot && (!loot->isLooted() || loot->loot_type == LOOT_SKINNING))
                     return SPELL_FAILED_TARGET_NOT_LOOTED;
@@ -6988,6 +7028,21 @@ SpellCastResult Spell::CheckCast(bool strict, int32* param1 /*= nullptr*/, int32
 
                 if (unitCaster->HasUnitState(UNIT_STATE_ROOT))
                     return SPELL_FAILED_ROOTED;
+
+                // Classic 1.60 (WoW Forever, not a bug per Blizzard: forever-bugs #86): Feral Charge (Cat) leaps behind its target only when
+                // the target can be reached on foot, "There is no path" otherwise (a target on a roof), like Feral Charge (Bear). The jump
+                // itself is an arc, so the walkable path is checked here, as SPELL_EFFECT_CHARGE does.
+                if (spellEffectInfo.IsEffect(SPELL_EFFECT_JUMP_DEST_3) && unitCaster->IsPlayer())
+                {
+                    if (Unit const* target = m_targets.GetUnitTarget())
+                    {
+                        PathGenerator path(unitCaster);
+                        path.SetPathLengthLimit(m_spellInfo->GetMaxRange(false, unitCaster, this) * 1.5f + target->GetCombatReach());
+                        bool const result = path.CalculatePath(target->GetPositionX(), target->GetPositionY(), target->GetPositionZ(), false);
+                        if (!result || (path.GetPathType() & (PATHFIND_SHORT | PATHFIND_NOPATH | PATHFIND_INCOMPLETE)) || path.IsInvalidDestinationZ(target))
+                            return SPELL_FAILED_NOPATH;
+                    }
+                }
                 break;
             }
             case SPELL_EFFECT_TALENT_SPEC_SELECT:
@@ -7047,7 +7102,8 @@ SpellCastResult Spell::CheckCast(bool strict, int32* param1 /*= nullptr*/, int32
                 if (!m_caster->IsPlayer())
                     return SPELL_FAILED_BAD_TARGETS;
 
-                if (!m_caster->ToPlayer()->GetSession()->GetCollectionMgr()->HasHeirloom(m_misc.Raw.Data[0]))
+                CollectionMgr const* collectionMgr = m_caster->ToPlayer()->GetSession()->GetCollectionMgr();
+                if (!collectionMgr || !collectionMgr->HasHeirloom(m_misc.Raw.Data[0]))
                     return SPELL_FAILED_BAD_TARGETS;
 
                 break;
@@ -7084,7 +7140,7 @@ SpellCastResult Spell::CheckCast(bool strict, int32* param1 /*= nullptr*/, int32
                     return SPELL_FAILED_BAD_TARGETS;
 
                 BattlePets::BattlePetMgr* battlePetMgr = playerCaster->GetSession()->GetBattlePetMgr();
-                if (!battlePetMgr->HasJournalLock())
+                if (!battlePetMgr || !battlePetMgr->HasJournalLock())
                     return SPELL_FAILED_CANT_DO_THAT_RIGHT_NOW;
 
                 if (Creature* creature = m_targets.GetUnitTarget()->ToCreature())
@@ -7270,6 +7326,26 @@ SpellCastResult Spell::CheckCast(bool strict, int32* param1 /*= nullptr*/, int32
                     spellEffectInfo.CalcValue(m_caster, &m_spellValue->EffectBasePoints[spellEffectInfo.EffectIndex], nullptr, nullptr, m_castItemEntry, m_castItemLevel),
                     approximateAuraEffectMask, false))
                     return SPELL_FAILED_AURA_BOUNCED;
+    }
+
+    // Classic 1.60 (WoW Forever, fixed on live: forever-bugs #161 Rejuvenation, #241 Power Word: Shield): a lower rank cast on a target that
+    // holds the caster's own higher rank fails with "A more powerful spell is already active" (no mana, no Weakened Soul) instead of
+    // replacing it. Most class ranks are not chained in the client data, so the rank-like test of Aura::CanStackWith decides.
+    if (!IsTriggered() && m_spellInfo->SpellLevel && !m_spellInfo->IsTargetingArea())
+    {
+        if (Unit const* target = m_targets.GetUnitTarget())
+        {
+            ObjectGuid const casterGuid = m_originalCasterGUID.IsEmpty() ? m_caster->GetGUID() : m_originalCasterGUID;
+            for (auto const& [auraId, aurApp] : target->GetAppliedAuras())
+            {
+                Aura const* aura = aurApp->GetBase();
+                if (aura->GetCasterGUID() != casterGuid || aura->GetSpellInfo()->SpellLevel <= m_spellInfo->SpellLevel)
+                    continue;
+                if (aura->GetSpellInfo()->IsClassicUnchainedRankOf(m_spellInfo)
+                    || (aura->GetSpellInfo()->ChainEntry && m_spellInfo->IsPositive() && aura->GetSpellInfo()->IsDifferentRankOf(m_spellInfo)))
+                    return SPELL_FAILED_AURA_BOUNCED;
+            }
+        }
     }
 
     // check trade slot case (last, for allow catch any another cast problems)
@@ -8439,6 +8515,23 @@ SpellCastResult Spell::CheckItems(int32* param1 /*= nullptr*/, int32* param2 /*=
     return SPELL_CAST_OK;
 }
 
+// Classic 1.60 (vanilla; forever-bugs #344, #477): the pushback talents (Twilight Focus, Burning Soul, Healing Focus, Eye of the Storm,
+// Intensity, Fel Concentration, Spiritual Focus, Nature's Focus, Improved Channeling, the "Cast Pushback Reduction" items) are percent
+// ResistPushback spell mods whose tooltips say "a $s1% chance to not lose casting time": a roll that skips the whole pushback, not a
+// smaller pushback. Percent mods multiply, so 100 becomes 170 with a 70% talent; Focused Casting (100) always resists.
+// SPELL_AURA_REDUCE_PUSHBACK (Earth Shield: "reducing casting time lost by $s2%") stays a reduction, in the callers.
+bool Spell::RollClassicPushbackResist(Unit const* unitCaster)
+{
+    Player* player = unitCaster->GetSpellModOwner();
+    if (!player)
+        return false;
+
+    float resist = 100.0f;                                  // must be initialized to 100 for percent modifiers
+    player->ApplySpellMod(m_spellInfo, SpellModOp::ResistPushback, resist, this);
+    float const chance = resist - 100.0f;
+    return chance >= 100.0f || (chance > 0.0f && roll_chance(chance));
+}
+
 void Spell::Delayed() // only called in DealDamage()
 {
     Unit* unitCaster = m_caster->ToUnit();
@@ -8450,10 +8543,10 @@ void Spell::Delayed() // only called in DealDamage()
     //check pushback reduce
     int32 delaytime = 500;                                  // spellcasting delay is normally 500ms
 
-    float delayReduce = 100.0f;                             // must be initialized to 100 for percent modifiers
-    if (Player* player = unitCaster->GetSpellModOwner())
-        player->ApplySpellMod(m_spellInfo, SpellModOp::ResistPushback, delayReduce, this);
-    delayReduce += unitCaster->GetTotalAuraModifier(SPELL_AURA_REDUCE_PUSHBACK) - 100.0f;
+    if (RollClassicPushbackResist(unitCaster))
+        return;
+
+    float const delayReduce = unitCaster->GetTotalAuraModifier(SPELL_AURA_REDUCE_PUSHBACK);
     if (delayReduce >= 100)
         return;
 
@@ -8490,10 +8583,10 @@ void Spell::DelayedChannel()
 
     int32 delaytime = CalculatePct(duration, 25); // channeling delay is normally 25% of its time per hit
 
-    float delayReduce = 100.0f;                                 // must be initialized to 100 for percent modifiers
-    if (Player* player = unitCaster->GetSpellModOwner())
-        player->ApplySpellMod(m_spellInfo, SpellModOp::ResistPushback, delayReduce, this);
-    delayReduce += unitCaster->GetTotalAuraModifier(SPELL_AURA_REDUCE_PUSHBACK) - 100.0f;
+    if (RollClassicPushbackResist(unitCaster))
+        return;
+
+    float const delayReduce = unitCaster->GetTotalAuraModifier(SPELL_AURA_REDUCE_PUSHBACK);
     if (delayReduce >= 100)
         return;
 
@@ -8680,7 +8773,7 @@ bool Spell::CheckEffectTarget(Unit const* target, SpellEffectInfo const& spellEf
             if (target->GetGUID() != corpse->GetOwnerGUID())
                 return false;
 
-            if (!corpse->HasDynamicFlag(CORPSE_DYNFLAG_LOOTABLE))
+            if (!corpse->HasCorpseFlag(CORPSE_FLAG_SKINNABLE))
                 return false;
 
             if (!IsWithinLOS(m_caster, corpse, true, VMAP::ModelIgnoreFlags::M2))
@@ -9018,7 +9111,7 @@ void Spell::PreprocessSpellLaunch(TargetInfo& targetInfo)
         critChance = unit->SpellCritChanceTaken(m_originalCaster, this, nullptr, m_spellSchoolMask, critChance, m_attackType);
         // A player's ability that crits at least half the time: name what gives the chance, once per spell (damage_parity 146: Sinister
         // Strike and Backstab crit 97-100 % of landed hits while white swings crit 24 %).
-        if (critChance >= 50.0f && m_originalCaster->GetTypeId() == TYPEID_PLAYER)
+        if (critChance >= 50.0f && m_originalCaster->GetTypeId() == TYPEID_PLAYER && sLog->ShouldLog("playerbot.v2", LOG_LEVEL_INFO))
         {
             static std::mutex certainCritMutex;
             static std::unordered_set<uint32> certainCritLogged;
@@ -9679,7 +9772,14 @@ void Spell::TriggerGlobalCooldown()
             gcd = Milliseconds(intGcd);
         }
 
-        // Classic 1.60 (vanilla): the global cooldown is not shortened by spell haste or haste regen (retail scaled it down to 0.75 s)
+        // Classic 1.60 (WoW Forever, Blizzard on forever-bugs #389, not a bug): spell haste lowers the global cooldown, floor 1.0 s,
+        // ceiling 1.5 s. Only haste counts: a cast speed slow (Curse of Tongues) does not lengthen it (#284, fixed on live).
+        if (Unit const* unitCaster = m_caster->ToUnit(); unitCaster && m_caster->GetTypeId() == TYPEID_PLAYER)
+        {
+            float const castSpeed = unitCaster->m_unitData->ModCastingSpeed;
+            if (castSpeed > 0.0f && castSpeed < 1.0f && gcd > 1000ms)
+                gcd = std::max(Milliseconds(int64(gcd.count() * castSpeed)), Milliseconds(1000));
+        }
 
         // PlayerbotV2 pacing multiplier (bots only): scales the GCD, floor 750 ms.
         if (m_caster->GetTypeId() == TYPEID_PLAYER)

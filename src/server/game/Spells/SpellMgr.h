@@ -722,6 +722,10 @@ class TC_GAME_API SpellMgr
         // else the spell itself
         uint32 GetClassicValueSpellId(uint32 spellId) const;
         ClassicSpellValue::Cost const* GetClassicSpellCost(uint32 spellId) const;
+        // WoW Forever downranking: the share of spell power bonus and class proc chance a player's lower rank keeps (1: not penalised)
+        float GetClassicDownrankFactor(SpellInfo const* spellInfo, Unit const* caster) const;
+        // WoW Forever downranking (70755): the share of the Arcane Concentration, Frostbite and Fingers of Frost chance a lower Blizzard rank keeps
+        float GetClassicBlizzardProcDownrankFactor(SpellInfo const* spellInfo, Unit const* caster) const;
 
         // Classic 1.60 (Forever): a Waylaid Crate's "Stock Crate" spell takes one bundle of its list (table classic_crate_bundle)
         struct ClassicCrateBundle

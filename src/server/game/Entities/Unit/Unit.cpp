@@ -18,8 +18,10 @@
 #include "Unit.h"
 #include "ClassicRage.h"
 #include "ClassicArmor.h"
+#include "ClassicAttackTable.h"
 #include "ClassicAutoShot.h"
 #include "ClassicDaze.h"
+#include "ClassicHunterApShare.h"
 #include "ClassicLegacyPerks.h"
 #include "DeathRecap.h"
 #include "AbstractFollower.h"
@@ -977,12 +979,29 @@ TC_GAME_API std::atomic<uint64> g_classicRageHitGained(0);
         }
     }
 
+    // WoW Forever: rage from damage taken (ClassicRage.h), absorbed damage included
+    if (attacker && attacker != victim && damagetype != NODAMAGE && victim->GetTypeId() == TYPEID_PLAYER && victim->GetPowerType() == POWER_RAGE)
+    {
+        float const absorbed = cleanDamage ? float(cleanDamage->absorbed_damage) : 0.0f;
+        float rageDamage = float(damageTaken) + absorbed;
+        float multiplier = 1.0f;
+        bool const meleeSwing = damagetype == DIRECT_DAMAGE && !spellProto;
+        if (meleeSwing && cleanDamage && cleanDamage->rageDamage >= 0.0f)
+            rageDamage = cleanDamage->rageDamage;
+        else if (meleeSwing && cleanDamage)
+            rageDamage += float(cleanDamage->mitigated_damage);   // a swing from elsewhere (no pre-armor amount): landed + mitigated
+        // non-physical damage, periodic ticks and physical specials: twice the swing rule (on the landed damage for specials and spells)
+        if (!meleeSwing || (damageSchoolMask & ~SPELL_SCHOOL_MASK_NORMAL))
+            multiplier *= ClassicRage::NonSwingTakenMultiplier;
+        Powers const attackerPower = attacker->GetPowerType();
+        if (attackerPower == POWER_MANA || attackerPower == POWER_ENERGY)
+            multiplier *= ClassicRage::NonRageAttackerMultiplier;
+        if (rageDamage > 0.0f)
+            victim->RewardClassicRage(ClassicRage::RageFromDamageTaken(rageDamage, float(attacker->GetLevelForTarget(victim)), multiplier), false);
+    }
+
     if (!damageDone)
         return 0;
-
-    // Classic 1.60 (vanilla): rage from damage taken
-    if (attacker && attacker != victim && damagetype != NODAMAGE && damageTaken && victim->GetTypeId() == TYPEID_PLAYER && victim->GetPowerType() == POWER_RAGE)
-        victim->RewardClassicRage(float(damageTaken), false);
 
     uint32 health = victim->GetHealth();
 
@@ -1182,42 +1201,45 @@ TC_GAME_API std::atomic<uint64> g_classicRageHitGained(0);
         {
             if (victim != attacker && (!spellProto || !(spellProto->HasAttribute(SPELL_ATTR6_NO_PUSHBACK) || spellProto->HasAttribute(SPELL_ATTR7_DONT_CAUSE_SPELL_PUSHBACK) || spellProto->HasAttribute(SPELL_ATTR3_TREAT_AS_PERIODIC))))
             {
-                if (Spell* spell = victim->m_currentSpells[CURRENT_GENERIC_SPELL])
+                for (uint32 i = CURRENT_GENERIC_SPELL; i <= CURRENT_CHANNELED_SPELL; ++i)
                 {
-                    if (spell->getState() == SPELL_STATE_PREPARING)
+                    if (Spell* spell = victim->m_currentSpells[i])
                     {
-                        auto isCastInterrupted = [&]()
+                        if (spell->getState() == SPELL_STATE_PREPARING)
                         {
-                            if (!damageTaken)
-                                return spell->m_spellInfo->InterruptFlags.HasFlag(SpellInterruptFlags::ZeroDamageCancels);
+                            auto isCastInterrupted = [&]()
+                            {
+                                if (!damageTaken)
+                                    return spell->m_spellInfo->InterruptFlags.HasFlag(SpellInterruptFlags::ZeroDamageCancels);
 
-                            if (victim->IsPlayer() && spell->m_spellInfo->InterruptFlags.HasFlag(SpellInterruptFlags::DamageCancelsPlayerOnly))
-                                return true;
+                                if (victim->IsPlayer() && spell->m_spellInfo->InterruptFlags.HasFlag(SpellInterruptFlags::DamageCancelsPlayerOnly))
+                                    return true;
 
-                            if (spell->m_spellInfo->InterruptFlags.HasFlag(SpellInterruptFlags::DamageCancels))
-                                return true;
+                                if (spell->m_spellInfo->InterruptFlags.HasFlag(SpellInterruptFlags::DamageCancels))
+                                    return true;
 
-                            return false;
-                        };
-
-                        auto isCastDelayed = [&]()
-                        {
-                            if (!damageTaken)
                                 return false;
+                            };
 
-                            if (victim->IsPlayer() && spell->m_spellInfo->InterruptFlags.HasFlag(SpellInterruptFlags::DamagePushbackPlayerOnly))
-                                return true;
+                            auto isCastDelayed = [&]()
+                            {
+                                if (!damageTaken)
+                                    return false;
 
-                            if (spell->m_spellInfo->InterruptFlags.HasFlag(SpellInterruptFlags::DamagePushback))
-                                return true;
+                                if (victim->IsPlayer() && spell->m_spellInfo->InterruptFlags.HasFlag(SpellInterruptFlags::DamagePushbackPlayerOnly))
+                                    return true;
 
-                            return false;
-                        };
+                                if (spell->m_spellInfo->InterruptFlags.HasFlag(SpellInterruptFlags::DamagePushback))
+                                    return true;
 
-                        if (isCastInterrupted())
-                            victim->InterruptSpell(CURRENT_GENERIC_SPELL, false, false);
-                        else if (isCastDelayed())
-                            spell->Delayed();
+                                return false;
+                            };
+
+                            if (isCastInterrupted())
+                                victim->InterruptSpell(CURRENT_GENERIC_SPELL, false, false);
+                            else if (isCastDelayed())
+                                spell->Delayed();
+                        }
                     }
                 }
 
@@ -1425,6 +1447,7 @@ void Unit::CalculateMeleeDamage(Unit* victim, CalcDamageInfo* damageInfo, Weapon
     damageInfo->ProcAttacker     = PROC_FLAG_NONE;
     damageInfo->ProcVictim       = PROC_FLAG_NONE;
     damageInfo->CleanDamage      = 0;
+    damageInfo->RageDamage       = 0.0f;
     damageInfo->HitOutCome       = MELEE_HIT_EVADE;
 
     if (!victim)
@@ -1479,6 +1502,13 @@ void Unit::CalculateMeleeDamage(Unit* victim, CalcDamageInfo* damageInfo, Weapon
         damageInfo->Damage = damage;
 
     damageInfo->HitOutCome = RollMeleeOutcomeAgainst(damageInfo->Target, damageInfo->AttackType);
+
+    // WoW Forever: the victim's rage taken counts the swing's damage before armor and the block, x2 on a crit, x1.5 on a crushing blow
+    damageInfo->RageDamage = float(damage);
+    if (damageInfo->HitOutCome == MELEE_HIT_CRIT)
+        damageInfo->RageDamage *= 2.0f;
+    else if (damageInfo->HitOutCome == MELEE_HIT_CRUSHING)
+        damageInfo->RageDamage *= 1.5f;
 
     switch (damageInfo->HitOutCome)
     {
@@ -1554,18 +1584,13 @@ void Unit::CalculateMeleeDamage(Unit* victim, CalcDamageInfo* damageInfo, Weapon
         {
             damageInfo->HitInfo     |= HITINFO_GLANCING;
             damageInfo->TargetState  = VICTIMSTATE_HIT;
-            // Classic 1.60 (vanilla, VMaNGOS): Baeza formula on the defense / weapon skill difference, casters glance harder
+            // Classic 1.60 (vanilla, VMaNGOS): Baeza formula on the defense / weapon skill difference. WoW Forever uses it for every class:
+            // VMaNGOS's harder glancing for mages, priests and warlocks (-0.7 / -0.3, low end capped at 0.6) is gone (wowsims/forever, MIT,
+            // sim/core/target.go; no log measurement of a caster's glancing blows).
             int32 const skillDiff = victim->GetClassicDefenseSkill(this) - GetClassicWeaponSkill(damageInfo->AttackType, victim);
             float low = 1.3f - 0.05f * skillDiff;
             float high = 1.2f - 0.03f * skillDiff;
-            float lowCap = 0.91f;
-            if (GetClassMask() & CLASSMASK_WAND_USERS)
-            {
-                low -= 0.7f;
-                high -= 0.3f;
-                lowCap = 0.6f;
-            }
-            low = std::clamp(low, 0.01f, lowCap);
+            low = std::clamp(low, 0.01f, 0.91f);
             high = std::clamp(high, 0.2f, 0.99f);
 
             damageInfo->OriginalDamage = damageInfo->Damage;
@@ -1661,6 +1686,12 @@ void Unit::DealMeleeDamage(CalcDamageInfo* damageInfo, bool durabilityLoss)
 
     // Call default DealDamage
     CleanDamage cleanDamage(damageInfo->CleanDamage, damageInfo->Absorb, damageInfo->AttackType, damageInfo->HitOutCome);
+    // WoW Forever: a hit blocked in full gives no rage taken (wowsims/forever sim/core/rage.go)
+    if (damageInfo->HitOutCome == MELEE_HIT_CRIT || damageInfo->HitOutCome == MELEE_HIT_CRUSHING || damageInfo->HitOutCome == MELEE_HIT_NORMAL
+        || damageInfo->HitOutCome == MELEE_HIT_GLANCING || (damageInfo->HitOutCome == MELEE_HIT_BLOCK && damageInfo->Damage + damageInfo->Absorb > 0))
+        cleanDamage.rageDamage = damageInfo->RageDamage;
+    else
+        cleanDamage.rageDamage = 0.0f;
     Unit::DealDamage(this, victim, damageInfo->Damage, &cleanDamage, DIRECT_DAMAGE, SpellSchoolMask(damageInfo->DamageSchoolMask), nullptr, durabilityLoss);
 
     // If this is a creature and it attacks from behind it has a probability to daze it's victim
@@ -1709,6 +1740,18 @@ void Unit::DealMeleeDamage(CalcDamageInfo* damageInfo, bool durabilityLoss)
             uint32 damage = aurEff->GetAmountAsInt();
             if (Unit* caster = aurEff->GetCaster())
             {
+                // Classic 1.60 (WoW Forever): Retribution Aura adds 6% of its caster's spell power to each hit, though every rank states a
+                // coefficient of 0 (1.5 / 3.5 cast floor, / 3 for hitting every attacker, x 0.42 for an aura effect; the ratio Blizzard
+                // states; wowsims/forever, MIT, sim/core/buffs/meta.go, EV-0067). Thorns takes the same 6% through its coefficient
+                // (SpellMgr, forever-bugs #117), so it is not added here as well.
+                switch (spellInfo->Id)
+                {
+                    case 7294: case 10298: case 10299: case 10300: case 10301:        // Retribution Aura
+                        damage += uint32(std::max(0, caster->SpellBaseDamageBonusDone(spellInfo->GetSchoolMask())) * (1.5f / 3.5f / 3.0f * 0.42f));
+                        break;
+                    default:
+                        break;
+                }
                 damage = caster->SpellDamageBonusDone(this, spellInfo, damage, SPELL_DIRECT_DAMAGE, aurEff->GetSpellEffectInfo());
                 damage = SpellDamageBonusTaken(caster, spellInfo, damage, SPELL_DIRECT_DAMAGE);
             }
@@ -1799,9 +1842,20 @@ void Unit::HandleEmoteCommand(Emote emoteId, Player* target /*=nullptr*/, Trinit
             float arpPct = attacker->ToPlayer()->GetRatingBonusValue(CR_ARMOR_PENETRATION);
 
             Item const* weapon = attacker->ToPlayer()->GetWeaponForAttack(attackType, true);
-            arpPct += attacker->GetTotalAuraModifier(SPELL_AURA_MOD_ARMOR_PENETRATION_PCT, [weapon](AuraEffect const* aurEff) -> bool
+            Player const* attackerPlayer = attacker->ToPlayer();
+            arpPct += attacker->GetTotalAuraModifier(SPELL_AURA_MOD_ARMOR_PENETRATION_PCT, [weapon, attackerPlayer](AuraEffect const* aurEff) -> bool
             {
-                return aurEff->GetSpellInfo()->IsItemFitToSpellRequirements(weapon);
+                // Classic 1.60 (WoW Forever): Weaponmaster's (12284) and Hack and Slash's (13709) armor ignore covers every attack while the
+                // weapon type is in either hand, once; it counted only for hits by the hand holding it (wowsims/forever, MIT,
+                // docs/rulings R-0017, evidence pending)
+                switch (aurEff->GetId())
+                {
+                    case 12284:
+                    case 13709:
+                        return attackerPlayer->HasItemFitToSpellRequirements(aurEff->GetSpellInfo());
+                    default:
+                        return aurEff->GetSpellInfo()->IsItemFitToSpellRequirements(weapon);
+                }
             });
 
             // no more than 100%
@@ -1868,6 +1922,24 @@ static bool IsClassicBinaryResistRoll(SpellInfo const* spellInfo, ClassicResistR
     if (resistRoll == ClassicResistRoll::Binary)
         return true;
     return resistRoll == ClassicResistRoll::Spell && spellInfo && spellInfo->HasAttribute(SPELL_ATTR0_CU_BINARY_SPELL);
+}
+
+// Classic 1.60 (WoW Forever, hotfix 114309 of 20 Nov 2026): the binary ticks that take the Spell Piercing bonus at the full share, Mind Flay's
+// and Insect Swarm's (EV-0142: Mind Flay 483 of 5,398 ticks against 388, Insect Swarm 1,089 of 9,240 against 1,051). Other binary ticks
+// (Hurricane, Entangling Roots, Curse and Bane of Agony, Immolate's) take none.
+static bool IsClassicPiercedBinaryTick(SpellInfo const* spellInfo)
+{
+    if (!spellInfo)
+        return false;
+
+    switch (spellInfo->Id)
+    {
+        case 15407: case 17311: case 17312: case 17313: case 17314: case 18807:  // Mind Flay
+        case 5570: case 24974: case 24975: case 24976: case 24977:               // Insect Swarm
+            return true;
+        default:
+            return false;
+    }
 }
 
 /*static*/ uint32 Unit::CalcSpellResistedDamage(Unit const* attacker, Unit* victim, uint32 damage, SpellSchoolMask schoolMask, SpellInfo const* spellInfo, bool periodicTick /*= false*/,
@@ -1978,8 +2050,14 @@ static bool IsClassicBinaryResistRoll(SpellInfo const* spellInfo, ClassicResistR
         if (Player const* player = caster->GetSpellModOwner())
         {
             victimResistance += float(player->GetTotalAuraModifierByMiscMask(SPELL_AURA_MOD_TARGET_RESISTANCE, schoolMask));
-            victimResistance -= float(player->GetSpellPenetrationItemMod());
-            victimResistance -= float(player->GetClassicSpellPenetration(schoolMask));
+            // Classic 1.60 (WoW Forever): a totem's attacks take none of the shaman's Spell Piercing (wowsims/forever, MIT, EV-0142: Magma
+            // Totem 186 of 26,257 hits with a bonus against 3,042 expected, Searing Totem 3 of 3,160 against 334)
+            Unit const* unitCaster = caster->ToUnit();
+            if (!unitCaster || !unitCaster->IsTotem())
+            {
+                victimResistance -= float(player->GetSpellPenetrationItemMod());
+                victimResistance -= float(player->GetClassicSpellPenetration(schoolMask));
+            }
         }
         else if (Unit const* unitCaster = caster->ToUnit())
             victimResistance += float(unitCaster->GetTotalAuraModifierByMiscMask(SPELL_AURA_MOD_TARGET_RESISTANCE, schoolMask));
@@ -2519,24 +2597,17 @@ void Unit::AttackerStateUpdate(Unit* victim, WeaponAttackType attType, bool extr
                     damageInfo.HitInfo |= HITINFO_FAKE_DAMAGE;
             }
 
-            // Classic 1.60 (vanilla): rage from the damage dealt, 75% of the damage on a dodge / parry (retail: per weapon speed)
-            if (this != victim && damageInfo.HitOutCome != MELEE_HIT_MISS && GetPowerType() == POWER_RAGE)
+            // WoW Forever: a landed white swing gives rage by the weapon's base speed (ClassicRage.h); a miss, dodge or parry gives none
+            // (vanilla: rage from the damage dealt, 75% of it on a dodge / parry)
+            if (this != victim && GetPowerType() == POWER_RAGE && damageInfo.HitOutCome != MELEE_HIT_MISS && damageInfo.HitOutCome != MELEE_HIT_DODGE
+                && damageInfo.HitOutCome != MELEE_HIT_PARRY && damageInfo.HitOutCome != MELEE_HIT_EVADE)
             {
-                // Classic 1.60 (client 70374): Dual Wield Specialization 23584 "Increases the damage done by your off-hand weapon by $m1%
-                // and the Rage generated by your off-hand attacks by $m2%" (effect 1: server-side dummy, 10-50% by talent rank)
-                float offHandRageBonusPct = 0.0f;
-                if (damageInfo.AttackType == OFF_ATTACK)
-                    if (AuraEffect const* dualWieldSpec = GetAuraEffect(23584, EFFECT_1))
-                        if (dualWieldSpec->GetAuraType() == SPELL_AURA_DUMMY)
-                            offHandRageBonusPct = float(dualWieldSpec->GetAmount());
-                // kept fractional until the rage is worked out, so the talent's bonus is not rounded away on small hits
-                float const rageDamage = ClassicRage::SwingRageDamage(damageInfo.HitOutCome == MELEE_HIT_DODGE || damageInfo.HitOutCome == MELEE_HIT_PARRY,
-                    damageInfo.CleanDamage, damageInfo.Damage + damageInfo.Absorb, offHandRageBonusPct);
-                if (rageDamage > 0.0f)
+                float const rage = GetClassicSwingRage(damageInfo.AttackType, damageInfo.HitOutCome == MELEE_HIT_CRIT);
+                if (rage > 0.0f)
                 {
                     damageInfo.HitInfo |= HITINFO_RAGE_GAIN;
-                    damageInfo.RageGained = RewardClassicRage(rageDamage, true);
-                    g_classicRageHitDamage.fetch_add(uint64(rageDamage + 0.5f), std::memory_order_relaxed);
+                    damageInfo.RageGained = RewardClassicRage(rage, true);
+                    g_classicRageHitDamage.fetch_add(uint64(damageInfo.Damage + damageInfo.Absorb), std::memory_order_relaxed);
                     g_classicRageHitGained.fetch_add(uint64(std::max<int64>(int64(damageInfo.RageGained), 0)), std::memory_order_relaxed);
                 }
             }
@@ -2658,14 +2729,15 @@ MeleeHitOutcome Unit::RollMeleeOutcomeAgainst(Unit const* victim, WeaponAttackTy
     }
 
     // 4. GLANCING
-    // Max 40% chance to score a glancing blow against mobs that are higher level (can do only players and pets and not with ranged weapon)
+    // Glancing blows against higher-level mobs (only players and pets, not with a ranged weapon)
     // Classic 1.60 (vanilla, VMaNGOS): players / pets against creatures, 10% + 2% per point of the victim's defense above the
-    // attacker's capped weapon skill, at most 40%
+    // attacker's capped weapon skill. WoW Forever: no 40% cap, so a weapon skill well below the level maximum glances more (70% at 285
+    // skill against a level 63; at the full 300 it is 40% either way) (wowsims/forever, MIT, sim/core/target.go; no log measurement)
     if ((GetTypeId() == TYPEID_PLAYER || IsPet()) &&
         victim->GetTypeId() != TYPEID_PLAYER && !victim->IsPet() && attType != RANGED_ATTACK)
     {
         int32 const skill = std::min(GetClassicWeaponSkill(attType, victim), int32(GetMaxSkillValueForLevel(victim)));
-        tmp = std::clamp((10 + (victim->GetClassicDefenseSkill(this) - skill) * 2) * 100, 0, 4000);
+        tmp = std::clamp((10 + (victim->GetClassicDefenseSkill(this) - skill) * 2) * 100, 0, 10000);
         if (tmp > 0 && roll < (sum += tmp))
             return MELEE_HIT_GLANCING;
     }
@@ -3028,7 +3100,9 @@ float Unit::GetUnitParryChance(WeaponAttackType attType, Unit const* victim) con
     }
 
     // Classic 1.60 (vanilla): players 0.04% per point of weapon skill difference; creatures 0.2% per point of the capped skill
-    // difference, 0.6% when more than 10 below; creatures below level 10 parry less
+    // difference, 0.6% when more than 10 below; creatures below level 10 parry less. WoW Forever: 0.1% per point when 1-10 below,
+    // like dodge (6% against a level +2 creature, 5.5% at +1; 14% at +3 is unchanged). Forever's beta measures 10.8% at +2, an open
+    // Blizzard bug (ClassicWoWCommunity/forever-bugs#192, magey/forever-warrior#1); the intended 6% is used.
     if (chance > 0.0f)
     {
         int32 const weaponSkill = GetClassicWeaponSkill(attType, victim);
@@ -3038,7 +3112,7 @@ float Unit::GetUnitParryChance(WeaponAttackType attType, Unit const* victim) con
         else
         {
             int32 const cappedDiff = std::min(int32(GetMaxSkillValueForLevel(victim)), weaponSkill) - victimMaxSkill;
-            chance -= cappedDiff * (cappedDiff < -10 ? 0.6f : 0.2f);
+            chance -= cappedDiff * (cappedDiff < -10 ? 0.6f : cappedDiff < 0 ? 0.1f : 0.2f);
             if (victim->GetLevel() < 10)
                 chance *= victim->GetLevel() / 10.0f;
         }
@@ -3123,7 +3197,11 @@ float Unit::GetUnitCriticalChanceDone(WeaponAttackType attackType) const
     {
         if (!(ToCreature()->GetCreatureTemplate()->flags_extra & CREATURE_FLAG_EXTRA_NO_CRIT))
         {
-            chance = 5.0f;
+            // Classic 1.60 (WoW Forever): a hunter's tamed pet has no crit of its own, only what it inherits from the hunter (Hunter Pet
+            // Scaling 415429) and its talents. Live logs show pet abilities crit at about the hunter's crit with no 5% on top
+            // (forever-bugs #556; wowsims/forever, MIT, EV-0134: ability crit slope 0.94 on owner crit, white swings 0.6% at Ferocity 0
+            // over 154,361 swings). Warlock demons keep the 5%: in game a demon still has a crit of its own (wowsims EV-0081).
+            chance = IsHunterPet() ? 0.0f : 5.0f;
             chance += GetTotalAuraModifier(SPELL_AURA_MOD_WEAPON_CRIT_PERCENT);
             chance += GetTotalAuraModifier(SPELL_AURA_MOD_CRIT_PCT);
         }
@@ -3165,18 +3243,30 @@ float Unit::GetUnitCriticalChanceTaken(Unit const* attacker, WeaponAttackType at
 
 float Unit::GetUnitCriticalChanceAgainst(WeaponAttackType attackType, Unit const* victim) const
 {
-    float chance = GetUnitCriticalChanceDone(attackType);
+    float const chance = GetClassicCritAgainst(attackType, victim, GetUnitCriticalChanceDone(attackType));
+    return victim->GetUnitCriticalChanceTaken(this, attackType, chance);
+}
 
-    // Classic 1.60 (vanilla): 0.04% crit per point of weapon skill above / below the victim's defense; against creatures with
-    // more defense than the attacker's (capped) skill 0.2% per point
+// Classic 1.60 (vanilla) attack table, crit side, for white and yellow physical attacks alike: 0.04% crit per point of weapon skill
+// above / below the victim's defense, 0.2% per point against creatures with more defense than the attacker's (capped) skill; then,
+// against creatures 3+ levels up, the 1.8% aura crit suppression (ClassicAttackTable.h)
+float Unit::GetClassicCritAgainst(WeaponAttackType attackType, Unit const* victim, float critChance) const
+{
+    bool const victimIsPlayer = victim->GetTypeId() == TYPEID_PLAYER;
     int32 const weaponSkill = GetClassicWeaponSkill(attackType, victim);
     int32 const defense = victim->GetClassicDefenseSkill(this);
-    int32 const skillDiff = weaponSkill - defense;
-    int32 const cappedDiff = std::min(int32(GetMaxSkillValueForLevel(victim)), weaponSkill) - defense;
-    chance += (victim->GetTypeId() == TYPEID_PLAYER || skillDiff > 0) ? skillDiff * 0.04f : cappedDiff * 0.2f;
-    chance = std::max(chance, 0.0f);
+    float chance = critChance + ClassicAttackTable::CritSkillAdjustment(weaponSkill, std::min(int32(GetMaxSkillValueForLevel(victim)), weaponSkill),
+        defense, victimIsPlayer);
 
-    return victim->GetUnitCriticalChanceTaken(this, attackType, chance);
+    // crit from auras: what is left of the chance after the class base and agility (players only; creatures have no agility crit)
+    if (Player const* player = ToPlayer())
+    {
+        float const auraCrit = critChance - (player->GetClassicBaseCritAndDodge() + player->GetMeleeCritFromAgility());
+        int32 const levelGap = int32(victim->GetLevelForTarget(this)) - int32(GetLevelForTarget(victim));
+        chance -= ClassicAttackTable::AuraCritSuppressionFor(auraCrit, levelGap, victimIsPlayer);
+    }
+
+    return std::max(chance, 0.0f);
 }
 
 void Unit::_DeleteRemovedAuras()
@@ -3256,16 +3346,19 @@ void Unit::_UpdateAutoRepeatSpell()
 {
     SpellInfo const* autoRepeatSpellInfo = m_currentSpells[CURRENT_AUTOREPEAT_SPELL]->m_spellInfo;
     bool const classicAutoShot = autoRepeatSpellInfo->Id == ClassicAutoShot::SpellId && GetTypeId() == TYPEID_PLAYER;
+    // WoW Forever 70450: "Wands now require you to stand still for 0.5 seconds before shooting". A wand (Shoot) or thrown weapon (Throw)
+    // pauses while the player moves, like Auto Shot, and shoots only after half a second standing still (no hidden retry checks).
+    bool const classicWand = !classicAutoShot && GetTypeId() == TYPEID_PLAYER && autoRepeatSpellInfo->IsAutoRepeatRangedSpell();
 
     if (HasAuraType(SPELL_AURA_DISABLE_AUTOATTACK))
         return;
 
     // check "realtime" interrupts
     // don't cancel spells which are affected by a SPELL_AURA_CAST_WHILE_WALKING effect
-    if ((isMoving() && m_currentSpells[CURRENT_AUTOREPEAT_SPELL]->CheckMovement() != SPELL_CAST_OK) || IsNonMeleeSpellCast(false, false, true, autoRepeatSpellInfo->Id == 75))
+    if ((isMoving() && m_currentSpells[CURRENT_AUTOREPEAT_SPELL]->CheckMovement() != SPELL_CAST_OK) || IsNonMeleeSpellCast(false, false, true, autoRepeatSpellInfo->IsAutoShot()))
     {
         // cancel wand shoot
-        if (autoRepeatSpellInfo->Id != 75)
+        if (!autoRepeatSpellInfo->IsAutoShot())
             InterruptSpell(CURRENT_AUTOREPEAT_SPELL);
         return;
     }
@@ -3291,17 +3384,75 @@ void Unit::_UpdateAutoRepeatSpell()
             return;
         }
 
-    // Classic 1.60: moving pauses Auto Shot and restarts its half-second wind-up; no shot leaves while the hunter moves
+    bool const shotDue = isAttackReady(RANGED_ATTACK) && m_currentSpells[CURRENT_AUTOREPEAT_SPELL]->getState() != SPELL_STATE_PREPARING;
+
+    // Classic 1.60: wait (range, facing, line of sight) or stop (ammo, weapon, target); the reason is told once. Returns whether
+    // Auto Shot keeps waiting.
+    auto classicAutoShotFailed = [&](SpellCastResult result) -> bool
+    {
+        bool const stop = ClassicAutoShot::OnFailedShot(result) == ClassicAutoShot::FailAction::Stop;
+        if (stop || ClassicAutoShot::ShouldReport(result, m_classicAutoShotLastReported))
+        {
+            Spell::SendCastResult(ToPlayer(), autoRepeatSpellInfo, m_currentSpells[CURRENT_AUTOREPEAT_SPELL]->m_SpellVisual,
+                m_currentSpells[CURRENT_AUTOREPEAT_SPELL]->m_castId, result);
+            m_classicAutoShotLastReported = result;
+        }
+        if (stop)
+            InterruptSpell(CURRENT_AUTOREPEAT_SPELL);
+        return !stop;
+    };
+
+    // Classic 1.60: moving pauses Auto Shot and restarts its half-second wind-up; no shot leaves while the hunter moves. A shot that
+    // comes due while the hunter moves falls onto the half-second retry checks (ClassicAutoShot::RetryMs).
     if (classicAutoShot && isMoving())
+    {
+        uint32 const now = GameTime::GetGameTimeMS();
+        m_classicAutoShotStillSince = now;
+        if (shotDue && !m_classicAutoShotRetrying)
+            StartClassicAutoShotRetry(now);
+        return;
+    }
+
+    if (classicWand && isMoving())
     {
         m_classicAutoShotStillSince = GameTime::GetGameTimeMS();
         return;
     }
 
+    // Classic 1.60 retry: the next attempt waits for the first check after the hunter stopped (and after the last failed check). At
+    // that check the shot is tested without the wind-up, and the wind-up starts there when it can be taken.
+    if (classicAutoShot && shotDue && m_classicAutoShotRetrying)
+    {
+        uint32 const now = GameTime::GetGameTimeMS();
+        uint32 const tick = ClassicAutoShot::RetryTickFrom(m_classicAutoShotRetryAnchor,
+            ClassicAutoShot::Later(m_classicAutoShotStillSince, m_classicAutoShotLastAttempt + 1));
+        if (!ClassicAutoShot::HasReached(now, tick))
+            return;
+
+        m_classicAutoShotLastAttempt = tick;
+        uint32 const stillSince = m_classicAutoShotStillSince;
+        m_classicAutoShotStillSince = now - ClassicAutoShot::WindupMs;   // the check itself does not wait for the wind-up
+        SpellCastResult const result = m_currentSpells[CURRENT_AUTOREPEAT_SPELL]->CheckCast(true);
+        m_classicAutoShotStillSince = stillSince;
+        if (result != SPELL_CAST_OK && result != SPELL_FAILED_DONT_REPORT)
+        {
+            classicAutoShotFailed(result);
+            return;
+        }
+
+        m_classicAutoShotRetrying = false;
+        m_classicAutoShotStillSince = tick;
+        m_classicAutoShotLastReported = SPELL_CAST_OK;
+        return;
+    }
+
     // castroutine
-    if (isAttackReady(RANGED_ATTACK) && m_currentSpells[CURRENT_AUTOREPEAT_SPELL]->getState() != SPELL_STATE_PREPARING)
+    if (shotDue)
     {
         if (classicAutoShot && !IsClassicAutoShotWindupDone())
+            return;
+
+        if (classicWand && !ClassicAutoShot::IsWindupDone(GameTime::GetGameTimeMS(), m_classicAutoShotStillSince))
             return;
 
         // Check if able to cast
@@ -3310,18 +3461,11 @@ void Unit::_UpdateAutoRepeatSpell()
         {
             if (classicAutoShot)
             {
-                // Classic 1.60: wait (range, facing, line of sight) or stop (ammo, weapon, target); the reason is told once
-                bool const stop = ClassicAutoShot::OnFailedShot(result) == ClassicAutoShot::FailAction::Stop;
-                if (stop || ClassicAutoShot::ShouldReport(result, m_classicAutoShotLastReported))
-                {
-                    Spell::SendCastResult(ToPlayer(), autoRepeatSpellInfo, m_currentSpells[CURRENT_AUTOREPEAT_SPELL]->m_SpellVisual,
-                        m_currentSpells[CURRENT_AUTOREPEAT_SPELL]->m_castId, result);
-                    m_classicAutoShotLastReported = result;
-                }
-                if (stop)
-                    InterruptSpell(CURRENT_AUTOREPEAT_SPELL);
+                // a shot that waits falls onto the half-second retry checks
+                if (classicAutoShotFailed(result) && result != SPELL_FAILED_DONT_REPORT)
+                    StartClassicAutoShotRetry(GameTime::GetGameTimeMS());
             }
-            else if (autoRepeatSpellInfo->Id != 75)
+            else if (!autoRepeatSpellInfo->IsAutoShot())
                 InterruptSpell(CURRENT_AUTOREPEAT_SPELL);
             else if (GetTypeId() == TYPEID_PLAYER)
                 Spell::SendCastResult(ToPlayer(), autoRepeatSpellInfo, m_currentSpells[CURRENT_AUTOREPEAT_SPELL]->m_SpellVisual, m_currentSpells[CURRENT_AUTOREPEAT_SPELL]->m_castId, result);
@@ -3384,7 +3528,7 @@ void Unit::SetCurrentCastSpell(Spell* pSpell)
             if (m_currentSpells[CURRENT_AUTOREPEAT_SPELL])
             {
                 // break autorepeat if not Auto Shot
-                if (m_currentSpells[CURRENT_AUTOREPEAT_SPELL]->GetSpellInfo()->Id != 75)
+                if (!m_currentSpells[CURRENT_AUTOREPEAT_SPELL]->GetSpellInfo()->IsAutoShot())
                     InterruptSpell(CURRENT_AUTOREPEAT_SPELL);
             }
             if (pSpell->GetCastTime() > 0)
@@ -3406,7 +3550,7 @@ void Unit::SetCurrentCastSpell(Spell* pSpell)
 
                 // it also does break autorepeat if not Auto Shot
                 if (m_currentSpells[CURRENT_AUTOREPEAT_SPELL] &&
-                    m_currentSpells[CURRENT_AUTOREPEAT_SPELL]->GetSpellInfo()->Id != 75)
+                    !m_currentSpells[CURRENT_AUTOREPEAT_SPELL]->GetSpellInfo()->IsAutoShot())
                     InterruptSpell(CURRENT_AUTOREPEAT_SPELL);
 
                 AddUnitState(UNIT_STATE_CASTING);
@@ -3422,13 +3566,23 @@ void Unit::SetCurrentCastSpell(Spell* pSpell)
             {
                 m_classicAutoShotStillSince = GameTime::GetGameTimeMS();
                 m_classicAutoShotLastReported = SPELL_CAST_OK;
+                m_classicAutoShotRetrying = false;
+            }
+
+            // Classic 1.60 (forever-bugs #408, fixed on live): a wand (Shoot) or thrown weapon (Throw) waits half a second before its first
+            // shot, whatever the weapon speed; later shots follow the weapon speed. Without this the first shot left at once.
+            if (IsPlayer() && pSpell->GetSpellInfo()->IsAutoRepeatRangedSpell() && pSpell->GetSpellInfo()->Id != ClassicAutoShot::SpellId
+                && (!m_currentSpells[CSpellType] || m_currentSpells[CSpellType]->GetSpellInfo()->Id != pSpell->GetSpellInfo()->Id))
+            {
+                setAttackTimer(RANGED_ATTACK, std::max<uint32>(getAttackTimer(RANGED_ATTACK), ClassicAutoShot::WindupMs));
+                m_classicAutoShotStillSince = GameTime::GetGameTimeMS();
             }
 
             if (m_currentSpells[CSpellType] && m_currentSpells[CSpellType]->getState() == SPELL_STATE_IDLE)
                 m_currentSpells[CSpellType]->setState(SPELL_STATE_FINISHED);
 
             // only Auto Shoot does not break anything
-            if (pSpell->GetSpellInfo()->Id != 75)
+            if (!pSpell->GetSpellInfo()->IsAutoShot())
             {
                 // generic autorepeats break generic non-delayed and channeled non-delayed spells
                 InterruptSpell(CURRENT_GENERIC_SPELL, false);
@@ -3516,6 +3670,13 @@ void Unit::FinishSpell(CurrentSpellTypes spellType, SpellCastResult result /*= S
     spell->finish(result);
 }
 
+void Unit::StartClassicAutoShotRetry(uint32 now)
+{
+    m_classicAutoShotRetrying = true;
+    m_classicAutoShotRetryAnchor = now;
+    m_classicAutoShotLastAttempt = now;
+}
+
 bool Unit::IsClassicAutoShotWindupDone() const
 {
     if (GetTypeId() != TYPEID_PLAYER)
@@ -3526,7 +3687,8 @@ bool Unit::IsClassicAutoShotWindupDone() const
     if (!current || current->GetSpellInfo()->Id != ClassicAutoShot::SpellId)
         return false;
 
-    return ClassicAutoShot::IsWindupDone(GameTime::GetGameTimeMS(), m_classicAutoShotStillSince);
+    return ClassicAutoShot::IsWindupDone(GameTime::GetGameTimeMS(), m_classicAutoShotStillSince,
+        ClassicAutoShot::WindupFor(m_modAttackSpeedPct[RANGED_ATTACK]));
 }
 
 void Unit::CancelAutoRepeatSpell()
@@ -3568,8 +3730,10 @@ bool Unit::IsNonMeleeSpellCast(bool withDelayed, bool skipChanneled /*= false*/,
     if (!skipChanneled && m_currentSpells[CURRENT_CHANNELED_SPELL] &&
         (m_currentSpells[CURRENT_CHANNELED_SPELL]->getState() != SPELL_STATE_FINISHED))
     {
-        if ((!isAutoshoot || !m_currentSpells[CURRENT_CHANNELED_SPELL]->m_spellInfo->HasAttribute(SPELL_ATTR2_DO_NOT_RESET_COMBAT_TIMERS)) &&
-            (!skipChanneledAllowingActions || !m_currentSpells[CURRENT_CHANNELED_SPELL]->m_spellInfo->HasAttribute(SPELL_ATTR5_ALLOW_ACTIONS_DURING_CHANNEL)))
+        SpellInfo const* channeledSpellInfo = m_currentSpells[CURRENT_CHANNELED_SPELL]->m_spellInfo;
+
+        if ((!isAutoshoot || !channeledSpellInfo->HasAttribute(SPELL_ATTR2_DO_NOT_RESET_COMBAT_TIMERS) || channeledSpellInfo->HasChannelInterruptFlag(SpellAuraInterruptFlags::Action | SpellAuraInterruptFlags::ActionDelayed)) &&
+            (!skipChanneledAllowingActions || !channeledSpellInfo->HasAttribute(SPELL_ATTR5_ALLOW_ACTIONS_DURING_CHANNEL)))
             return true;
     }
     // autorepeat spells may be finished or delayed, but they are still considered cast
@@ -3785,6 +3949,9 @@ Aura* Unit::_TryStackingOrRefreshingExistingAura(AuraCreateInfo& createInfo)
                 *oldItemLevel = createInfo.CastItemLevel;
             }
 
+            if (createInfo.Dst)
+                foundAura->m_dst.WorldRelocate(createInfo.Dst);
+
             // try to increase stack amount
             foundAura->ModStackAmount(createInfo.StackAmount, AURA_REMOVE_BY_DEFAULT, createInfo.ResetPeriodicTimer);
             return foundAura;
@@ -3823,6 +3990,11 @@ void Unit::_AddAura(UnitAura* aura, Unit* caster)
         caster->GetSingleCastAuras().push_front(aura);
 
         uint32 maxOtherAuras = aura->GetSpellInfo()->MaxAffectedTargets - 1;
+        // Classic 1.60 rogue Quick Getaway 1310728 (Subtlety talent, build 70755): "Increases the maximum number of targets you may
+        // have Sapped by 1" (Sap: rogue family flag 0x80)
+        if (aura->GetSpellInfo()->SpellFamilyName == SPELLFAMILY_ROGUE && (aura->GetSpellInfo()->SpellFamilyFlags[0] & 0x80)
+            && caster->HasAura(1310728))
+            ++maxOtherAuras;
         while (aurasSharingLimit.size() > maxOtherAuras)
         {
             aurasSharingLimit.back()->Remove();
@@ -4633,7 +4805,7 @@ void Unit::RemoveAurasWithInterruptFlags(InterruptFlags flag, SpellInfo const* s
             && spell->GetSpellInfo()->HasChannelInterruptFlag(flag)
             && (!source || spell->GetSpellInfo()->Id != source->Id)
             && !IsInterruptFlagIgnoredForSpell(flag, this, spell->GetSpellInfo(), true, source))
-            InterruptNonMeleeSpells(false);
+            InterruptSpell(CURRENT_CHANNELED_SPELL, false, false);
 
     UpdateInterruptMask();
 }
@@ -5866,6 +6038,13 @@ std::vector<AreaTrigger*> Unit::GetAreaTriggers(uint32 spellId) const
     return areaTriggers;
 }
 
+std::vector<AreaTrigger*> Unit::GetAreaTriggers(std::function<bool(AreaTrigger const*)> const& predicate) const
+{
+    std::vector<AreaTrigger*> areaTriggers;
+    std::ranges::copy_if(m_areaTrigger, std::back_inserter(areaTriggers), std::ref(predicate));
+    return areaTriggers;
+}
+
 void Unit::RemoveAreaTrigger(uint32 spellId)
 {
     for (AreaTriggerList::iterator i = m_areaTrigger.begin(); i != m_areaTrigger.end();)
@@ -6725,7 +6904,8 @@ void Unit::SetMinion(Minion *minion, bool apply)
             {
                 if (properties->GetFlags().HasFlag(SummonPropertiesFlags::SummonFromBattlePetJournal))
                 {
-                    if (BattlePets::BattlePet const* pet = thisPlayer->GetSession()->GetBattlePetMgr()->GetPet(thisPlayer->GetSummonedBattlePetGUID()))
+                    BattlePets::BattlePetMgr* battlePetMgr = thisPlayer->GetSession()->GetBattlePetMgr();
+                    if (BattlePets::BattlePet const* pet = battlePetMgr ? battlePetMgr->GetPet(thisPlayer->GetSummonedBattlePetGUID()) : nullptr)
                     {
                         minion->SetBattlePetCompanionGUID(thisPlayer->GetSummonedBattlePetGUID());
                         minion->SetBattlePetCompanionNameTimestamp(pet->NameTimestamp);
@@ -7246,12 +7426,13 @@ static ClassicSpellValue::Value const* ClassicCoefficientRow(SpellInfo const* sp
     return sSpellMgr->GetClassicSpellValue(valueSpellId, uint32(effectInfo.EffectIndex));
 }
 
-// Classic 1.60: the spell power / healing power factor of an effect with the vanilla level penalty in. A vanilla table row is
-// already penalised and is taken as it is; the client's coefficient is the unpenalized one and gets 1 - (20 - spell level) * 3.75%
-// below level 20 (Fireball rank 1: 0.429 x 0.2875 = 0.123). See ClassicSpellValue::BonusCoefficientWithLevelPenalty.
-static float ClassicBonusCoefficient(SpellInfo const* spellProto, SpellEffectInfo const& spellEffectInfo)
+// Classic 1.60: the spell power / healing power factor of an effect (ClassicSpellValue::BonusCoefficientOr: the vanilla hold's or the
+// client's, with no sub-level-20 penalty as in WoW Forever). A player's lower rank cast far below the caster's level keeps only part of
+// it (WoW Forever downranking, ClassicSpellValue::DownrankFactor).
+static float ClassicBonusCoefficient(Unit const* caster, SpellInfo const* spellProto, SpellEffectInfo const& spellEffectInfo)
 {
-    return ClassicSpellValue::BonusCoefficientWithLevelPenalty(ClassicCoefficientRow(spellProto, spellEffectInfo), spellEffectInfo.BonusCoefficient, int32(spellProto->SpellLevel));
+    return ClassicSpellValue::BonusCoefficientOr(ClassicCoefficientRow(spellProto, spellEffectInfo), spellEffectInfo.BonusCoefficient)
+        * sSpellMgr->GetClassicDownrankFactor(spellProto, caster);
 }
 
 int32 Unit::SpellDamageBonusDone(Unit* victim, SpellInfo const* spellProto, int32 pdamage, DamageEffectType damagetype, SpellEffectInfo const& spellEffectInfo, uint32 stack /*= 1*/, Spell* spell /*= nullptr*/, AuraEffect const* aurEff /*= nullptr*/) const
@@ -7330,10 +7511,11 @@ float Unit::SpellDamageBonusDoneExact(Unit* victim, SpellInfo const* spellProto,
     if (HasUnitTypeMask(UNIT_MASK_GUARDIAN))
         DoneAdvertisedBenefit += static_cast<Guardian const*>(this)->GetBonusDamage();
 
-    // Check for table values
-    if (spellEffectInfo.BonusCoefficientFromAP > 0.0f)
+    // Check for table values; WoW Forever: hunter spells whose ranged attack power share the client rows leave out
+    float const foreverHunterApShare = spellEffectInfo.BonusCoefficientFromAP > 0.0f ? 0.0f : ClassicHunterApShare::For(spellProto->Id, damagetype == DOT);
+    if (spellEffectInfo.BonusCoefficientFromAP > 0.0f || foreverHunterApShare > 0.0f)
     {
-        float attackPowerCoeff = spellEffectInfo.BonusCoefficientFromAP;
+        float attackPowerCoeff = foreverHunterApShare > 0.0f ? foreverHunterApShare : spellEffectInfo.BonusCoefficientFromAP;
         if (Player* modOwner = GetSpellModOwner())
         {
             attackPowerCoeff *= 100.0f;
@@ -7343,7 +7525,7 @@ float Unit::SpellDamageBonusDoneExact(Unit* victim, SpellInfo const* spellProto,
 
         WeaponAttackType const attType = [&]()
         {
-            if ((spellProto->IsRangedWeaponSpell() && spellProto->DmgClass != SPELL_DAMAGE_CLASS_MELEE))
+            if (foreverHunterApShare > 0.0f || (spellProto->IsRangedWeaponSpell() && spellProto->DmgClass != SPELL_DAMAGE_CLASS_MELEE))
                 return RANGED_ATTACK;
 
             if (spellProto->HasAttribute(SPELL_ATTR3_REQUIRES_OFF_HAND_WEAPON) && !spellProto->HasAttribute(SPELL_ATTR3_REQUIRES_MAIN_HAND_WEAPON))
@@ -7360,7 +7542,7 @@ float Unit::SpellDamageBonusDoneExact(Unit* victim, SpellInfo const* spellProto,
     float takenTotal = 0.0f;
     if (DoneAdvertisedBenefit || takenBenefit)
     {
-        float coeff = ClassicBonusCoefficient(spellProto, spellEffectInfo);
+        float coeff = ClassicBonusCoefficient(this, spellProto, spellEffectInfo);
         if (Player* modOwner = GetSpellModOwner())
         {
             coeff *= 100.0f;
@@ -7624,7 +7806,12 @@ float Unit::SpellCritChanceDone(Spell* spell, AuraEffect const* aurEff, SpellSch
         return 0.0f;
 
     float crit_chance = 0.0f;
-    switch (spellInfo->DmgClass)
+    // Classic 1.60 (WoW Forever): hunter periodic damage (Serpent Sting, Immolation and Explosive Trap ticks) crits with the hunter's
+    // ranged or melee crit, whichever is higher, not spell crit (forever-hunter wiki, Ability Mechanics "Periodic Crits")
+    if (!spell && aurEff && aurEff->GetAuraType() == SPELL_AURA_PERIODIC_DAMAGE && spellInfo->SpellFamilyName == SPELLFAMILY_HUNTER
+        && GetTypeId() == TYPEID_PLAYER)
+        crit_chance = std::max(GetUnitCriticalChanceDone(RANGED_ATTACK), GetUnitCriticalChanceDone(BASE_ATTACK));
+    else switch (spellInfo->DmgClass)
     {
         case SPELL_DAMAGE_CLASS_NONE:
         case SPELL_DAMAGE_CLASS_MAGIC:
@@ -7660,8 +7847,15 @@ float Unit::SpellCritChanceDone(Spell* spell, AuraEffect const* aurEff, SpellSch
     }
     // percent done
     // only players use intelligence for critical chance computations
+    // The Spell goes with it, so a crit mod paid for with charges (Revelation, Elemental Mastery) is noted as applied to this cast and its
+    // proc row (PROC_ATTR_REQ_SPELLMOD) spends the charge; without it a crit-only buff such as Revelation was never spent.
     if (Player* modOwner = GetSpellModOwner())
-        modOwner->ApplySpellMod(spellInfo, SpellModOp::CritChance, crit_chance);
+        modOwner->ApplySpellMod(spellInfo, SpellModOp::CritChance, crit_chance, spell);
+
+    // WoW Forever: a spell triggered by each tick of a channel that spent a Revelation charge (Player::StartRevelationChannel)
+    if (spell)
+        if (Player const* player = ToPlayer())
+            crit_chance += player->GetRevelationChannelCritBonus(spell);
 
     return std::max(crit_chance, 0.0f);
 }
@@ -7727,7 +7921,12 @@ float Unit::SpellCritChanceTaken(Unit const* caster, Spell* spell, AuraEffect co
 
         case SPELL_DAMAGE_CLASS_RANGED:
             if (caster)
+            {
+                // Classic 1.60: yellow attacks (Auto Shot, Aimed Shot, Heroic Strike...) use the same weapon skill / level crit
+                // table as white swings; only the miss side was applied to them before
+                crit_chance = caster->GetClassicCritAgainst(attackType, this, crit_chance);
                 crit_chance = GetUnitCriticalChanceTaken(caster, attackType, crit_chance);
+            }
             break;
         case SPELL_DAMAGE_CLASS_NONE:
         default:
@@ -7891,7 +8090,7 @@ int32 Unit::SpellHealingBonusDone(Unit* victim, SpellInfo const* spellProto, int
     // Default calculation
     if (DoneAdvertisedBenefit)
     {
-        float coeff = ClassicBonusCoefficient(spellProto, spellEffectInfo);
+        float coeff = ClassicBonusCoefficient(this, spellProto, spellEffectInfo);
         if (Player* modOwner = GetSpellModOwner())
         {
             coeff *= 100.0f;
@@ -8171,7 +8370,7 @@ int32 Unit::SpellAbsorbBonusDone(Unit* victim, SpellInfo const* spellProto, int3
 
     if (doneAdvertisedBenefit)
     {
-        float coeff = ClassicBonusCoefficient(spellProto, spellEffectInfo);
+        float coeff = ClassicBonusCoefficient(this, spellProto, spellEffectInfo);
 
         if (Player* modOwner = GetSpellModOwner())
         {
@@ -9290,17 +9489,28 @@ void Unit::SetVisible(bool x)
     UpdateObjectVisibility();
 }
 
+float Unit::CombineSpeedBonuses(float mainSpeedMod, float stackBonus, float nonStackBonus)
+{
+    float speed = std::max(nonStackBonus, stackBonus);
+    if (mainSpeedMod)
+        AddPct(speed, mainSpeedMod);
+    return speed;
+}
+
 void Unit::UpdateSpeed(UnitMoveType mtype)
 {
+    // Everlake: bonuses of different kinds multiply (stack_bonus and non_stack_bonus are multipliers, main_speed_mod a
+    // percent applied on top), as before TrinityCore a1845983e3 made them add up; see docs/upstream-prs/trinitycore-a1845983e3.md
     float main_speed_mod  = 0.0f;
     float stack_bonus     = 1.0f;
     float non_stack_bonus = 1.0f;
+    float min_speed       = 0.01f;
+    float max_speed       = 100.0f;
 
     switch (mtype)
     {
         // Only apply debuffs
         case MOVE_FLIGHT_BACK:
-        case MOVE_RUN_BACK:
         case MOVE_SWIM_BACK:
             break;
         case MOVE_WALK:
@@ -9315,7 +9525,8 @@ void Unit::UpdateSpeed(UnitMoveType mtype)
             }
             else
             {
-                main_speed_mod  = GetMaxPositiveAuraModifier(SPELL_AURA_MOD_INCREASE_SPEED);
+                main_speed_mod  = std::max(GetMaxPositiveAuraModifier(SPELL_AURA_MOD_INCREASE_SPEED),
+                                           GetMaxPositiveAuraModifier(SPELL_AURA_MOD_INCREASE_SPEED_NO_CONTROL));
                 stack_bonus     = GetTotalAuraMultiplier(SPELL_AURA_MOD_SPEED_ALWAYS);
                 non_stack_bonus += GetMaxPositiveAuraModifier(SPELL_AURA_MOD_SPEED_NOT_STACK) / 100.0f;
 
@@ -9326,6 +9537,19 @@ void Unit::UpdateSpeed(UnitMoveType mtype)
             }
             break;
         }
+        case MOVE_RUN_BACK:
+        {
+            main_speed_mod = GetMaxPositiveAuraModifier(SPELL_AURA_MOD_INCREASE_BACKWARD_SPEED);
+            if (float uncontrolled = GetMaxPositiveAuraModifier(SPELL_AURA_MOD_INCREASE_SPEED_NO_CONTROL))
+            {
+                // backwards uncontrolled movement has the same speed as forward movement
+                stack_bonus *= IsControlledByPlayer()
+                    ? playerBaseMoveSpeed[MOVE_RUN] / playerBaseMoveSpeed[MOVE_RUN_BACK]
+                    : baseMoveSpeed[MOVE_RUN] / baseMoveSpeed[MOVE_RUN_BACK];
+                stack_bonus += uncontrolled / 100.0f;
+            }
+            break;
+        }
         case MOVE_SWIM:
         {
             main_speed_mod  = GetMaxPositiveAuraModifier(SPELL_AURA_MOD_INCREASE_SWIM_SPEED);
@@ -9333,32 +9557,18 @@ void Unit::UpdateSpeed(UnitMoveType mtype)
         }
         case MOVE_FLIGHT:
         {
-            if (GetTypeId() == TYPEID_UNIT && IsControlledByPlayer()) // not sure if good for pet
-            {
-                main_speed_mod  = GetMaxPositiveAuraModifier(SPELL_AURA_MOD_INCREASE_VEHICLE_FLIGHT_SPEED);
-                stack_bonus     = GetTotalAuraMultiplier(SPELL_AURA_MOD_VEHICLE_SPEED_ALWAYS);
-
-                // for some spells this mod is applied on vehicle owner
-                float owner_speed_mod = 0.0f;
-
-                if (Unit* owner = GetCharmer())
-                    owner_speed_mod = owner->GetMaxPositiveAuraModifier(SPELL_AURA_MOD_INCREASE_VEHICLE_FLIGHT_SPEED);
-
-                main_speed_mod = std::max(main_speed_mod, owner_speed_mod);
-            }
-            else if (IsMounted())
+            if (IsMounted())
             {
                 main_speed_mod  = GetMaxPositiveAuraModifier(SPELL_AURA_MOD_INCREASE_MOUNTED_FLIGHT_SPEED);
-                stack_bonus     = GetTotalAuraMultiplier(SPELL_AURA_MOD_MOUNTED_FLIGHT_SPEED_ALWAYS);
+                stack_bonus     = GetTotalAuraMultiplier(SPELL_AURA_MOD_INCREASE_MOUNTED_FLIGHT_SPEED_ALWAYS);
+                non_stack_bonus += GetMaxPositiveAuraModifier(SPELL_AURA_MOD_INCREASE_MOUNTED_FLIGHT_SPEED_NOT_STACK) / 100.0f;
             }
-            else             // Use not mount (shapeshift for example) auras (should stack)
-                main_speed_mod  = GetTotalAuraModifier(SPELL_AURA_MOD_INCREASE_FLIGHT_SPEED) + GetTotalAuraModifier(SPELL_AURA_MOD_INCREASE_VEHICLE_FLIGHT_SPEED);
-
-            non_stack_bonus += GetMaxPositiveAuraModifier(SPELL_AURA_MOD_FLIGHT_SPEED_NOT_STACK) / 100.0f;
-
-            // Update speed for vehicle if available
-            if (GetTypeId() == TYPEID_PLAYER && GetVehicle())
-                GetVehicleBase()->UpdateSpeed(MOVE_FLIGHT);
+            else
+            {
+                main_speed_mod  = GetMaxPositiveAuraModifier(SPELL_AURA_MOD_INCREASE_FLIGHT_SPEED);
+                stack_bonus     = GetTotalAuraMultiplier(SPELL_AURA_MOD_INCREASE_FLIGHT_SPEED_ALWAYS);
+                non_stack_bonus += GetMaxPositiveAuraModifier(SPELL_AURA_MOD_INCREASE_FLIGHT_SPEED_NOT_STACK) / 100.0f;
+            }
             break;
         }
         default:
@@ -9367,23 +9577,36 @@ void Unit::UpdateSpeed(UnitMoveType mtype)
     }
 
     // now we ready for speed calculation
-    float speed = std::max(non_stack_bonus, stack_bonus);
-    if (main_speed_mod)
-        AddPct(speed, main_speed_mod);
+    float speed = CombineSpeedBonuses(main_speed_mod, stack_bonus, non_stack_bonus);
 
     switch (mtype)
     {
         case MOVE_RUN:
+        case MOVE_RUN_BACK:
         case MOVE_SWIM:
         case MOVE_FLIGHT:
         {
             // Set creature speed rate
-            if (GetTypeId() == TYPEID_UNIT)
-                speed *= ToCreature()->GetCreatureTemplate()->speed_run;    // at this point, MOVE_WALK is never reached
+            float baseSpeedRate = 1.0f;
+            if (mtype == MOVE_RUN && GetTypeId() == TYPEID_UNIT && !GetOwnerGUID().IsPlayer() && !IsHunterPet())
+                baseSpeedRate = ToCreature()->GetCreatureTemplate()->speed_run;
 
-            // Normalize speed by 191 aura SPELL_AURA_USE_NORMAL_MOVEMENT_SPEED if need
-            /// @todo possible affect only on MOVE_RUN
-            if (float normalization = GetMaxPositiveAuraModifier(SPELL_AURA_USE_NORMAL_MOVEMENT_SPEED))
+            speed *= baseSpeedRate;
+
+            if (float min_speed_aura = GetMaxPositiveAuraModifier(SPELL_AURA_SPEED_LIMIT_MIN_PCT))
+                min_speed = CalculatePct(baseSpeedRate, min_speed_aura);
+            break;
+        }
+        default:
+            break;
+    }
+
+    switch (mtype)
+    {
+        case MOVE_RUN:
+        case MOVE_FLIGHT:
+        {
+            if (float max_speed_aura = GetMaxPositiveAuraModifier(SPELL_AURA_SPEED_LIMIT_MAX))
             {
                 if (Creature* creature = ToCreature())
                     if (CreatureImmunities const* immunities = SpellMgr::GetCreatureImmunities(creature->GetCreatureTemplate()->CreatureImmunitiesId))
@@ -9391,20 +9614,7 @@ void Unit::UpdateSpeed(UnitMoveType mtype)
                             break;
 
                 // Use speed from aura
-                float max_speed = normalization / (IsControlledByPlayer() ? playerBaseMoveSpeed[mtype] : baseMoveSpeed[mtype]);
-                if (speed > max_speed)
-                    speed = max_speed;
-            }
-
-            if (mtype == MOVE_RUN)
-            {
-                // force minimum speed rate @ aura 437 SPELL_AURA_MOD_MINIMUM_SPEED_RATE
-                if (float minSpeedMod = GetMaxPositiveAuraModifier(SPELL_AURA_MOD_MINIMUM_SPEED_RATE))
-                {
-                    float minSpeed = minSpeedMod / (IsControlledByPlayer() ? playerBaseMoveSpeed[mtype] : baseMoveSpeed[mtype]);
-                    if (speed < minSpeed)
-                        speed = minSpeed;
-                }
+                max_speed = max_speed_aura / (IsControlledByPlayer() ? playerBaseMoveSpeed[mtype] : baseMoveSpeed[mtype]);
             }
             break;
         }
@@ -9449,16 +9659,19 @@ void Unit::UpdateSpeed(UnitMoveType mtype)
             break;
     }
 
-    if (float minSpeedMod = GetMaxPositiveAuraModifier(SPELL_AURA_MOD_MINIMUM_SPEED))
+    switch (mtype)
     {
-        float baseMinSpeed = 1.0f;
-        if (!GetOwnerGUID().IsPlayer() && !IsHunterPet() && GetTypeId() == TYPEID_UNIT)
-            baseMinSpeed = ToCreature()->GetCreatureTemplate()->speed_run;
-
-        float min_speed = CalculatePct(baseMinSpeed, minSpeedMod);
-        if (speed < min_speed)
-            speed = min_speed;
+        case MOVE_WALK:
+        case MOVE_RUN:
+        case MOVE_RUN_BACK:
+            if (float overrideSpeed = GetMaxPositiveAuraModifier(SPELL_AURA_SET_SPEED))
+                speed = overrideSpeed / (IsControlledByPlayer() ? playerBaseMoveSpeed[mtype] : baseMoveSpeed[mtype]);
+            break;
+        default:
+            break;
     }
+
+    speed = std::clamp(speed, min_speed, max_speed);
 
     // the catch-up scale drifts with every step, a packet for each drift floods the nearby clients
     if (petCatchUp && !PetCatchUpSpeedWorthSending(m_speed_rate[mtype], speed))
@@ -9636,11 +9849,11 @@ void Unit::UpdateAdvFlyingSpeed(AdvFlyingRateTypeRange speedType, bool clientUpd
         switch (speedType)
         {
             case ADV_FLYING_BANKING_RATE:
-                return std::tuple(SMSG_MOVE_SET_ADV_FLYING_BANKING_RATE, flightCapabilityEntry->BankingRateMin, flightCapabilityEntry->BankingRateMax, SPELL_AURA_MOD_ADV_FLYING_BANKING_RATE);
+                return std::tuple(SMSG_MOVE_SET_ADV_FLYING_BANKING_RATE, DegToRad(flightCapabilityEntry->BankingRateMin), DegToRad(flightCapabilityEntry->BankingRateMax), SPELL_AURA_MOD_ADV_FLYING_BANKING_RATE);
             case ADV_FLYING_PITCHING_RATE_DOWN:
-                return std::tuple(SMSG_MOVE_SET_ADV_FLYING_PITCHING_RATE_DOWN, flightCapabilityEntry->PitchingRateDownMin, flightCapabilityEntry->PitchingRateDownMax, SPELL_AURA_MOD_ADV_FLYING_PITCHING_RATE_DOWN);
+                return std::tuple(SMSG_MOVE_SET_ADV_FLYING_PITCHING_RATE_DOWN, DegToRad(flightCapabilityEntry->PitchingRateDownMin), DegToRad(flightCapabilityEntry->PitchingRateDownMax), SPELL_AURA_MOD_ADV_FLYING_PITCHING_RATE_DOWN);
             case ADV_FLYING_PITCHING_RATE_UP:
-                return std::tuple(SMSG_MOVE_SET_ADV_FLYING_PITCHING_RATE_UP, flightCapabilityEntry->PitchingRateUpMin, flightCapabilityEntry->PitchingRateUpMax, SPELL_AURA_MOD_ADV_FLYING_PITCHING_RATE_UP);
+                return std::tuple(SMSG_MOVE_SET_ADV_FLYING_PITCHING_RATE_UP, DegToRad(flightCapabilityEntry->PitchingRateUpMin), DegToRad(flightCapabilityEntry->PitchingRateUpMax), SPELL_AURA_MOD_ADV_FLYING_PITCHING_RATE_UP);
             case ADV_FLYING_TURN_VELOCITY_THRESHOLD:
                 return std::tuple(SMSG_MOVE_SET_ADV_FLYING_TURN_VELOCITY_THRESHOLD, flightCapabilityEntry->TurnVelocityThresholdMin, flightCapabilityEntry->TurnVelocityThresholdMax, SPELL_AURA_NONE);
             default:
@@ -10660,20 +10873,6 @@ void Unit::SetPower(Powers power, int32 val, bool withPowerUpdate /*= true*/)
 
     int32 oldPower = m_unitData->Power[powerIndex];
     SetUpdateFieldValue(m_values.ModifyValue(&Unit::m_unitData).ModifyValue(&UF::UnitData::Power, powerIndex), val);
-
-    // Diagnostic: a warrior's combo points are only meant to come from a dodged attack (Overpower), yet damage_parity runs hold 1-5 of them with no dodge
-    // on record. Logs who raised them (the spell in progress, and the call when no spell is), a few dozen lines at most.
-    if (power == POWER_COMBO_POINTS && val > oldPower && GetClass() == CLASS_WARRIOR && IsPlayer())
-    {
-        static std::atomic<uint32> loggedWarriorComboRises{ 0 };
-        if (loggedWarriorComboRises.fetch_add(1) < 60)
-        {
-            Spell const* current = GetCurrentSpell(CURRENT_GENERIC_SPELL);
-            Spell const* melee = GetCurrentSpell(CURRENT_MELEE_SPELL);
-            TC_LOG_ERROR("scripts.classic", "Warrior combo points {} -> {}: generic spell {}, melee spell {}", oldPower, val,
-                current ? current->GetSpellInfo()->Id : 0, melee ? melee->GetSpellInfo()->Id : 0);
-        }
-    }
 
     // Classic 1.60: also send combo point changes as a power update (the official rogue sniff 70338 has type 4 power updates);
     // energize changes the power without one. The client shows them only on UnitData ClassicComboTarget (Spell::EffectEnergize)
@@ -11715,15 +11914,35 @@ void Unit::ApplyCastTimePercentMod(float val, bool apply)
     if (val > 0.f)
     {
         ApplyPercentModUpdateFieldValue(m_values.ModifyValue(&Unit::m_unitData).ModifyValue(&UF::UnitData::ModCastingSpeed), val, !apply);
-        ApplyPercentModUpdateFieldValue(m_values.ModifyValue(&Unit::m_unitData).ModifyValue(&UF::UnitData::ModSpellHaste), val, !apply);
-        ApplyPercentModUpdateFieldValue(m_values.ModifyValue(&Unit::m_unitData).ModifyValue(&UF::UnitData::ModHasteRegen), val, !apply);
     }
     else
     {
         ApplyPercentModUpdateFieldValue(m_values.ModifyValue(&Unit::m_unitData).ModifyValue(&UF::UnitData::ModCastingSpeed), -val, apply);
-        ApplyPercentModUpdateFieldValue(m_values.ModifyValue(&Unit::m_unitData).ModifyValue(&UF::UnitData::ModSpellHaste), -val, apply);
-        ApplyPercentModUpdateFieldValue(m_values.ModifyValue(&Unit::m_unitData).ModifyValue(&UF::UnitData::ModHasteRegen), -val, apply);
+        ApplyPercentModUpdateFieldValue(m_values.ModifyValue(&Unit::m_unitData).ModifyValue(&UF::UnitData::ModCastingSpeedNeg), -val, apply);
     }
+}
+
+void Unit::ApplySpellHastePercentMod(float val, bool apply)
+{
+    if (val > 0.f)
+        ApplyPercentModUpdateFieldValue(m_values.ModifyValue(&Unit::m_unitData).ModifyValue(&UF::UnitData::ModSpellHaste), val, !apply);
+    else
+        ApplyPercentModUpdateFieldValue(m_values.ModifyValue(&Unit::m_unitData).ModifyValue(&UF::UnitData::ModSpellHaste), -val, apply);
+}
+
+void Unit::ApplyHasteRegenPercentMod(float val, bool apply)
+{
+    if (val > 0.f)
+        ApplyPercentModUpdateFieldValue(m_values.ModifyValue(&Unit::m_unitData).ModifyValue(&UF::UnitData::ModHasteRegen), val, !apply);
+    else if (val < 0.0f)
+        ApplyPercentModUpdateFieldValue(m_values.ModifyValue(&Unit::m_unitData).ModifyValue(&UF::UnitData::ModHasteRegen), -val, apply);
+    else
+        return;
+
+    if (Player* player = ToPlayer())
+        for (Powers power : GetPowerTypes())
+            if (sDB2Manager.GetPowerTypeEntry(power)->GetFlags().HasFlag(PowerTypeFlags::RegenAffectedByHaste))
+                player->UpdatePowerRegen(power);
 }
 
 void Unit::UpdateAuraForGroup()
@@ -13262,8 +13481,9 @@ float Unit::MeleeSpellMissChance(Unit const* victim, WeaponAttackType attType, S
     int32 const classicSkillDiff = GetClassicWeaponSkill(attType, victim) - victim->GetClassicDefenseSkill(this);
 
     // melee attacks while dual wielding have +19% chance to miss; Classic 1.60 (vanilla, VMaNGOS): not while a spell of the physical
-    // school is being cast
-    if (!spellInfo && haveOffhandWeapon() && attType != RANGED_ATTACK && !m_currentSpells[CURRENT_MELEE_SPELL]
+    // school is being cast. WoW Forever: a queued Heroic Strike / Cleave no longer lifts the penalty from the off-hand (beta development
+    // notes, 1 October 2026: "Queueing Heroic Strike will no longer increase off-hand hit chance"; magey/forever-warrior#2)
+    if (!spellInfo && haveOffhandWeapon() && attType != RANGED_ATTACK
         && !IsInFeralForm() && !HasAuraType(SPELL_AURA_IGNORE_DUAL_WIELD_HIT_PENALTY))
     {
         bool physicalSpellCast = false;
@@ -13295,10 +13515,8 @@ float Unit::MeleeSpellMissChance(Unit const* victim, WeaponAttackType attType, S
     // miss chance from auras after calculating skill based miss
     hitChance += GetTotalAuraModifier(SPELL_AURA_MOD_HIT_CHANCE);
 
-    // Classic 1.60 (vanilla, VMaNGOS GetMeleeMissChance): the first 1% of +hit from talents and gear is ignored against a victim whose
-    // maximum defense is more than 10 above the attacker's weapon skill (a boss three levels above a 300 skill player)
-    if (hitChance > 0.0f && GetClassicWeaponSkill(attType, victim) - int32(victim->GetMaxSkillValueForLevel(this)) < -10)
-        hitChance -= 1.0f;
+    // WoW Forever: no hit suppression. Vanilla ignored the first 1% of +hit against a victim whose defense was more than 10 above the
+    // weapon skill; Forever logs at +1% hit against +3 level mobs miss 7.04% (n 4,259), the unsuppressed 7% (magey/forever-warrior#1)
 
     missChance -= hitChance;
     if (attType == RANGED_ATTACK)
@@ -13980,14 +14198,47 @@ void Unit::UpdateHeight(float newZ)
         GetVehicleKit()->RelocatePassengers();
 }
 
-// Classic 1.60 (vanilla, VMaNGOS): rage = damage / conversion(level) * 7.5 when dealing, * 2.5 when taking damage
-int32 Unit::RewardClassicRage(float damage, bool attacker)
+// WoW Forever: rage points (ClassicRage.h) to the rage bar, in tenths; rage auras on dealt rage, then the server rate
+int32 Unit::RewardClassicRage(float ragePoints, bool attacker)
 {
-    float addRage = ClassicRage::RageFromDamage(damage, float(GetLevel()), attacker);
+    float addRage = ragePoints;
     if (attacker)
         AddPct(addRage, GetTotalAuraModifier(SPELL_AURA_MOD_RAGE_FROM_DAMAGE_DEALT));
     addRage *= sWorld->getRate(RATE_POWER_RAGE_INCOME);
-    return ModifyPower(POWER_RAGE, int32(addRage * 10), false);
+    return ModifyPower(POWER_RAGE, int32(addRage * 10.0f + 0.5f), false);
+}
+
+// WoW Forever: rage points of a landed white swing with this hand (ClassicRage::SwingRage). The weapon's base speed (haste does not
+// change the rage), fists at 2.0, bear forms at a normalized 2.5 with the two-hand factor.
+float Unit::GetClassicSwingRage(WeaponAttackType attType, bool crit) const
+{
+    float speed = ClassicRage::UnarmedSpeed;
+    bool twoHand = false;
+    if (Player const* player = ToPlayer())
+    {
+        if (player->IsInFeralForm())
+        {
+            speed = ClassicRage::BearNormalizedSpeed;
+            twoHand = true;
+        }
+        else if (Item const* weapon = player->GetWeaponForAttack(attType, true))
+        {
+            speed = float(weapon->GetTemplate()->GetDelay()) / 1000.0f;
+            twoHand = weapon->GetTemplate()->GetInventoryType() == INVTYPE_2HWEAPON;
+        }
+    }
+    else
+        speed = float(m_baseAttackSpeed[attType]) / 1000.0f;
+
+    // Dual Wield Specialization 23584 "Increases the damage done by your off-hand weapon by $m1% and the Rage generated by your off-hand
+    // attacks by $m2%" (effect 1: server-side dummy, 10-50% by talent rank)
+    float offHandBonusPct = 0.0f;
+    if (attType == OFF_ATTACK)
+        if (AuraEffect const* dualWieldSpec = GetAuraEffect(23584, EFFECT_1))
+            if (dualWieldSpec->GetAuraType() == SPELL_AURA_DUMMY)
+                offHandBonusPct = float(dualWieldSpec->GetAmount());
+
+    return ClassicRage::SwingRage(speed, attType == OFF_ATTACK, twoHand, crit, offHandBonusPct);
 }
 
 // Classic 1.60 (vanilla) combat table: weapon skill of an attack. Players: skill of the weapon (with bonuses), feral forms and

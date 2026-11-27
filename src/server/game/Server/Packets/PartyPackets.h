@@ -61,7 +61,7 @@ namespace WorldPackets
             uint32 ProposedRoles = 0;           // not sent by the Classic 1.60 client
             uint32 TargetRealmAddress = 0;      // Classic 1.60: where retail has ProposedRoles (0 for invites by name; Battle.net friend invites: 70-1-70)
             std::string TargetName;
-            std::string TargetRealm;
+            std::string TargetRealm;            // Classic 1.60: the target's surname (retail: the realm); see HandlePartyInviteOpcode
             ObjectGuid TargetGUID;
         };
 

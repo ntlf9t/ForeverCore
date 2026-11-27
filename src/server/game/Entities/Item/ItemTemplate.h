@@ -344,6 +344,11 @@ enum ItemFlags5
 {
     // Classic 1.60: set on exactly the soul, herb, enchanting, mining and skinning bags; they also fit the reagent bag slot
     ITEM_FLAG5_CLASSIC_FITS_REAGENT_BAG_SLOT                    = 0x00000040,
+    // Classic 1.60 (WoW Forever): caster weapons. All three sit in the fifth flags field (ItemSparse Flags[4], wowsims' Flags_4), not in
+    // ItemFlags4: in client 70959 99 weapons carry 0x100, 78 carry 0x200 and 17 carry 0x400 there, and none carries them in Flags[3].
+    ITEM_FLAG5_CLASSIC_REDUCED_CASTER_DPS                       = 0x00000100,   // deals a caster weapon's share of its damage table
+    ITEM_FLAG5_CLASSIC_CASTER_SPELL_POWER                       = 0x00000200,   // implicit spell power (ItemTemplate::GetClassicCasterPower)
+    ITEM_FLAG5_CLASSIC_CASTER_HEALING_POWER                     = 0x00000400,   // implicit healing and spell damage
 };
 
 enum ItemFlagsCustom
@@ -995,11 +1000,12 @@ struct TC_GAME_API ItemTemplate
 
     char const* GetDefaultLocaleName() const;
     uint32 GetArmor(uint32 itemLevel) const;
+    float GetTableDPS(uint32 itemLevel) const;
+    float GetClassicDamageScale(uint32 itemLevel) const;
     float GetDPS(uint32 itemLevel) const;
     float GetClassicDPS(uint32 itemLevel, bool reducedCasterDps) const;
     float GetClassicBonusArmor() const;
-    float GetTableDPS(uint32 itemLevel) const;
-    float GetClassicDamageScale(uint32 itemLevel) const;
+    void GetClassicDamage(uint32 itemLevel, bool reducedCasterDps, float& minDamage, float& maxDamage) const;
     void GetDamage(uint32 itemLevel, float& minDamage, float& maxDamage) const;
     // Classic 1.60 (WoW Forever): a caster weapon's implicit spell power (ItemSparse Flags[3] 0x200) or healing and damage (0x400)
     void GetClassicCasterPower(uint32 itemLevel, int32& spellPower, int32& healing, int32& damage) const;

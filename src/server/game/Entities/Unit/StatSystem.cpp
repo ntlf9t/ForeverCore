@@ -20,17 +20,19 @@
 #include "Item.h"
 #include "Player.h"
 #include "ClassicManaRegen.h"
+#include "Spell.h"
 #include "ClassicSpellValue.h"
 #include "Pet.h"
 #include "GameTables.h"
 #include "GameTime.h"
+#include "HunterPetForever.h"
+#include "WarlockPetForever.h"
 #include "Log.h"
 #include "ObjectMgr.h"
 #include "SharedDefines.h"
 #include "SpellAuras.h"
 #include "SpellAuraEffects.h"
 #include "World.h"
-#include "ClassicPetAttackSpeed.h"
 #include <G3D/g3dmath.h>
 #include <atomic>
 #include <numeric>
@@ -426,31 +428,29 @@ float Player::GetClassicDefenseSkillBonus() const
     return (int32(GetSkillValue(SKILL_DEFENSE)) - int32(GetMaxSkillValueForLevel())) * 0.04f;
 }
 
-// Classic 1.60 (vanilla, VMaNGOS / TrinityCoreClassic): mana per second from spirit (the values are per 2 second tick)
+// Classic 1.60 (WoW Forever): mana per second from spirit, 6.25 + Spirit / 8 for every mana class (12.5 + Spirit / 4 per 2 second tick,
+// vanilla's mage and priest rate). Vanilla gave shamans 17 + Spirit / 5 and druids, hunters, paladins and warlocks 15 + Spirit / 5 per
+// tick. Source: wowsims/forever (MIT), sim/core/mana.go and mana_regen_test.go; no log measurement is published, so low confidence.
 float Player::OCTRegenMPPerSpirit() const
 {
-    float spirit = GetStat(STAT_SPIRIT);
-    float perTick;
     switch (GetClass())
     {
         case CLASS_MAGE:
-        case CLASS_PRIEST:  perTick = spirit / 4.0f + 12.5f; break;
-        case CLASS_SHAMAN:  perTick = spirit / 5.0f + 17.0f; break;
+        case CLASS_PRIEST:
+        case CLASS_SHAMAN:
         case CLASS_DRUID:
         case CLASS_HUNTER:
         case CLASS_PALADIN:
-        case CLASS_WARLOCK: perTick = spirit / 5.0f + 15.0f; break;
+        case CLASS_WARLOCK: return 6.25f + GetStat(STAT_SPIRIT) / 8.0f;
         default:            return 0.0f;
     }
-    return perTick / 2.0f;
 }
 
 // Classic 1.60 (vanilla, VMaNGOS / TrinityCoreClassic): health per 2 second tick from spirit, out of combat
-float Player::OCTRegenHPPerSpirit() const
+static float ClassicOCTRegenHP(uint8 playerClass, float spirit)
 {
-    float spirit = GetStat(STAT_SPIRIT);
     float regen;
-    switch (GetClass())
+    switch (playerClass)
     {
         case CLASS_DRUID:
         case CLASS_MAGE:    regen = spirit * 0.11f + 1.0f; break;
@@ -464,6 +464,20 @@ float Player::OCTRegenHPPerSpirit() const
         default:            regen = 0.0f; break;
     }
     return std::max(0.0f, regen);
+}
+
+float Player::OCTRegenHPPerSpirit() const
+{
+    float regen = ClassicOCTRegenHP(GetClass(), GetStat(STAT_SPIRIT));
+    // The formulas are fitted to the vanilla races, the lowest of which in Spirit is the Dwarf (-1). WoW Forever's High
+    // Order Skyborne (race 95) has -3 (live character sheets, 2026_11_18_00): a warrior of it gets 0 to 0.08 health a tick
+    // up to level 6 and 1.3 to level 9. No race regenerates less than a Dwarf of its class and level would from its base
+    // Spirit (user decision 2026-11-24; live's own Skyborne regen is not measured). A class no Dwarf can be has no floor.
+    PlayerLevelInfo dwarf;
+    sObjectMgr->GetPlayerLevelInfo(RACE_DWARF, GetClass(), GetLevel(), &dwarf);
+    if (dwarf.stats[STAT_SPIRIT] > 0)
+        regen = std::max(regen, ClassicOCTRegenHP(GetClass(), float(dwarf.stats[STAT_SPIRIT])));
+    return regen;
 }
 
 void Player::UpdateAttackPowerAndDamage(bool ranged)
@@ -508,7 +522,9 @@ void Player::UpdateAttackPowerAndDamage(bool ranged)
             switch (GetClass())
             {
                 case CLASS_HUNTER:
-                    val2 = level * 2.0f + agility - 10.0f;
+                    // vanilla and Forever: 2 ranged attack power per point of agility (wowsims/forever hunter.go, the
+                    // forever-hunter wiki's Stat Mechanics page); 1 per point was the TBC+ rate
+                    val2 = level * 2.0f + agility * 2.0f - 10.0f;
                     break;
                 case CLASS_ROGUE:
                 case CLASS_WARRIOR:
@@ -1053,7 +1069,6 @@ void Player::UpdatePowerRegen(Powers power)
     if (powerIndex >= MAX_POWERS_PER_CLASS)
         return;
 
-    // TODO: updating haste should update UnitData::PowerRegenFlatModifier for certain power types
     PowerTypeEntry const* powerType = sDB2Manager.GetPowerTypeEntry(power);
     if (!powerType)
         return;
@@ -1084,20 +1099,15 @@ void Player::UpdatePowerRegen(Powers power)
             result_regen_interrupted    = CalculatePct(spiritRegen, regenWhileCasting);
             break;
         }
-        case POWER_RUNES:
-        {
-            float base_regen            = float(1 * IN_MILLISECONDS) / float(GetRuneBaseCooldown());
-
-            result_regen                = base_regen;
-            result_regen_interrupted    = base_regen;
-            break;
-        }
         default:
             break;
     }
 
     if (PowerRegenInfo[AsUnderlyingType(power)])
         pct_modifier *= sWorld->getRate(*PowerRegenInfo[AsUnderlyingType(power)]); // Config rate
+
+    if (powerType->GetFlags().HasFlag(PowerTypeFlags::RegenAffectedByHaste))
+        pct_modifier /= m_unitData->ModHasteRegen;
 
     float const regenPercentAuras = GetTotalAuraMultiplierByMiscValue(SPELL_AURA_MOD_POWER_REGEN_PERCENT, AsUnderlyingType(power));
     pct_modifier                *= regenPercentAuras;
@@ -1107,6 +1117,11 @@ void Player::UpdatePowerRegen(Powers power)
     // Wisdom, Mana Spring) are not regen and tick the same under it (wowsims/forever, MIT, docs/evidence EV-0114).
     if (power == POWER_MANA)
         flat_modifier           *= regenPercentAuras;
+
+    // Classic 1.60: "mana per 5 sec." on items (ITEM_MOD_MANA_REGENERATION, ApplyManaRegenBonus) is mana every five seconds, cast or not,
+    // like the mp5 aura above (forever-bugs #54). It was summed into m_baseManaRegen and never read, so the item stat gave nothing.
+    if (power == POWER_MANA)
+        flat_modifier           += m_baseManaRegen / 5.f;
 
     result_regen                *= pct_modifier;
     result_regen_interrupted    *= pct_modifier;
@@ -1138,7 +1153,14 @@ float Player::GetPowerRegen(Powers power) const
         // interrupted rate is the share of SPELL_AURA_MOD_MANA_REGEN_INTERRUPT (not zero), and combat does not interrupt the regeneration.
         // Leaving combat does not start the window, so it has a timestamp of its own.
         int64 const msSinceManaSpent = std::chrono::duration_cast<Milliseconds>(GameTime::Now() - m_manaSpentTimestamp).count();
-        bool const manaInterrupted = ClassicManaRegen::IsInterrupted(msSinceManaSpent, HasAuraType(SPELL_AURA_INTERRUPT_REGEN));
+        // Classic 1.60 (WoW Forever): a channel that paid mana holds the window until it ends, so the regeneration comes back at the later of
+        // 5 s after the payment and the channel's end (Blizzard, Hurricane, Tranquility, Drain Mana); a free channel holds nothing
+        // (wowsims/forever, MIT, docs/rulings R-0036, docs/evidence EV-0107).
+        bool paidChannel = false;
+        if (Spell const* channel = GetCurrentSpell(CURRENT_CHANNELED_SPELL))
+            if (channel->getState() == SPELL_STATE_CHANNELING)
+                paidChannel = channel->GetPowerTypeCostAmount(POWER_MANA).value_or(0) > 0;
+        bool const manaInterrupted = ClassicManaRegen::IsInterrupted(msSinceManaSpent, HasAuraType(SPELL_AURA_INTERRUPT_REGEN), paidChannel);
         return manaInterrupted ? powerType->RegenCombat + m_unitData->PowerRegenInterruptedFlatModifier[powerIndex]
                                : powerType->RegenPeace + m_unitData->PowerRegenFlatModifier[powerIndex];
     }
@@ -1425,6 +1447,7 @@ void Creature::CalculateMinMaxDamage(WeaponAttackType attType, bool normalized, 
 #define ENTRY_IMP               416
 #define ENTRY_VOIDWALKER        1860
 #define ENTRY_SUCCUBUS          1863
+#define ENTRY_INCUBUS           185317  // Summon Incubus 713: the Sayaad, as the Succubus
 #define ENTRY_FELHUNTER         417
 #define ENTRY_FELGUARD          17252
 #define ENTRY_WATER_ELEMENTAL   510
@@ -1535,7 +1558,11 @@ void Guardian::UpdateArmor()
     value += GetFlatModifierValue(unitMod, TOTAL_VALUE) + bonus_armor;
     value *= GetPctModifierValue(unitMod, TOTAL_PCT);
 
-    SetArmor(int32(baseValue), int32(value - baseValue));
+    // The total, as Player::UpdateArmor and Creature::UpdateArmor do: GetArmor() (damage reduction) reads this field, and with only the
+    // base in it a pet's bonus armor (Natural Armor, the hunter's 30% from Hunter Pet Scaling, Dust Cloud on the pet) never reduced damage.
+    // Not below 0: GetArmor() is unsigned, so negative armor (stacked Sunder Armor on a low level pet) would read as the 75% cap.
+    value = std::max(0.0f, value);
+    SetArmor(int32(value), int32(value - baseValue));
 }
 
 void Guardian::UpdateMaxHealth()
@@ -1548,7 +1575,8 @@ void Guardian::UpdateMaxHealth()
     {
         case ENTRY_IMP:         multiplicator = 8.4f;   break;
         case ENTRY_VOIDWALKER:  multiplicator = 11.0f;  break;
-        case ENTRY_SUCCUBUS:    multiplicator = 9.1f;   break;
+        case ENTRY_SUCCUBUS:
+        case ENTRY_INCUBUS:     multiplicator = 9.1f;   break;
         case ENTRY_FELHUNTER:   multiplicator = 9.5f;   break;
         case ENTRY_FELGUARD:    multiplicator = 11.0f;  break;
         case ENTRY_BLOODWORM:   multiplicator = 1.0f;   break;
@@ -1589,6 +1617,13 @@ void Guardian::UpdateAttackPowerAndDamage(bool ranged)
 
     if (GetEntry() == ENTRY_IMP)                                   // imp's attack power
         val = GetStat(STAT_STRENGTH) - 10.0f;
+    // WoW Forever: the Voidwalker's and Sayaad's own attack power is 3 x level + 6, nothing from Strength (wowsims/forever EV-0075, EV-0076)
+    else if (IsPet() && (GetEntry() == ENTRY_VOIDWALKER || GetEntry() == ENTRY_SUCCUBUS || GetEntry() == ENTRY_INCUBUS))
+        val = WarlockPetForever::DemonAttackPower(GetLevel());
+    // WoW Forever: a hunter pet's own attack power is 30% of its level's creature dps as attack power, nothing from Strength
+    // (HunterPetForever::OwnAttackPower, EV-0070); the hunter's 10% comes on top (415429, classic_hunter_pet_scaling.cpp)
+    else if (IsHunterPet())
+        val = HunterPetForever::OwnAttackPower(sDB2Manager.EvaluateExpectedStat(ExpectedStatType::CreatureAutoAttackDps, GetLevel(), -2, 0, CLASS_NONE, 0));
     else
         val = 2 * GetStat(STAT_STRENGTH) - 20.0f;
 
@@ -1610,7 +1645,8 @@ void Guardian::UpdateAttackPowerAndDamage(bool ranged)
             bonusAP = owner->GetTotalAttackPowerValue(BASE_ATTACK) * dmg_multiplier;
             SetBonusDamage(int32(owner->GetTotalAttackPowerValue(BASE_ATTACK) * dmg_multiplier));
         }
-        // Classic 1.60 (vanilla): demons get nothing from their warlock's fire or shadow damage
+        // Classic 1.60 (WoW Forever): demons take their share of the warlock's spell damage as attack power and spell damage through
+        // 416189 Warlock Pet Scaling (classic_warlock_pet_scaling.cpp), not here
         else if (IsPet())
         {
             if (owner->GetClass() == CLASS_WARLOCK)
@@ -1667,12 +1703,6 @@ void Guardian::UpdateDamagePhysical(WeaponAttackType attType)
     UnitMods unitMod = UNIT_MOD_DAMAGE_MAINHAND;
 
     float att_speed = float(GetBaseAttackTime(BASE_ATTACK))/1000.0f;
-    // Classic 1.60: a hunter pet swings at 2.0 sec and its Faster / Slower Attack passive gives it its wild speed. Attack power counts per
-    // second of that speed, as when the beast had it as its own swing time (vanilla: a pet's attack power is worth the same damage per
-    // second at any speed); the haste of Frenzy and other auras still adds damage per second.
-    if (IsHunterPet())
-        if (ClassicPetAttackSpeed::Step const* step = ClassicPetAttackSpeed::ForWildAttackTime(GetCreatureTemplate()->BaseAttackTime))
-            att_speed = ClassicPetAttackSpeed::SwingMs(step->pct) / 1000.0f;
 
     // Classic 1.60: vanilla 14 attack power per 1 damage per second
     float base_value  = GetFlatModifierValue(unitMod, BASE_VALUE) + GetTotalAttackPowerValue(attType, false) / 14.0f * att_speed + bonusDamage;
@@ -1685,6 +1715,22 @@ void Guardian::UpdateDamagePhysical(WeaponAttackType attType)
 
     float mindamage = ((base_value + weapon_mindamage) * base_pct + total_value) * total_pct;
     float maxdamage = ((base_value + weapon_maxdamage) * base_pct + total_value) * total_pct;
+
+    // Classic 1.60 (WoW Forever): a swing's damage follows the beast's own attack speed (its Faster Attack or Slower Attack
+    // passive), so every hunter pet does the same damage per second. Haste from other auras (Frenzy) is not part of this.
+    if (IsHunterPet() && IsPet())
+    {
+        float swingShare = HunterPetForever::SwingShare(ToPet()->GetAttackSpeedPassivePercent());
+        mindamage *= swingShare;
+        maxdamage *= swingShare;
+    }
+
+    // WoW Forever: the Voidwalker's melee is halved, attack power included (wowsims/forever EV-0076)
+    if (IsPet() && GetEntry() == ENTRY_VOIDWALKER)
+    {
+        mindamage *= WarlockPetForever::VoidwalkerMeleeShare;
+        maxdamage *= WarlockPetForever::VoidwalkerMeleeShare;
+    }
 
     SetUpdateFieldStatValue(m_values.ModifyValue(&Unit::m_unitData).ModifyValue(&UF::UnitData::MinDamage), mindamage);
     SetUpdateFieldStatValue(m_values.ModifyValue(&Unit::m_unitData).ModifyValue(&UF::UnitData::MaxDamage), maxdamage);

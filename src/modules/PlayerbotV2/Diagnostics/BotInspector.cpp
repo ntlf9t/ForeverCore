@@ -1663,7 +1663,8 @@ std::string BgInfoReport()
     out += "  type  inst  status  alli/max  horde/max  invA  invH  freeA  freeH\n";
 
     uint32 total_bgs = 0;
-    for (auto const& [_, free_slot_store] : sBattlegroundMgr->GetBGFreeSlotQueues())
+    // one free-slot list per queue (TrinityCore e5c9acdf34), each battleground is in the list of the queue that made it
+    for (auto const& [queue_id, free_slot_store] : sBattlegroundMgr->GetAllBGFreeSlotQueues())
     {
         for (Battleground* bg : free_slot_store)
         {

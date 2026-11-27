@@ -56,6 +56,7 @@ enum WarlockPetCalculate
      ENTRY_VOIDWALKER                   = 1860,
      ENTRY_FELHUNTER                    = 417,
      ENTRY_SUCCUBUS                     = 1863,
+     ENTRY_INCUBUS                      = 185317,
      ENTRY_IMP                          = 416,
      SPELL_WARLOCK_GLYPH_OF_VOIDWALKER  = 56247,
 };
@@ -265,6 +266,7 @@ public:
                             healthMod = _tempBonus * 11;
                             break;
                         case ENTRY_SUCCUBUS:
+                        case ENTRY_INCUBUS:
                             healthMod = uint32(_tempBonus * 9.1f);
                             break;
                         case ENTRY_FELHUNTER:
@@ -404,6 +406,7 @@ public:
                         break;
                     case ENTRY_VOIDWALKER:
                     case ENTRY_SUCCUBUS:
+                    case ENTRY_INCUBUS:
                     case ENTRY_FELHUNTER:
                     case ENTRY_FELGUARD:
                         manaMod = uint32(_tempBonus * 11.5f);
@@ -735,6 +738,7 @@ public:
                     amount += -20;
                     break;
                 case ENTRY_SUCCUBUS:
+                case ENTRY_INCUBUS:
                 case ENTRY_FELGUARD:
                     amount += 5;
                     break;
@@ -1497,7 +1501,7 @@ public:
 
         void Register() override
         {
-            DoEffectCalcAmount += AuraEffectCalcAmountFn(spell_dk_pet_scaling_02_AuraScript::CalculateAmountMeleeHaste, EFFECT_1, SPELL_AURA_MELEE_SLOW);
+            DoEffectCalcAmount += AuraEffectCalcAmountFn(spell_dk_pet_scaling_02_AuraScript::CalculateAmountMeleeHaste, EFFECT_1, SPELL_AURA_MOD_MELEE_RANGED_CASTING_HASTE);
         }
     };
 
@@ -1615,7 +1619,7 @@ public:
         void Register() override
         {
             DoEffectCalcAmount += AuraEffectCalcAmountFn(spell_dk_rune_weapon_scaling_02_AuraScript::CalculateDamageDoneAmount, EFFECT_0, SPELL_AURA_MOD_DAMAGE_DONE);
-            DoEffectCalcAmount += AuraEffectCalcAmountFn(spell_dk_rune_weapon_scaling_02_AuraScript::CalculateAmountMeleeHaste, EFFECT_1, SPELL_AURA_MELEE_SLOW);
+            DoEffectCalcAmount += AuraEffectCalcAmountFn(spell_dk_rune_weapon_scaling_02_AuraScript::CalculateAmountMeleeHaste, EFFECT_1, SPELL_AURA_MOD_MELEE_RANGED_CASTING_HASTE);
         }
     };
 

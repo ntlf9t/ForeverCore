@@ -89,11 +89,11 @@ uint8 ReadDistLevel(uint64 char_guid_low)
 // behavior the user reported on bot Saruius.
 //
 // All entries below verified against Wowhead by name and slot count.
-constexpr uint32 BAG_FROSTWEAVE = 41599;   // 20-slot (WotLK Tailoring)
-constexpr uint32 BAG_EMBERSILK  = 54443;   // 22-slot (Cataclysm Tailoring)
-constexpr uint32 BAG_ROYAL      = 75274;   // 24-slot (Mists of Pandaria)
+[[maybe_unused]] constexpr uint32 BAG_FROSTWEAVE = 41599;   // 20-slot (WotLK Tailoring)
+[[maybe_unused]] constexpr uint32 BAG_EMBERSILK  = 54443;   // 22-slot (Cataclysm Tailoring)
+[[maybe_unused]] constexpr uint32 BAG_ROYAL      = 75274;   // 24-slot (Mists of Pandaria)
 constexpr uint32 BAG_HEXWEAVE   = 114821;  // 30-slot (Warlords of Draenor)
-constexpr uint32 BAG_WILDERCLOTH = 193532; // 32-slot (Dragonflight)
+[[maybe_unused]] constexpr uint32 BAG_WILDERCLOTH = 193532; // 32-slot (Dragonflight)
 constexpr uint32 BAG_TRAVELERS_BACKPACK = 4500; // 16-slot (vanilla Tailoring; ike3 InitBags' MANGOSBOT_ZERO bag)
 
 // All distribution bots get a 30-slot bag in every bag slot — 120 slots

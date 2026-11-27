@@ -48,8 +48,8 @@ namespace Road::AdtTexture
         }
 
         // Chunks-as-written ("KNCM" for "MCNK").
-        constexpr uint32 kFccMVER = MakeFourCC('R', 'E', 'V', 'M');
-        constexpr uint32 kFccMHDR = MakeFourCC('R', 'D', 'H', 'M');
+        [[maybe_unused]] constexpr uint32 kFccMVER = MakeFourCC('R', 'E', 'V', 'M');
+        [[maybe_unused]] constexpr uint32 kFccMHDR = MakeFourCC('R', 'D', 'H', 'M');
         constexpr uint32 kFccMCNK = MakeFourCC('K', 'N', 'C', 'M');
         constexpr uint32 kFccMCLY = MakeFourCC('Y', 'L', 'C', 'M');
         constexpr uint32 kFccMCAL = MakeFourCC('L', 'A', 'C', 'M');
@@ -114,7 +114,7 @@ namespace Road::AdtTexture
         // Find a sub-chunk inside an MCNK at the given offset relative to
         // the MCNK chunk start (FourCC byte 0). Returns the body pointer
         // and size, NOT the chunk header.
-        bool FindMcnkSubChunk(uint8 const* mcnkStart, std::size_t mcnkBodySize,
+        [[maybe_unused]] bool FindMcnkSubChunk(uint8 const* mcnkStart, std::size_t mcnkBodySize,
                               std::size_t offsetFromMcnkStart, uint32 expectFcc,
                               uint8 const*& outBody, std::size_t& outBodySize)
         {

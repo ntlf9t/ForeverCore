@@ -75,11 +75,6 @@ bool ParseTargetDirective(std::string const& line, MigrationTarget& out)
     return false;
 }
 
-char const* TargetName(MigrationTarget t)
-{
-    return t == MigrationTarget::Shared ? "shared" : "characters";
-}
-
 // Ledger table, qualified for the target.
 std::string VersionTable(MigrationTarget t)
 {

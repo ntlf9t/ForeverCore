@@ -28,6 +28,9 @@
 
 void WorldSession::HandleTransmogrifyItems(WorldPackets::Transmogrification::TransmogrifyItems& transmogrifyItems)
 {
+    if (!_collectionMgr) // a bot session has none (DropClientOnlyManagers)
+        return;
+
     Player* player = GetPlayer();
     // Validate
     if (!player->GetNPCIfCanInteractWith(transmogrifyItems.Npc, UNIT_NPC_FLAG_TRANSMOGRIFIER, UNIT_NPC_FLAG_2_NONE))
@@ -329,6 +332,9 @@ void WorldSession::HandleTransmogrifyItems(WorldPackets::Transmogrification::Tra
 
 void WorldSession::HandleTransmogOutfitNew(WorldPackets::Transmogrification::TransmogOutfitNew const& transmogOutfitNew)
 {
+    if (!_collectionMgr) // a bot session has none (DropClientOnlyManagers)
+        return;
+
     if (!_player->GetNPCIfCanInteractWith(transmogOutfitNew.Npc, UNIT_NPC_FLAG_TRANSMOGRIFIER, UNIT_NPC_FLAG_2_NONE))
     {
         TC_LOG_ERROR("entities.player.cheat", "{} WorldSession::HandleTransmogOutfitNew - {} not found or player can't interact with it.",
@@ -378,6 +384,9 @@ void WorldSession::HandleTransmogOutfitNew(WorldPackets::Transmogrification::Tra
 
 void WorldSession::HandleTransmogOutfitUpdateInfo(WorldPackets::Transmogrification::TransmogOutfitUpdateInfo const& transmogOutfitUpdateInfo)
 {
+    if (!_collectionMgr) // a bot session has none (DropClientOnlyManagers)
+        return;
+
     if (!_player->GetNPCIfCanInteractWith(transmogOutfitUpdateInfo.Npc, UNIT_NPC_FLAG_TRANSMOGRIFIER, UNIT_NPC_FLAG_2_NONE))
     {
         TC_LOG_ERROR("entities.player.cheat", "{} WorldSession::HandleTransmogOutfitNew - {} not found or player can't interact with it.",
@@ -407,6 +416,9 @@ void WorldSession::HandleTransmogOutfitUpdateInfo(WorldPackets::Transmogrificati
 
 void WorldSession::HandleTransmogOutfitUpdateSituations(WorldPackets::Transmogrification::TransmogOutfitUpdateSituations const& transmogOutfitUpdateSituations)
 {
+    if (!_collectionMgr) // a bot session has none (DropClientOnlyManagers)
+        return;
+
     if (!_player->GetNPCIfCanInteractWith(transmogOutfitUpdateSituations.Npc, UNIT_NPC_FLAG_TRANSMOGRIFIER, UNIT_NPC_FLAG_2_NONE))
     {
         TC_LOG_ERROR("entities.player.cheat", "{} WorldSession::HandleTransmogOutfitNew - {} not found or player can't interact with it.",
@@ -447,6 +459,9 @@ void WorldSession::HandleTransmogOutfitUpdateSituations(WorldPackets::Transmogri
 
 void WorldSession::HandleTransmogOutfitUpdateSlots(WorldPackets::Transmogrification::TransmogOutfitUpdateSlots const& transmogOutfitUpdateSlots)
 {
+    if (!_collectionMgr) // a bot session has none (DropClientOnlyManagers)
+        return;
+
     if (!_player->GetNPCIfCanInteractWith(transmogOutfitUpdateSlots.Npc, UNIT_NPC_FLAG_TRANSMOGRIFIER, UNIT_NPC_FLAG_2_NONE))
     {
         TC_LOG_ERROR("entities.player.cheat", "{} WorldSession::HandleTransmogOutfitNew - {} not found or player can't interact with it.",

@@ -21,6 +21,9 @@
 
 void WorldSession::HandleCollectionItemSetFavorite(WorldPackets::Collections::CollectionItemSetFavorite& collectionItemSetFavorite)
 {
+    if (!_collectionMgr) // a bot session has none (DropClientOnlyManagers)
+        return;
+
     switch (collectionItemSetFavorite.Type)
     {
         case ItemCollectionType::Toy:

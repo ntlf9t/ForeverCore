@@ -24,6 +24,7 @@
 #include <vector>
 
 class Player;
+struct TraitCurrencySourceEntry;
 struct TraitDefinitionEffectPointsEntry;
 enum class TraitConfigType : int32;
 enum TalentLearnResult : int32;
@@ -63,6 +64,8 @@ enum class LearnResult : int32
 struct PlayerDataAccessor
 {
     /*implicit*/ PlayerDataAccessor(Player const* player) : _player(player) { }
+    // ignoreClassicTalented: count talent points as if the Legacy perk Talented were not learned (the Legacy reset checks a deficit)
+    PlayerDataAccessor(Player const* player, bool ignoreClassicTalented) : _player(player), _ignoreClassicTalented(ignoreClassicTalented) { }
 
     uint64 GetMoney() const;
     int32 GetCurrencyQuantity(int32 currencyId) const;
@@ -77,6 +80,7 @@ struct PlayerDataAccessor
 
 private:
     Player const* _player;
+    bool _ignoreClassicTalented = false;
 };
 
 struct SpentCurrency
@@ -110,6 +114,19 @@ std::vector<NodeEntryInfo> GetNodeEntriesForConfig(WorldPackets::Traits::TraitCo
 // The currencies buying a rank of this node spends, sorted. A tier gate counts the spend of one of them, so nodes that
 // share a gate's currency share a tree; Classic talent tabs differ here even when they share a TraitTree.
 std::vector<int32> GetCostCurrenciesForNode(int32 traitNodeId);
+
+// Classic 1.60 Rate.Talent (advocaite/TrinityCore#319). The points the level rows of the class talent currency give at `rate`,
+// rows in level order: handed out level by level, the running total is round-down(points so far x rate), so 1.5 gives 1, 2, 1...
+std::vector<int32> ScaleClassicTalentLevelPoints(std::vector<int32> const& amounts, float rate);
+// How Rate.Talent treats a row of the class talent currency: a level row is stepped as above, a quest or achievement row is
+// multiplied, a row behind a trait node (the Legacy perk Talented) is left alone.
+enum class ClassicTalentRateRow : uint8
+{
+    Level,
+    Scaled,
+    Unchanged
+};
+ClassicTalentRateRow GetClassicTalentRateRow(TraitCurrencySourceEntry const& source);
 }
 
 #endif // TRINITY_TRAIT_MGR_H

@@ -30,6 +30,7 @@
 #include "Config.h"
 #include "DB2Stores.h"
 #include "DatabaseEnv.h"
+#include "FullName.h"
 #include "GameTime.h"
 #include "GuildMgr.h"
 #include "GuildPackets.h"
@@ -1555,6 +1556,26 @@ void Guild::HandleSetEmblem(WorldSession* session, EmblemInfo const& emblemInfo)
     }
 }
 
+Guild::Member* Guild::GetMember(std::string_view name)
+{
+    Trinity::FullName::Parts parts;
+    if (!Trinity::FullName::Split(name, parts))
+        return nullptr;
+
+    std::vector<Member*> candidates;
+    std::vector<std::string> surnames;
+    for (auto& [guid, member] : m_members)
+    {
+        if (member.GetName() != parts.Name)
+            continue;
+        candidates.push_back(&member);
+        surnames.push_back(sCharacterCache->GetCharacterSurnameByGuid(guid));
+    }
+
+    std::size_t picked = Trinity::FullName::Pick(std::vector<std::string_view>(surnames.begin(), surnames.end()), parts);
+    return picked < candidates.size() ? candidates[picked] : nullptr;
+}
+
 void Guild::HandleSetNewGuildMaster(WorldSession* session, std::string_view name, bool isSelfPromote)
 {
     Player* player = session->GetPlayer();
@@ -1969,7 +1990,7 @@ void Guild::HandleAddNewRank(WorldSession* session, std::string_view name)
         std::string rankName(name);
         if (rankName.empty())
             rankName = RankInfo::GetDefaultRankName(GuildRankOrder(size));
-        if (_CreateRank(trans, rankName, GR_RIGHT_GCHATLISTEN | GR_RIGHT_GCHATSPEAK))
+        if (_CreateRank(trans, rankName, GR_RIGHT_GCHATLISTEN | GR_RIGHT_GCHATSPEAK | GR_RIGHT_LEAVE))
         {
             WorldPackets::Guild::GuildEventRanksUpdated eventPacket;
             BroadcastPacket(eventPacket.Write());
@@ -2449,7 +2470,7 @@ void Guild::SendEventNewLeader(Member* newLeader, Member* oldLeader, bool isSelf
     });
 }
 
-void Guild::SendEventPlayerLeft(Member* leaver, Member* remover, bool isRemoved) const
+void Guild::SendEventPlayerLeft(Member const* leaver, Member const* remover, bool isRemoved) const
 {
     WorldPackets::Guild::GuildEventPlayerLeft eventPacket;
     eventPacket.Removed = isRemoved;
@@ -2688,6 +2709,24 @@ bool Guild::LoadBankItemFromDB(Field* fields)
 }
 
 // Validates guild data loaded from database. Returns false if guild should be deleted.
+bool IsGuildRankSetValid(std::span<std::pair<GuildRankId, GuildRankOrder> const> ranks)
+{
+    if (std::ranges::none_of(ranks, [](std::pair<GuildRankId, GuildRankOrder> const& rank) { return rank.first == GuildRankId::GuildMaster; }))
+        return false;
+
+    std::vector<bool> orderSeen(ranks.size(), false);
+    for (auto const& [rankId, rankOrder] : ranks)
+    {
+        std::size_t order = AsUnderlyingType(rankOrder);
+        if (order >= ranks.size() || orderSeen[order])
+            return false;
+
+        orderSeen[order] = true;
+    }
+
+    return true;
+}
+
 bool Guild::Validate()
 {
     // Validate ranks data
@@ -2708,23 +2747,19 @@ bool Guild::Validate()
     {
         // A deleted rank leaves a gap in the rank ids (0, 1, 3) while the orders are closed up again (0, 1, 2), so the
         // sequence check goes by order. Looking the ranks up by id found no rank for the gap and crashed the server at start.
-        if (!GetRankInfo(GuildRankId::GuildMaster))
+        std::vector<std::pair<GuildRankId, GuildRankOrder>> rankKeys;
+        rankKeys.reserve(m_ranks.size());
+        for (RankInfo const& rank : m_ranks)
+            rankKeys.emplace_back(rank.GetId(), rank.GetOrder());
+
+        if (!IsGuildRankSetValid(rankKeys))
         {
-            TC_LOG_ERROR("guild", "Guild {} has no guild master rank, creating default set of ranks...", m_id);
+            TC_LOG_ERROR("guild", "Guild {} has no guild master rank or a gap in its rank order, creating default set of ranks...", m_id);
             broken_ranks = true;
         }
-
-        for (uint8 rankOrder = 0; rankOrder < ranks && !broken_ranks; ++rankOrder)
-        {
-            RankInfo* rankInfo = GetRankInfo(GuildRankOrder(rankOrder));
-            if (!rankInfo)
-            {
-                TC_LOG_ERROR("guild", "Guild {} has no rank with order {}, creating default set of ranks...", m_id, rankOrder);
-                broken_ranks = true;
-            }
-            else
-                rankInfo->CreateMissingTabsIfNeeded(_GetPurchasedTabsSize(), trans, true);
-        }
+        else
+            for (RankInfo& rank : m_ranks)
+                rank.CreateMissingTabsIfNeeded(_GetPurchasedTabsSize(), trans, true);
     }
 
     if (broken_ranks)
@@ -3260,9 +3295,9 @@ void Guild::_CreateDefaultGuildRanks(CharacterDatabaseTransaction trans, LocaleC
 
     _CreateRank(trans, sObjectMgr->GetTrinityString(LANG_GUILD_MASTER,   loc), GR_RIGHT_ALL);
     _CreateRank(trans, sObjectMgr->GetTrinityString(LANG_GUILD_OFFICER,  loc), GR_RIGHT_ALL);
-    _CreateRank(trans, sObjectMgr->GetTrinityString(LANG_GUILD_VETERAN,  loc), GR_RIGHT_GCHATLISTEN | GR_RIGHT_GCHATSPEAK);
-    _CreateRank(trans, sObjectMgr->GetTrinityString(LANG_GUILD_MEMBER,   loc), GR_RIGHT_GCHATLISTEN | GR_RIGHT_GCHATSPEAK);
-    _CreateRank(trans, sObjectMgr->GetTrinityString(LANG_GUILD_INITIATE, loc), GR_RIGHT_GCHATLISTEN | GR_RIGHT_GCHATSPEAK);
+    _CreateRank(trans, sObjectMgr->GetTrinityString(LANG_GUILD_VETERAN,  loc), GR_RIGHT_GCHATLISTEN | GR_RIGHT_GCHATSPEAK | GR_RIGHT_LEAVE);
+    _CreateRank(trans, sObjectMgr->GetTrinityString(LANG_GUILD_MEMBER,   loc), GR_RIGHT_GCHATLISTEN | GR_RIGHT_GCHATSPEAK | GR_RIGHT_LEAVE);
+    _CreateRank(trans, sObjectMgr->GetTrinityString(LANG_GUILD_INITIATE, loc), GR_RIGHT_GCHATLISTEN | GR_RIGHT_GCHATSPEAK | GR_RIGHT_LEAVE);
 }
 
 bool Guild::_CreateRank(CharacterDatabaseTransaction trans, std::string_view name, uint32 rights)

@@ -320,6 +320,7 @@ bool PathGenerator::CalculatePathImpl(float srcX, float srcY, float srcZ, float 
     // Road-aware telemetry: reset per-pathfind slope tracker before A*
     // begins. dtQueryFilterTC::getCost() updates it during edge eval.
     _filter.BeginPathStats();
+    _findPathStatus = 0;
 
     {
         // SHARED non-thread-safe dtNavMeshQuery — serialize the node-pool-mutating A*
@@ -341,7 +342,9 @@ bool PathGenerator::CalculatePathImpl(float srcX, float srcY, float srcZ, float 
         _filter.GetDisableRoadBonus(),
         _filter.GetMaxSlopeFactorThisPath(),
         inInstance,
-        mapId);
+        mapId,
+        dtStatusDetail(_findPathStatus, DT_OUT_OF_NODES),
+        dtStatusDetail(_findPathStatus, DT_BUFFER_TOO_SMALL));
 
     return true;
 }
@@ -754,6 +757,7 @@ void PathGenerator::BuildPolyPath(G3D::Vector3 const& startPos, G3D::Vector3 con
                             _pathPolyRefs + prefixPolyLength - 1,    // [out] path
                             (int*)&suffixPolyLength,
                             _polyPathLimit - prefixPolyLength);   // max number of polygons in output path
+            _findPathStatus |= dtResult;
         }
 
         if (!suffixPolyLength || dtStatusFailed(dtResult))
@@ -861,6 +865,7 @@ void PathGenerator::BuildPolyPath(G3D::Vector3 const& startPos, G3D::Vector3 con
                             _pathPolyRefs,     // [out] path
                             (int*)&_polyLength,
                             _polyPathLimit);   // max number of polygons in output path
+            _findPathStatus |= dtResult;
         }
 
         if (!_polyLength || dtStatusFailed(dtResult))

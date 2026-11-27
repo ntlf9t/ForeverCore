@@ -21,6 +21,7 @@
 #include "GameObject.h"
 #include "GameObjectAI.h"
 #include "InstanceScript.h"
+#include "Map.h"
 #include "Player.h"
 #include "ScriptedCreature.h"
 #include "SpellScript.h"

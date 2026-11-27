@@ -103,7 +103,7 @@ constexpr uint32 TIGERS_LUST          = 116841;
 
 // Group utility
 constexpr uint32 DETOX                = 218164;       // BrM cleanse: Poison + Disease only in 12.1
-constexpr uint32 RESUSCITATE          = 115178;       // OOC rez
+[[maybe_unused]] constexpr uint32 RESUSCITATE          = 115178;       // OOC rez
 
 // Stagger debuffs - bot self-aura tracks current stagger band.
 constexpr uint32 MODERATE_STAGGER     = 124274;

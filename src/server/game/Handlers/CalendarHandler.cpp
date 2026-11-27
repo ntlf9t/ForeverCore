@@ -45,6 +45,7 @@ Copied events should probably have a new owner
 #include "InstanceLockMgr.h"
 #include "Log.h"
 #include "ObjectAccessor.h"
+#include "FullName.h"
 #include "ObjectMgr.h"
 #include "Player.h"
 #include "SocialMgr.h"
@@ -315,7 +316,7 @@ void WorldSession::HandleCalendarInvite(WorldPackets::Calendar::CalendarInvite& 
 
     std::string inviteeName = calendarEventInvite.Name;
 
-    if (!normalizePlayerName(calendarEventInvite.Name))
+    if (!Trinity::FullName::Normalize(calendarEventInvite.Name))
         return;
 
     auto createInvite = [this, playerGuid, inviteeName, eventId, isSignUp](ObjectGuid const& inviteeGuid, Team inviteeTeam, ObjectGuid::LowType inviteeGuildId, bool inviteeIsIngoring)
@@ -373,7 +374,7 @@ void WorldSession::HandleCalendarInvite(WorldPackets::Calendar::CalendarInvite& 
     else
     {
         // Invitee offline, get data from storage
-        CharacterCacheEntry const* characterInfo = sCharacterCache->GetCharacterCacheByName(inviteeName);
+        CharacterCacheEntry const* characterInfo = sCharacterCache->GetCharacterCacheByName(calendarEventInvite.Name);
         if (!characterInfo)
         {
             sCalendarMgr->SendCalendarCommandResult(playerGuid, CALENDAR_ERROR_PLAYER_NOT_FOUND);

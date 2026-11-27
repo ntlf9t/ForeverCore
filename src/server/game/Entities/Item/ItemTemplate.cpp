@@ -285,6 +285,43 @@ float ItemTemplate::GetClassicDPS(uint32 itemLevel, bool reducedCasterDps) const
     return dps;
 }
 
+// Classic 1.60 (WoW Forever): a weapon flagged CASTER_SPELL_POWER (ItemSparse Flags[4] 0x200) carries
+// 20000 x budget / 10000 spell power, one flagged CASTER_HEALING_POWER (0x400) 37600 x budget / 10000
+// healing and a third of that as spell damage, each rounded down, on top of its own stats; budget = RandPropPoints[item level], the
+// quality's first column. This reproduces the in-game tooltip of all 150 flagged weapons: Simone's Cultivating Hammer "healing done by up
+// to 139 and damage done by up to 46" (wowsims/forever, MIT, tools/database/dbc/item.go addCasterSpellPower, docs/evidence EV-0112).
+void ItemTemplate::GetClassicCasterPower(uint32 itemLevel, int32& spellPower, int32& healing, int32& damage) const
+{
+    spellPower = healing = damage = 0;
+    bool const spell = HasFlag(ITEM_FLAG5_CLASSIC_CASTER_SPELL_POWER);
+    bool const heal = HasFlag(ITEM_FLAG5_CLASSIC_CASTER_HEALING_POWER);
+    if (GetClass() != ITEM_CLASS_WEAPON || (!spell && !heal))
+        return;
+
+    RandPropPointsEntry const* points = sRandPropPointsStore.LookupEntry(itemLevel);
+    if (!points)
+        return;
+
+    int32 budget = 0;
+    switch (GetQuality())
+    {
+        case ITEM_QUALITY_UNCOMMON: budget = int32(points->Good[0]); break;
+        case ITEM_QUALITY_RARE:     budget = int32(points->Superior[0]); break;
+        case ITEM_QUALITY_EPIC:
+        case ITEM_QUALITY_LEGENDARY:
+        case ITEM_QUALITY_ARTIFACT: budget = int32(points->Epic[0]); break;
+        default: return;
+    }
+
+    if (heal)
+    {
+        healing = 37600 * budget / 10000;
+        damage = healing / 3;
+        return;
+    }
+    spellPower = 20000 * budget / 10000;
+}
+
 // Classic 1.60 (WoW Forever): an armor item's green bonus armor, stored as its ItemSparse QualityModifier (Tree Bark Jacket +60)
 float ItemTemplate::GetClassicBonusArmor() const
 {
@@ -313,6 +350,27 @@ float ItemTemplate::GetDPS(uint32 itemLevel) const
     return GetTableDPS(itemLevel);
 }
 
+void ItemTemplate::GetClassicDamage(uint32 itemLevel, bool reducedCasterDps, float& minDamage, float& maxDamage) const
+{
+    minDamage = maxDamage = 0.0f;
+    if (ClassicMinDamage > 0.0f && GetDelay())
+    {
+        GetDamage(itemLevel, minDamage, maxDamage);
+        return;
+    }
+
+    float const dps = GetClassicDPS(itemLevel, reducedCasterDps);
+    if (dps <= 0.0f)
+        return;
+
+    float const speed = GetDelay() * 0.001f;
+    float const qualityModifier = GetQualityModifier() * speed;
+    float low = dps * speed * (1.0f - GetDmgVariance() * 0.5f) + qualityModifier;
+    float high = dps * speed * (1.0f + GetDmgVariance() * 0.5f) + qualityModifier;
+    minDamage = std::floor(std::max(low, 1.0f));
+    maxDamage = std::floor(std::max(high, 1.0f) + 0.5f);
+}
+
 void ItemTemplate::GetDamage(uint32 itemLevel, float& minDamage, float& maxDamage) const
 {
     minDamage = maxDamage = 0.0f;
@@ -331,43 +389,6 @@ void ItemTemplate::GetDamage(uint32 itemLevel, float& minDamage, float& maxDamag
         minDamage = (GetDmgVariance() * -0.5f + 1.0f) * avgDamage;
         maxDamage = floor(float(avgDamage * (GetDmgVariance() * 0.5f + 1.0f) + 0.5f));
     }
-}
-
-// Classic 1.60 (WoW Forever): a weapon flagged CASTER_SPELL_POWER (ItemSparse Flags[3] 0x200, retail's CREATE_LOOT_IMMEDIATELY bit) carries
-// 20000 x budget / 10000 spell power, one flagged CASTER_HEALING_POWER (0x400, retail's GENERATE_LOOT_SPEC_ITEM) 37600 x budget / 10000
-// healing and a third of that as spell damage, each rounded down, on top of its own stats; budget = RandPropPoints[item level], the
-// quality's first column. This gives the in-game tooltip of all 150 flagged weapons: Simone's Cultivating Hammer "healing done by up to
-// 139 and damage done by up to 46" (wowsims/forever, MIT, tools/database/dbc/item.go addCasterSpellPower, docs/evidence EV-0112).
-void ItemTemplate::GetClassicCasterPower(uint32 itemLevel, int32& spellPower, int32& healing, int32& damage) const
-{
-    spellPower = healing = damage = 0;
-    bool const spell = HasFlag(ITEM_FLAG4_CREATE_LOOT_IMMEDIATELY);
-    bool const heal = HasFlag(ITEM_FLAG4_GENERATE_LOOT_SPEC_ITEM);
-    if (GetClass() != ITEM_CLASS_WEAPON || (!spell && !heal))
-        return;
-
-    RandPropPointsEntry const* points = sRandPropPointsStore.LookupEntry(itemLevel);
-    if (!points)
-        return;
-
-    int32 budget = 0;
-    switch (GetQuality())
-    {
-        case ITEM_QUALITY_UNCOMMON: budget = int32(points->Good[0]); break;
-        case ITEM_QUALITY_RARE:     budget = int32(points->Superior[0]); break;
-        case ITEM_QUALITY_EPIC:
-        case ITEM_QUALITY_LEGENDARY:
-        case ITEM_QUALITY_ARTIFACT: budget = int32(points->Epic[0]); break;
-        default: return;
-    }
-
-    if (heal)
-    {
-        healing = 37600 * budget / 10000;
-        damage = healing / 3;
-        return;
-    }
-    spellPower = 20000 * budget / 10000;
 }
 
 bool ItemTemplate::IsUsableByLootSpecialization(Player const* player, bool alwaysAllowBoundToAccount) const

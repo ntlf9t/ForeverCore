@@ -142,8 +142,8 @@ namespace Trinity
 
             // Classic 1.60 (vanilla, VMaNGOS Formulas.h): mobs of the player's level or higher give the player's base (5 * level + 45)
             // * (1 + 0.05 * diff, at most 4); lower mobs give (ZD + mob - player) / ZD of the player's base.
-            // Classic.ForeverKillXp: lower mobs give it of the LOWER MOB's own base instead. The Azeroth project (Sakhwoow/WoWForever,
-            // GPL-2) reports that 97 of 146 official Forever sniffed kills match this and 57 the vanilla one; the kills are not published.
+            // Classic.ForeverKillXp (on by default): lower mobs give it of the LOWER MOB's own base instead, as on live Forever
+            // (forever-bugs #138, Blizzard: intended; level 10 killing level 5 gets 20 base there, vanilla gives 27).
             float const playerBase = pl_level * 5.0f + 45.0f;
             float const lowerMobBase = sWorld->getBoolConfig(CONFIG_CLASSIC_FOREVER_KILL_XP) ? mob_level * 5.0f + 45.0f : playerBase;
             if (mob_level >= pl_level)
@@ -175,16 +175,6 @@ namespace Trinity
 
             sScriptMgr->OnBaseGainCalculation(baseGain, pl_level, mob_level);
             return baseGain;
-        }
-
-        // Classic 1.60 (WoW Forever hotfixes of November 13 and 14 2026): nobody in a party gets kill experience in a 5 player dungeon
-        // while its highest level member is more than 12 levels above the enemy, so a level 60 can't carry low characters through a
-        // dungeon for experience (a level 60 still blocks a level 47 enemy, not a level 48 one). Open world and raids are not affected.
-        inline constexpr uint8 DungeonCarryLevelGap = 12;
-
-        inline constexpr bool BlocksDungeonCarry(uint8 maxPartyLevel, uint8 victimLevel)
-        {
-            return maxPartyLevel > victimLevel + DungeonCarryLevelGap;
         }
 
         inline uint32 Gain(Player* player, Unit* u, bool isBattleGround = false)

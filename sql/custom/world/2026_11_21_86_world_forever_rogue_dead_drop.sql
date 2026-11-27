@@ -86,6 +86,8 @@ INSERT INTO `conditions` (`SourceTypeOrReferenceId`, `SourceGroup`, `SourceEntry
 -- Venture Co. Work Order 210187 (Windshear Crag, Venture Co. Deforester 3991): the old row was Wowhead's raw share of all kills
 -- (6/26746), a quest-only item. Quest drop and pickpocket for rogues on Goblin Lockpicks; the chances are ESTIMATED.
 UPDATE `creature_loot_template` SET `Chance` = 20, `QuestRequired` = 1 WHERE `Entry` = 3991 AND `Item` = 210187;
+-- Everlake: the loot tables have no primary key, so INSERT IGNORE alone added the row again on every run.
+DELETE FROM `pickpocketing_loot_template` WHERE `Entry` = 3991 AND `ItemType` = 0 AND `Item` = 210187;
 INSERT IGNORE INTO `pickpocketing_loot_template` (`Entry`, `ItemType`, `Item`, `Chance`, `QuestRequired`, `LootMode`, `GroupId`, `MinCount`, `MaxCount`, `Comment`) VALUES
 (3991, 0, 210187, 100, 1, 1, 0, 1, 1, 'Venture Co. Deforester: Venture Co. Work Order (Goblin Lockpicks)');
 

@@ -21,6 +21,7 @@
 #include "ChannelPackets.h"
 #include "DB2Stores.h"
 #include "Log.h"
+#include "FullName.h"
 #include "ObjectMgr.h"                                      // for normalizePlayerName
 #include "Player.h"
 #include "DiscordChannel.h"
@@ -178,7 +179,7 @@ void WorldSession::HandleChannelPlayerCommand(WorldPackets::Channel::ChannelPlay
     TC_LOG_DEBUG("chat.system", "{} {} ChannelName: {}, Name: {}",
         GetOpcodeNameForLogging(packet.GetOpcode()), GetPlayerInfo(), packet.ChannelName, packet.Name);
 
-    if (!normalizePlayerName(packet.Name))
+    if (!Trinity::FullName::Normalize(packet.Name))
         return;
 
     if (Channel* channel = ChannelMgr::GetChannelForPlayerByNamePart(packet.ChannelName, GetPlayer()))

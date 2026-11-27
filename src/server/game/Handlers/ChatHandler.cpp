@@ -33,6 +33,7 @@
 #include "LanguageMgr.h"
 #include "Log.h"
 #include "ObjectAccessor.h"
+#include "FullName.h"
 #include "ObjectMgr.h"
 #include "Opcodes.h"
 #include "Player.h"
@@ -129,7 +130,13 @@ void WorldSession::HandleChatMessageOpcode(WorldPackets::Chat::ChatMessage& chat
 
 void WorldSession::HandleChatMessageWhisperOpcode(WorldPackets::Chat::ChatMessageWhisper& chatMessageWhisper)
 {
-    HandleChatMessage(CHAT_MSG_WHISPER, Language(chatMessageWhisper.Language), chatMessageWhisper.Text, chatMessageWhisper.Target, chatMessageWhisper.TargetGUID);
+    TC_LOG_DEBUG("network", "CMSG_CHAT_MESSAGE_WHISPER: {} whispers target \"{}\" surname \"{}\" guid {}", GetPlayerInfo(),
+        chatMessageWhisper.Target, chatMessageWhisper.TargetSurname, chatMessageWhisper.TargetGUID.ToString());
+
+    // the friends list and chat links send the surname apart from the name: without it the whisper went to another
+    // character with that name (a bot or player with no surname) or to nobody
+    HandleChatMessage(CHAT_MSG_WHISPER, Language(chatMessageWhisper.Language), chatMessageWhisper.Text,
+        Trinity::FullName::WithSurname(chatMessageWhisper.Target, chatMessageWhisper.TargetSurname), chatMessageWhisper.TargetGUID);
 }
 
 void WorldSession::HandleChatMessageChannelOpcode(WorldPackets::Chat::ChatMessageChannel& chatMessageChannel)
@@ -302,18 +309,16 @@ ChatMessageResult WorldSession::HandleChatMessage(ChatMsg type, Language lang, s
             }
             else
             {
-                // the unit menu hands over "Name " (name + empty surname): trim it, or the lookup says "No player named"
-                while (!target.empty() && (target.back() == ' ' || target.back() == '\t'))
-                    target.pop_back();
-                ExtendedPlayerName extName = ExtractExtendedPlayerName(target);
-
-                if (!normalizePlayerName(extName.Name))
+                // the unit menu hands over "Name " or "Name Surname": keep the surname, or the lookup finds another Name
+                // (a bot or player with no surname) or nobody (Trinity::FullName::Normalize)
+                std::string fullName = target;
+                if (!Trinity::FullName::Normalize(fullName))
                 {
                     SendChatPlayerNotfoundNotice(target);
                     break;
                 }
 
-                receiver = ObjectAccessor::FindConnectedPlayerByName(extName.Name);
+                receiver = ObjectAccessor::FindConnectedPlayerByName(fullName);
             }
             if (!receiver || (lang != LANG_ADDON && !receiver->isAcceptWhispers() && receiver->GetSession()->HasPermission(rbac::RBAC_PERM_CAN_FILTER_WHISPERS) && !receiver->IsInWhisperWhiteList(sender->GetGUID())))
             {
@@ -519,7 +524,7 @@ void WorldSession::HandleChatAddonMessageTargetedOpcode(WorldPackets::Chat::Chat
     // disagrees on. Every packet, not just those two prefixes: a misread layout can garble the prefix too.
     {
         WorldPacket const* raw = chatAddonMessageTargeted.GetRawPacket();
-        TC_LOG_INFO("network", "[addon_targeted] {}: type {} prefix '{}' text {} bytes '{}' player '{}' guid {} realm {} channel '{}' raw {}",
+        TC_LOG_DEBUG("network", "[addon_targeted] {}: type {} prefix '{}' text {} bytes '{}' player '{}' guid {} realm {} channel '{}' raw {}",
             GetPlayerInfo(), uint32(chatAddonMessageTargeted.Params.Type), chatAddonMessageTargeted.Params.Prefix,
             chatAddonMessageTargeted.Params.Text.size(), chatAddonMessageTargeted.Params.Text.substr(0, 40), chatAddonMessageTargeted.PlayerName,
             chatAddonMessageTargeted.PlayerGUID.ToString(), chatAddonMessageTargeted.PlayerVirtualRealmAddress, chatAddonMessageTargeted.ChannelName,
@@ -641,12 +646,11 @@ void WorldSession::HandleChatAddonMessage(ChatMsg type, std::string prefix, std:
             }
             else
             {
-                ExtendedPlayerName extName = ExtractExtendedPlayerName(target);
-
-                if (!normalizePlayerName(extName.Name))
+                std::string fullName = target;
+                if (!Trinity::FullName::Normalize(fullName))
                     break;
 
-                receiver = ObjectAccessor::FindConnectedPlayerByName(extName.Name);
+                receiver = ObjectAccessor::FindConnectedPlayerByName(fullName);
             }
             if (!receiver)
             {

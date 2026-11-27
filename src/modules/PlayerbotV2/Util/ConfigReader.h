@@ -373,6 +373,9 @@ public:
     bool behavior_dungeon_loot()        const { return bhv_dungeon_loot_; }
     bool behavior_warrior_stance_dance() const { return bhv_warrior_stance_dance_; }
     bool behavior_bot_whisperable()     const { return bhv_bot_whisperable_; }
+    // Playerbot.Perf.LeanBotSessions: a pool bot's session drops its collections and battle pet journal at creation
+    // (WorldSession::DropClientOnlyManagers). Read when a bot session is made; sessions already online keep what they have.
+    bool perf_lean_bot_sessions()       const { return perf_lean_bot_sessions_; }
     bool chatter_conversation()         const { return chatter_conversation_; }
     // Playerbot.ChatModel.*: bots answer whispers and party chat through a local Ollama server (off by default).
     struct ChatModelConfig
@@ -729,6 +732,7 @@ private:
     bool   bhv_dungeon_loot_         = true;
     bool   bhv_warrior_stance_dance_ = true;
     bool   bhv_bot_whisperable_      = true;
+    bool   perf_lean_bot_sessions_   = true;
     bool   chatter_conversation_     = true;
     ChatModelConfig chat_model_;
     BridgeConfig bridge_;

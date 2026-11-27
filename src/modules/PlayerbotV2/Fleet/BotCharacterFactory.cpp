@@ -13,6 +13,7 @@
 #include "DBCEnums.h"
 #include "DB2Stores.h"
 #include "DB2Structure.h"
+#include "NameReservationMgr.h"
 #include "RaceMask.h"
 #include <random>
 #include "Log.h"
@@ -304,8 +305,11 @@ BotCharacterFactory::Result BotCharacterFactory::Create(
     if (sObjectMgr->IsReservedName(normalized))
         return {false, "name is reserved", {}};
 
-    if (sCharacterCache->GetCharacterCacheByName(normalized))
-        return {false, "name already in use", {}};
+    std::string resolvedSurname = surname.empty()
+        ? Fleet::BotNamePool::AcquireSurname(normalized, race)
+        : surname;
+    if (resolvedSurname.empty())
+        return {false, "no available full name (local characters or player reservations)", {}};
 
     // Acquire a slot from the dedicated bot account pool. The new char
     // is owned by that pool account, NOT the GM's. AcquireSlot returns 0
@@ -341,6 +345,7 @@ BotCharacterFactory::Result BotCharacterFactory::Create(
     createInfo->Class = charClass;
     createInfo->Sex   = gender;
     createInfo->Name  = normalized;
+    createInfo->Surname = resolvedSurname;
 
     for (UF::ChrCustomizationChoice const& c : RollCustomizations(race, gender, charClass))
         createInfo->Customizations.push_back(c);
@@ -401,7 +406,7 @@ BotCharacterFactory::Result BotCharacterFactory::Create(
     // Classic 1.60: surname from character creation ("Name Surname"), up to
     // 48 characters, same rule as the opcode handler (over-length cleared,
     // no CheckPlayerName).
-    std::string sanitizedSurname = surname;
+    std::string sanitizedSurname = resolvedSurname;
     if (utf8length(sanitizedSurname) > 48)
         sanitizedSurname.clear();
     CharacterDatabaseTransaction characterTransaction = CharacterDatabase.BeginTransaction();

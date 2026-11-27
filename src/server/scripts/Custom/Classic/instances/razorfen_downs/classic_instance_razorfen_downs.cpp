@@ -27,7 +27,6 @@
 #include "TemporarySummon.h"
 #include "classic_dungeon_encounter_tracker.h"
 #include "classic_razorfen_downs.h"
-#include <set>
 
 namespace
 {
@@ -148,7 +147,7 @@ public:
             if (type == DATA_GONG_WAVES)
             {
                 GameObject* gong = instance->GetGameObject(_gongGUID);
-                if (!gong || GongCompleted() || !_gongSummons.empty() || data != _gongWaves + 1 || data > 3)
+                if (!gong || GongCompleted() || !_gongSummons.empty() || data != uint32(_gongWaves) + 1 || data > 3)
                     return;
 
                 static constexpr uint32 entries[] = { CREATURE_TOMB_FIEND, CREATURE_TOMB_REAVER, CREATURE_TUTEN_KASH };
@@ -227,6 +226,9 @@ public:
             return _encounter[0] == DONE || GetBossState(CLASSIC_RFD_ENC_TUTENKASH) == DONE;
         }
 
+        // The wave's creatures used to count themselves through their stock scripts; those became plain SmartAI
+        // (world 2026_10_16_10), so after the first strike the gong never unlocked. The instance tracks them now: a
+        // wave killed to the last creature is cleared, a wave with a creature gone alive is struck again.
         void FinishGongSummon(ObjectGuid guid, bool killed)
         {
             if (!_gongSummons.erase(guid))
@@ -244,13 +246,13 @@ public:
                 gong->RemoveFlag(GO_FLAG_NOT_SELECTABLE);
         }
 
-        std::set<ObjectGuid> _gongSummons;
+        GuidSet _gongSummons;                          // creatures of the running gong wave
         bool _gongWaveLost = false;
         ObjectGuid _gongGUID;
         ObjectGuid _cupFire1GUID;
         ObjectGuid _cupFire2GUID;
         uint32 _encounter[CLASSIC_RFD_MAX_ENCOUNTER];
-        uint32 _gongWaves;
+        uint8 _gongWaves;                              // gong waves cleared, 3 = Tuten'kash dead
         PersistentInstanceScriptValue<uint32> _savedTutenKash;
     };
 

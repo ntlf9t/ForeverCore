@@ -31,6 +31,7 @@
 #include "Player.h"
 #include "Random.h"
 #include "DB2Stores.h"
+#include "GameTime.h"
 #include "Spell.h"
 #include "SpellAuraEffects.h"
 #include "SpellHistory.h"
@@ -51,6 +52,7 @@ enum ClassicMageTalentSpells
     SPELL_MAGE_IMPROVED_COUNTERSPELL        = 11255,
     SPELL_MAGE_COUNTERSPELL_SILENCED        = 18469,
     SPELL_MAGE_HEATING_UP_BUFF              = 400625,   // -25% Pyroblast cast time per stack, 3 stacks, 20 s, 1 charge
+    SPELL_MAGE_PRESENCE_OF_MIND             = 12043,    // next mage spell with a cast time is instant, 1 charge
     SPELL_MAGE_FINGERS_OF_FROST_TALENT      = 400647,   // effect 0: charges, effect 1: proc chance
     SPELL_MAGE_FINGERS_OF_FROST_IGNORE      = 400669,   // ability ignore aura state (frozen) for the spells that need it
     SPELL_MAGE_FINGERS_OF_FROST_STACKS      = 400670,   // 2 stacks, one used per spell cast
@@ -64,20 +66,21 @@ enum ClassicMageTalentSpells
     SPELL_MAGE_FRIGID_POWER                 = 1326891,  // 70630: Frost damage buff that Ice Barrier grants for its duration
     SPELL_MAGE_WINTERS_CHILL_TALENT         = 11180,    // effect 1: proc chance
     SPELL_MAGE_WINTERS_CHILL                = 12579,    // 70630 effect 1: % spell power for the caster's next Cone of Cold, per stack
-    SPELL_MAGE_ARCANE_BLAST_BUFF            = 400573    // 70707: % of Intellect as spell damage and +100% Arcane Blast cost per stack, 4 stacks, 18 s
+    SPELL_MAGE_ARCANE_BLAST_BUFF            = 400573,   // 70707: % of Intellect as spell damage and +100% Arcane Blast cost per stack, 4 stacks, 18 s
+    SPELL_MAGE_MISSILE_BARRAGE_BUFF         = 400589    // 70707: effect 0 % channel duration, effect 1 ms on the missile interval, effect 2 % cost
 };
 
 enum ClassicShamanTalentSpells
 {
     SPELL_SHAMAN_FLURRY_BUFF                = 16257,
     SPELL_SHAMAN_ELEMENTAL_DEVASTATION_BUFF = 30165,
-    SPELL_SHAMAN_MAELSTROM_WEAPON_TALENT    = 408498,   // effect 1: proc chance, effect 2: max stacks
+    SPELL_SHAMAN_MAELSTROM_WEAPON_TALENT    = 408498,   // effect 1: procs per minute on the main hand's speed, effect 2: max stacks
     SPELL_SHAMAN_MAELSTROM_WEAPON_BUFF      = 408505,
     SPELL_SHAMAN_MAELSTROM_READY            = 408501,
     SPELL_SHAMAN_LIGHTNING_BOLT_MAELSTROM   = 1291078,  // lets Lightning Bolt hits activate Maelstrom Weapon (effect 0: chance)
     SPELL_SHAMAN_EARTHBOUND_TALENT          = 1222988,
     SPELL_SHAMAN_EARTHBOUND_ROOT            = 1238289,
-    SPELL_SHAMAN_IMPROVED_STORMSTRIKE       = 1223031,  // effect 0: buff chance, effect 2: cooldown reset chance
+    SPELL_SHAMAN_IMPROVED_STORMSTRIKE       = 1223031,  // effect 0: buff chance ($m1), effect 1: cooldown reset chance ($m2)
     SPELL_SHAMAN_IMPROVED_STORMSTRIKE_BUFF  = 1238931,  // 50% mana regeneration while casting, 15 s
     SPELL_SHAMAN_STORMSTRIKE                = 17364,
     SPELL_SHAMAN_ANCESTRAL_GUIDANCE_HEAL    = 409333,
@@ -85,15 +88,18 @@ enum ClassicShamanTalentSpells
     SPELL_SHAMAN_ANCESTRAL_FORTITUDE        = 16177     // Ancestral Healing: armor percent on the healed target, 15 s
 };
 
-// Mage "Chill effects" (Frostbolt, Cone of Cold, Frostfire Bolt, Blast Wave...): mage spells with a snare. Triggered chills do not
-// proc (Frost Armor / Ice Armor chill); the Improved Blizzard chill rolls directly.
+// Mage "Chill effects": the spells the client's Chill class flag (word 0 0x100000, the mask of Permafrost 11175 and of the Frostbite
+// proc row) names: Frostbolt, Cone of Cold, Frostfire Bolt and the Chilled auras. Blast Wave's daze is a snare but no Chill (0x800000).
+// Triggered chills do not proc through the proc system; the Improved Blizzard chill and the Frost / Ice Armor chill roll directly.
 static bool IsMageChillEffect(SpellInfo const* spellInfo)
 {
-    return spellInfo && spellInfo->SpellFamilyName == SPELLFAMILY_MAGE && spellInfo->HasAura(SPELL_AURA_MOD_DECREASE_SPEED);
+    return spellInfo && spellInfo->SpellFamilyName == SPELLFAMILY_MAGE && (spellInfo->SpellFamilyFlags[0] & 0x100000)
+        && spellInfo->HasAura(SPELL_AURA_MOD_DECREASE_SPEED);
 }
 
-// 400647 - Fingers of Frost: a Chill effect has effect 1 % chance to grant effect 0 charges of Fingers of Frost for 15 s
-static void TryGrantFingersOfFrost(Unit* mage)
+// 400647 - Fingers of Frost: a Chill effect has effect 1 % chance to grant effect 0 charges of Fingers of Frost for 15 s; chanceFactor
+// is the share a lower Blizzard rank keeps (SpellMgr::GetClassicBlizzardProcDownrankFactor)
+static void TryGrantFingersOfFrost(Unit* mage, float chanceFactor = 1.0f)
 {
     Aura const* talent = mage->GetAura(SPELL_MAGE_FINGERS_OF_FROST_TALENT);
     if (!talent)
@@ -101,7 +107,7 @@ static void TryGrantFingersOfFrost(Unit* mage)
 
     AuraEffect const* charges = talent->GetEffect(EFFECT_0);
     AuraEffect const* chance = talent->GetEffect(EFFECT_1);
-    if (!charges || !chance || !roll_chance(chance->GetAmount()))
+    if (!charges || !chance || !roll_chance(chance->GetAmount() * chanceFactor))
         return;
 
     mage->CastSpell(mage, SPELL_MAGE_FINGERS_OF_FROST_IGNORE, true);
@@ -199,6 +205,9 @@ class classic_spell_mage_ignite_dot : public AuraScript
 // 11170 - Shatter: "Increases the critical strike chance of all your spells against Frozen targets by 1%" (rank amount).
 // 400647 - Fingers of Frost: "treats your next 2 spells cast as if the target were Frozen": every cast mage damage spell uses
 // one charge of 400670 and counts as hitting a Frozen target (for Shatter). Bound to all player mage damage spells.
+// A channel spends no charge (wowsims/forever EV-0030: Blizzard casts made with charges up spent none); Arcane Missiles' missiles read
+// the target as Frozen while a charge is up and each missile that lands spends one (wowsims/forever registerFingersOfFrost). Before, the
+// Arcane Missiles channel spent one charge as it began and every missile of it then read the target as Frozen for free.
 class classic_spell_mage_frozen_target : public SpellScript
 {
     bool Validate(SpellInfo const* /*spellInfo*/) override
@@ -206,10 +215,17 @@ class classic_spell_mage_frozen_target : public SpellScript
         return ValidateSpellInfo({ SPELL_MAGE_FINGERS_OF_FROST_STACKS });
     }
 
+    // Arcane Missiles' missiles (7268 and the other ranks, class flag word 0 0x200000), cast by the channel
+    bool IsArcaneMissile() const
+    {
+        SpellInfo const* spellInfo = GetSpellInfo();
+        return spellInfo->SpellFamilyName == SPELLFAMILY_MAGE && (spellInfo->SpellFamilyFlags[0] & 0x200000);
+    }
+
     void HandleCast()
     {
         // launch (critical roll) happens after OnCast, so the charge is used here and remembered for this cast
-        if (GetSpell()->IsTriggered())
+        if (GetSpell()->IsTriggered() || GetSpellInfo()->IsChanneled())
             return;
 
         if (Aura* fingers = GetCaster()->GetAura(SPELL_MAGE_FINGERS_OF_FROST_STACKS))
@@ -222,24 +238,42 @@ class classic_spell_mage_frozen_target : public SpellScript
     void CalcCritChance(Unit const* victim, float& critChance)
     {
         Unit* caster = GetCaster();
+        if (GetSpell()->IsTriggered() && caster->HasAura(SPELL_MAGE_FINGERS_OF_FROST_STACKS))
+        {
+            _fingersOfFrost = true;
+            _spendOnHit = IsArcaneMissile();
+        }
+
         AuraEffect const* shatter = caster->GetAuraEffect(SPELL_MAGE_SHATTER, EFFECT_0);
         if (!shatter)
             return;
 
-        bool const frozen = _fingersOfFrost
-            || (GetSpell()->IsTriggered() && caster->HasAura(SPELL_MAGE_FINGERS_OF_FROST_STACKS))
-            || victim->HasAuraState(AURA_STATE_FROZEN, GetSpellInfo(), caster);
-        if (frozen)
+        if (_fingersOfFrost || victim->HasAuraState(AURA_STATE_FROZEN, GetSpellInfo(), caster))
             critChance += float(shatter->GetAmount());
+    }
+
+    // a missile that lands spends the charge it read; a miss or a full resist keeps it
+    void HandleMissileHit(SpellEffIndex /*effIndex*/)
+    {
+        if (!_spendOnHit)
+            return;
+
+        _spendOnHit = false;
+        if (Aura* fingers = GetCaster()->GetAura(SPELL_MAGE_FINGERS_OF_FROST_STACKS))
+            fingers->ModStackAmount(-1);
     }
 
     void Register() override
     {
         OnCast += SpellCastFn(classic_spell_mage_frozen_target::HandleCast);
         OnCalcCritChance += SpellOnCalcCritChanceFn(classic_spell_mage_frozen_target::CalcCritChance);
+        // only on spells with a damage effect (the channels and auras bound here have none, the hook would not match)
+        if (SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(m_scriptSpellId, DIFFICULTY_NONE); spellInfo && spellInfo->HasEffect(SPELL_EFFECT_SCHOOL_DAMAGE))
+            OnEffectHitTarget += SpellEffectFn(classic_spell_mage_frozen_target::HandleMissileHit, EFFECT_ALL, SPELL_EFFECT_SCHOOL_DAMAGE);
     }
 
     bool _fingersOfFrost = false;
+    bool _spendOnHit = false;
 };
 
 // 400670 - Fingers of Frost (charges): the aura state ignore buff 400669 ends with the last charge
@@ -293,7 +327,8 @@ class classic_spell_mage_fingers_of_frost : public AuraScript
 // 11185 - Improved Blizzard: "Adds a Chill effect to your Blizzard spell. This effect lowers the target's movement speed by 40%
 // for 1.5 sec." Blizzard (10, 6141, 8427, 10185-10187) ticks through classic_spell_ground_area_damage; this second script on the
 // same tick chills the enemies inside the Blizzard with 12484 (talent amount as the snare), which is a Chill effect for Fingers
-// of Frost. Forever ranks chill 15 / 25 / 40%; Forever.VanillaAoE = 1 chills the vanilla 30 / 50 / 65% (ClassicVanillaAoe.h).
+// of Frost: every chilled enemy rolls the talent's chance (it was one roll a tick). Forever ranks chill 15 / 25 / 40%;
+// Forever.VanillaAoE = 1 chills the vanilla 30 / 50 / 65% (ClassicVanillaAoe.h).
 class classic_spell_mage_improved_blizzard : public AuraScript
 {
     bool Validate(SpellInfo const* /*spellInfo*/) override
@@ -316,11 +351,12 @@ class classic_spell_mage_improved_blizzard : public AuraScript
             chill = ClassicVanillaAoe::ImprovedBlizzardChill(chill);
 
         SpellInfo const* spellInfo = GetSpellInfo();
+        // a lower Blizzard rank far below the mage's level keeps only part of the Fingers of Frost chance (build 70755)
+        float const fingersOfFrostFactor = sSpellMgr->GetClassicBlizzardProcDownrankFactor(spellInfo, caster);
         GuidUnorderedSet targets;
         for (AreaTrigger* areaTrigger : caster->GetAreaTriggers(spellInfo->Id))
             targets.insert(areaTrigger->GetInsideUnits().begin(), areaTrigger->GetInsideUnits().end());
 
-        bool chilled = false;
         for (ObjectGuid const& guid : targets)
         {
             Unit* target = ObjectAccessor::GetUnit(*caster, guid);
@@ -328,11 +364,10 @@ class classic_spell_mage_improved_blizzard : public AuraScript
                 continue;
 
             caster->CastSpell(target, SPELL_MAGE_CHILLED, CastSpellExtraArgs(TRIGGERED_FULL_MASK).AddSpellBP0(chill));
-            chilled = true;
-        }
 
-        if (chilled)
-            TryGrantFingersOfFrost(caster);
+            // each chilled enemy rolls (wowsims/forever EV-0030: the gain lands between a tick's damage lines, rolled per target)
+            TryGrantFingersOfFrost(caster, fingersOfFrostFactor);
+        }
     }
 
     void Register() override
@@ -370,9 +405,11 @@ class classic_spell_mage_counterspell : public SpellScript
     }
 };
 
-// 400624 - Heating Up: "Non-periodic critical strikes with Fireball, Frostfire Bolt, Fire Blast, and Scorch reduce the cast time
-// of your next Pyroblast cast within 20 sec by 25%, stacking up to 3 times." Adds a stack of 400625 (talent amount = chance);
-// 400625 is used by the next Pyroblast (spell_proc: cast phase, requires its spell mod).
+// 400624 - Heating Up (client 70707): "Non-periodic critical strikes with Fireball, Frostfire Bolt, Fire Blast, and Scorch reduce the cast
+// time of your next Pyroblast cast within 20 sec by 25%, stacking up to 3 times. Fire Blast grants an additional stack every time it
+// deals damage." Adds a stack of 400625 for a critical hit and one more for every Fire Blast hit, so a Fire Blast gives one stack, two
+// when it crits (as wowsims/forever registerHeatingUp reads it). The talent amount is the chance. 400625 is used by the next Pyroblast
+// (spell_proc: cast phase, requires its spell mod). spell_proc: Fireball, Fire Blast, Scorch and Frostfire Bolt hits and critical hits.
 class classic_spell_mage_heating_up : public AuraScript
 {
     bool Validate(SpellInfo const* /*spellInfo*/) override
@@ -380,16 +417,61 @@ class classic_spell_mage_heating_up : public AuraScript
         return ValidateSpellInfo({ SPELL_MAGE_HEATING_UP_BUFF });
     }
 
-    void HandleProc(AuraEffect const* aurEff, ProcEventInfo& /*eventInfo*/)
+    static bool IsFireBlast(SpellInfo const* spellInfo)
+    {
+        return spellInfo && spellInfo->SpellFamilyName == SPELLFAMILY_MAGE && (spellInfo->SpellFamilyFlags[0] & 0x2);
+    }
+
+    static bool IsCritical(ProcEventInfo const& eventInfo)
+    {
+        return (eventInfo.GetHitMask() & PROC_HIT_CRITICAL) != 0;
+    }
+
+    bool CheckProc(ProcEventInfo& eventInfo)
+    {
+        return IsCritical(eventInfo) || IsFireBlast(eventInfo.GetSpellInfo());
+    }
+
+    void HandleProc(AuraEffect const* aurEff, ProcEventInfo& eventInfo)
     {
         PreventDefaultAction();
-        if (roll_chance(aurEff->GetAmount()))
+        if (!roll_chance(aurEff->GetAmount()))
+            return;
+
+        uint32 const stacks = (IsCritical(eventInfo) ? 1 : 0) + (IsFireBlast(eventInfo.GetSpellInfo()) ? 1 : 0);
+        for (uint32 i = 0; i < stacks; ++i)
             GetTarget()->CastSpell(GetTarget(), SPELL_MAGE_HEATING_UP_BUFF, CastSpellExtraArgs(aurEff));
     }
 
     void Register() override
     {
+        DoCheckProc += AuraCheckProcFn(classic_spell_mage_heating_up::CheckProc);
         OnEffectProc += AuraEffectProcFn(classic_spell_mage_heating_up::HandleProc, EFFECT_0, SPELL_AURA_DUMMY);
+    }
+};
+
+// 400625 - Heating Up (buff): a Pyroblast made instant by Presence of Mind keeps the Heating Up stacks for the next Pyroblast. Both spell mods
+// apply to the instant Pyroblast, so the cast-phase proc row (requires its spell mod) took the stacks as well, and Presence of Mind wasted
+// them. wowsims/forever evidence EV-0005 (checked in game): Presence of Mind + Pyroblast leaves Heating Up up. CheckProc runs while the
+// procs are gathered, before either aura is used up, so the Presence of Mind aura is still in the cast's applied mods.
+class classic_spell_mage_heating_up_buff : public AuraScript
+{
+    bool CheckProc(ProcEventInfo& eventInfo)
+    {
+        Spell const* spell = eventInfo.GetProcSpell();
+        if (!spell)
+            return true;
+
+        for (Aura const* mod : spell->m_appliedMods)
+            if (mod->GetId() == SPELL_MAGE_PRESENCE_OF_MIND)
+                return false;
+
+        return true;
+    }
+
+    void Register() override
+    {
+        DoCheckProc += AuraCheckProcFn(classic_spell_mage_heating_up_buff::CheckProc);
     }
 };
 
@@ -415,10 +497,10 @@ class classic_spell_mage_cold_snap : public SpellScript
     }
 };
 
-// 400640 - Ice Lance: "Deals Frost damage to an enemy target, three times as much if the target is Frozen." The client spell is a damage
-// effect, a dummy effect with the 300 percent and a second dummy effect; nothing used the 300 percent, so a Frozen target took the base hit.
-// The damage is multiplied (before the critical roll) when the target is Frozen by Frost Nova or another root, or when a charge of Fingers
-// of Frost was on the mage as the cast began (classic_spell_mage_frozen_target spends the charge in OnCast, after BeforeCast).
+// 400640 - Ice Lance (client 70707, Wowhead 1240047): "Deals $s1 Frost damage to an enemy target. Deals $s2% increased damage to Frozen
+// targets." Effect 1 is a dummy with the 300 percent: 300% more, four times the hit (it was taken as three times). The damage is raised
+// (before the critical roll) when the target is Frozen by Frost Nova or another root, or when a charge of Fingers of Frost was on the mage
+// as the cast began (classic_spell_mage_frozen_target spends the charge in OnCast, after BeforeCast).
 class classic_spell_mage_ice_lance : public SpellScript
 {
     bool Validate(SpellInfo const* spellInfo) override
@@ -435,7 +517,11 @@ class classic_spell_mage_ice_lance : public SpellScript
     {
         Unit* caster = GetCaster();
         if (_fingersOfFrost || GetHitUnit()->HasAuraState(AURA_STATE_FROZEN, GetSpellInfo(), caster))
-            SetHitDamage(CalculatePct(GetHitDamage(), GetEffectInfo(EFFECT_1).CalcValue(caster)));
+        {
+            int32 damage = GetHitDamage();
+            AddPct(damage, GetEffectInfo(EFFECT_1).CalcValue(caster));
+            SetHitDamage(damage);
+        }
 
         // client 70630: a Fingers of Frost empowered Ice Lance can apply Winter's Chill
         if (_fingersOfFrost)
@@ -455,7 +541,8 @@ class classic_spell_mage_ice_lance : public SpellScript
 // effect lasts until you have caused 3 critical strikes with Fire spells." The cast puts one stack of 28682 on the mage (trigger effect)
 // and the client data gives 11129 three proc charges and 28682 an endless duration, with no handler for either: the first stack stayed
 // for ever and no more were added. 11129 now procs on fire critical hits only (spell_proc), so each critical spends a charge, and
-// ends 28682 with it; 28682 procs on every fire damage hit and adds a stack.
+// ends 28682 with it; 28682 procs on every fire damage hit and adds a stack. Flamestrike's ground ticks count (client 70707: the tick
+// spell 1279990 is non-periodic Fire damage with SPELL_ATTR3_NOT_A_PROC, so it may trigger procs, and 28682's class mask holds its 0x4).
 class classic_spell_mage_combustion : public AuraScript
 {
     void HandleProc(AuraEffect const* /*aurEff*/, ProcEventInfo& /*eventInfo*/)
@@ -575,19 +662,167 @@ class classic_spell_mage_master_of_elements : public AuraScript
     }
 };
 
+// 5143, 5144, 5145, 8416, 8417, 10211, 10212, 25345 - the Arcane Missiles channels
+static bool IsArcaneMissilesChannel(uint32 spellId)
+{
+    switch (spellId)
+    {
+        case 5143: case 5144: case 5145: case 8416: case 8417: case 10211: case 10212: case 25345:
+            return true;
+        default:
+            return false;
+    }
+}
+
+// WoW Forever hotfix of 9 Nov 2026: "Arcane Concentration's activation chance now correctly splits across the cast and every bolt (was
+// granting 10% on cast and per bolt)". The channel start and each missile take an equal share, 1 / (missiles + 1): a sixth each on a five
+// missile channel (MythicSim docs/mechanics.md and wowsims/forever EV-0098, both MIT; the post gives no shares, equal ones are assumed).
+// The missiles are the channel's duration over its missile period; Missile Barrage halves both, so the count is the row's.
+static float ArcaneMissilesRollShare(SpellInfo const* channel)
+{
+    int32 const duration = channel->GetMaxDuration();
+    for (SpellEffectInfo const& effect : channel->GetEffects())
+        if (effect.IsAura(SPELL_AURA_PERIODIC_TRIGGER_SPELL) && effect.ApplyAuraPeriod > 0 && duration > 0)
+            return 1.0f / float(duration / int32(effect.ApplyAuraPeriod) + 1);
+    return 1.0f;
+}
+
+// A Clearcasting that Arcane Concentration gives during an Arcane Missiles channel is a fresh one for the next cast (MythicSim: "a start proc
+// is a fresh one for the next cast"; wowsims: a missile proc stays up), so the channel must not hold it and spend it at its end (R-0048,
+// Aura::_ApplyForTarget reserves a charge buff gained during a channel its modifiers name). A Clearcasting the channel itself used at its
+// cast is refreshed by the proc, so letting go of that reservation is right too.
+static void KeepClearcastingPastChannel(Unit* mage, uint32 clearcastingSpellId)
+{
+    if (Spell* channel = mage->GetCurrentSpell(CURRENT_CHANNELED_SPELL))
+        if (IsArcaneMissilesChannel(channel->GetSpellInfo()->Id))
+            channel->ClassicReleaseCharge(mage->GetGUID(), clearcastingSpellId);
+}
+
 // 11213 - Arcane Concentration: "Gives you a $s1% chance of entering a Clearcasting state after any damage spell hits a target." The client
 // spell is a proc trigger (Clearcasting 12536) with 100 as spell proc chance and the talent chance as the effect amount, so it entered
-// Clearcasting on every damage spell hit. The chance is rolled from the amount (spell_proc: harmful spell, damage, hit).
+// Clearcasting on every damage spell hit. The chance is rolled from the amount (spell_proc: harmful spell, damage, hit, 1 s cooldown).
+// The rules of the 9 Nov hotfix and Forever's combat logs (MythicSim docs/mechanics.md, wowsims/forever EV-0028, EV-0098):
+//  - each Arcane Missiles missile rolls a share of the chance (ArcaneMissilesRollShare); the channel start rolls its share in
+//    classic_spell_mage_arcane_missiles_concentration. The missiles are triggered spells, so the row lets triggered spells through
+//    (PROC_ATTR_TRIGGERED_CAN_PROC) and every other triggered spell is turned away here, as Aura::GetProcEffectMask did before.
+//  - a Flamestrike ground tick rolls once, after the first enemy it lands on, however many it hits (13 of 82 ticks gained it).
+//    The ticks are hits without a Spell, one proc event per enemy (classic_spell_ground_area_damage), all in the same world update.
 class classic_spell_mage_arcane_concentration : public AuraScript
 {
-    bool CheckProc(AuraEffect const* aurEff, ProcEventInfo& /*eventInfo*/)
+    bool CheckProc(AuraEffect const* aurEff, ProcEventInfo& eventInfo)
     {
-        return roll_chance(float(aurEff->GetAmount()));
+        // Blizzard, build 70450: "Clearcasting no longer has a chance to be activated by abilities cast when not in combat."
+        if (!GetTarget()->IsInCombat())
+            return false;
+
+        float chance = float(aurEff->GetAmount());
+        if (Spell const* procSpell = eventInfo.GetProcSpell())
+        {
+            if (procSpell->IsTriggered())
+            {
+                SpellInfo const* channel = procSpell->GetTriggeredByAuraSpell();
+                if (channel && IsArcaneMissilesChannel(channel->Id))
+                    chance *= ArcaneMissilesRollShare(channel);
+                else if (!procSpell->GetSpellInfo()->HasAttribute(SPELL_ATTR3_NOT_A_PROC))
+                    return false;
+            }
+        }
+        else if (SpellInfo const* spellInfo = eventInfo.GetSpellInfo())
+        {
+            uint32 const now = GameTime::GetGameTimeMS();
+            if (spellInfo->Id == _lastGroundTickSpellId && now == _lastGroundTickMs)
+                return false;
+
+            _lastGroundTickSpellId = spellInfo->Id;
+            _lastGroundTickMs = now;
+        }
+
+        return roll_chance(chance);
+    }
+
+    void AfterProc(AuraEffect const* aurEff, ProcEventInfo& /*eventInfo*/)
+    {
+        KeepClearcastingPastChannel(GetTarget(), aurEff->GetSpellEffectInfo().TriggerSpell);
     }
 
     void Register() override
     {
         DoCheckEffectProc += AuraCheckEffectProcFn(classic_spell_mage_arcane_concentration::CheckProc, EFFECT_0, SPELL_AURA_PROC_TRIGGER_SPELL);
+        AfterEffectProc += AuraEffectProcFn(classic_spell_mage_arcane_concentration::AfterProc, EFFECT_0, SPELL_AURA_PROC_TRIGGER_SPELL);
+    }
+
+    uint32 _lastGroundTickSpellId = 0;
+    uint32 _lastGroundTickMs = 0;
+};
+
+// 5143, 5144, 5145, 8416, 8417, 10211, 10212, 25345 - Arcane Missiles: the channel start rolls Arcane Concentration's share. The channel's
+// aura sits on the mage, so its start is no harmful hit the proc row hears; the roll is made here, after the cast spent any Clearcasting it
+// found (its cast phase procs run before AfterCast), and shares the talent's 1 s cooldown with the proc row. Forever logs before the 9 Nov
+// hotfix: Clearcasting came from 8.9% of 347 channel starts (MythicSim docs/mechanics.md).
+class classic_spell_mage_arcane_missiles_concentration : public SpellScript
+{
+    bool Validate(SpellInfo const* /*spellInfo*/) override
+    {
+        return ValidateSpellEffect({ { SPELL_MAGE_ARCANE_CONCENTRATION, EFFECT_0 } });
+    }
+
+    void HandleAfterCast()
+    {
+        Unit* caster = GetCaster();
+        Aura* talent = caster->GetAura(SPELL_MAGE_ARCANE_CONCENTRATION);
+        AuraEffect* chance = talent ? talent->GetEffect(EFFECT_0) : nullptr;
+        if (!chance)
+            return;
+
+        uint32 const clearcasting = chance->GetSpellEffectInfo().TriggerSpell;
+        TimePoint const now = GameTime::Now();
+        // a channel started out of combat does not roll (build 70450, see classic_spell_mage_arcane_concentration)
+        if (!clearcasting || talent->IsProcOnCooldown(now) || !caster->IsInCombat())
+            return;
+
+        if (!roll_chance(float(chance->GetAmount()) * ArcaneMissilesRollShare(GetSpellInfo())))
+            return;
+
+        if (SpellProcEntry const* procEntry = sSpellMgr->GetSpellProcEntry(talent->GetSpellInfo()))
+            talent->AddProcCooldown(procEntry, now);
+
+        caster->CastSpell(caster, clearcasting, CastSpellExtraArgs(chance));
+        KeepClearcastingPastChannel(caster, clearcasting);
+    }
+
+    void Register() override
+    {
+        AfterCast += SpellCastFn(classic_spell_mage_arcane_missiles_concentration::HandleAfterCast);
+    }
+};
+
+// 6136 - Chilled (Frost Armor), 7321 - Chilled (Ice Armor): the armor's chill on a melee attacker is a Chill effect (the client's Chill
+// flag 0x100000 is on both, and Permafrost's mask names them), so it rolls Frostbite and Fingers of Frost like the mage's other chills.
+// Patch 4.1.0 says "The Chilled proc from Frost Armor can no longer proc Fingers of Frost", so it did before; Frostbite's tooltip reads
+// "your Chill effects". The armor casts the chill triggered, which the proc system skips, so the chill rolls here, once for every chill
+// put on or refreshed. An NPC caster has neither talent and rolls nothing.
+class classic_spell_mage_armor_chill : public AuraScript
+{
+    static constexpr uint32 SPELL_MAGE_FROSTBITE_TALENT = 11071;
+    static constexpr uint32 SPELL_MAGE_FROSTBITE_FREEZE = 12494;
+
+    void HandleApply(AuraEffect const* /*aurEff*/, AuraEffectHandleModes /*mode*/)
+    {
+        Unit* mage = GetCaster();
+        Unit* target = GetTarget();
+        if (!mage || !mage->IsPlayer() || !target->IsAlive())
+            return;
+
+        if (AuraEffect const* frostbite = mage->GetAuraEffect(SPELL_MAGE_FROSTBITE_TALENT, EFFECT_0))
+            if (roll_chance(float(frostbite->GetAmount())))
+                mage->CastSpell(target, SPELL_MAGE_FROSTBITE_FREEZE, CastSpellExtraArgs(frostbite));
+
+        TryGrantFingersOfFrost(mage);
+    }
+
+    void Register() override
+    {
+        AfterEffectApply += AuraEffectApplyFn(classic_spell_mage_armor_chill::HandleApply, EFFECT_0, SPELL_AURA_MOD_DECREASE_SPEED, AURA_EFFECT_HANDLE_REAL_OR_REAPPLY_MASK);
     }
 };
 
@@ -939,13 +1174,60 @@ class classic_spell_sha_flurry : public AuraScript
     }
 };
 
+// 16257 - Flurry (the buff): Windfury Totem's strike spends no charge. Hotfix of 17 Nov (70959): "Fixed an issue where Flurry incorrectly
+// lost stacks when Windfury totem attacks landed." The strike is a melee ability hit since the 14 Nov hotfix, so the buff's client proc
+// flags spent a charge on it; the warrior's Flurry 12966 skips the same spells (classic_spell_warr_flurry_buff).
+class classic_spell_sha_flurry_buff : public AuraScript
+{
+    bool CheckProc(ProcEventInfo& eventInfo)
+    {
+        if (SpellInfo const* spellInfo = eventInfo.GetSpellInfo())
+        {
+            switch (spellInfo->Id)
+            {
+                case 8516: case 10608: case 10610:  // Windfury Totem's strike
+                    return false;
+                default:
+                    break;
+            }
+        }
+        return true;
+    }
+
+    void Register() override
+    {
+        DoCheckProc += AuraCheckProcFn(classic_spell_sha_flurry_buff::CheckProc);
+    }
+};
+
 // 30160 - Elemental Devastation: "Your offensive spell critical strikes will increase your chance to get a critical strike with
 // melee attacks by X% for 10 sec." 30165 with the talent amount (its own 3% when the amount is not set).
+// Weapon imbue hits don't trigger it: a method test on the beta (Blizzard forum thread 2366738, 2026-09-30, Elemental Devastation 3/3)
+// got it from Lightning Bolt, Earth Shock, Frost Shock and Flame Shock's first hit, never from Flametongue or Frostbrand Weapon. Their
+// damage spells are triggered, which spell_proc lets proc (TRIGGERED_CAN_PROC, kept for Lightning Overload), so they are left out here.
 class classic_spell_sha_elemental_devastation : public AuraScript
 {
+    static bool IsWeaponImbueAttack(uint32 spellId)
+    {
+        switch (spellId)
+        {
+            case 10444: case 16368: case 29469: case 29470:                 // Flametongue Attack (Weapon and Totem)
+            case 8034: case 8037: case 10458: case 16352: case 16353:       // Frostbrand Attack
+                return true;
+            default:
+                return false;
+        }
+    }
+
     bool Validate(SpellInfo const* /*spellInfo*/) override
     {
         return ValidateSpellInfo({ SPELL_SHAMAN_ELEMENTAL_DEVASTATION_BUFF });
+    }
+
+    bool CheckProc(ProcEventInfo& eventInfo)
+    {
+        SpellInfo const* spellInfo = eventInfo.GetSpellInfo();
+        return !spellInfo || !IsWeaponImbueAttack(spellInfo->Id);
     }
 
     void HandleProc(AuraEffect const* aurEff, ProcEventInfo& /*eventInfo*/)
@@ -959,6 +1241,7 @@ class classic_spell_sha_elemental_devastation : public AuraScript
 
     void Register() override
     {
+        DoCheckProc += AuraCheckProcFn(classic_spell_sha_elemental_devastation::CheckProc);
         OnEffectProc += AuraEffectProcFn(classic_spell_sha_elemental_devastation::HandleProc, EFFECT_0, SPELL_AURA_DUMMY);
     }
 };
@@ -1026,12 +1309,26 @@ class classic_spell_sha_lightning_overload : public AuraScript
     }
 };
 
-// 408498 - Maelstrom Weapon: "When you deal damage with a melee attack, you have a chance to reduce the cast time and Mana cost of
-// your next Lightning Bolt spell by 20%. Stacks up to 5 times. Lasts 30 sec." Effect 1 is the chance per melee hit, effect 2 the
-// stack count that shows "Maelstrom Ready!" (408501). With 1291078 Lightning Bolt hits can also add a stack (its amount = chance).
-// 408505 and 408501 are used by the next Lightning Bolt (spell_proc).
+// 408498 - Maelstrom Weapon: "When you deal damage with a melee attack, you have a ${($mws*$s2/60)*100}% chance (based on weapon
+// speed) to reduce the cast time and Mana cost of your next Lightning Bolt spell by $m1%. Stacks up to $s3 times." (live 70938
+// tooltip). Effect 1 is a rate per minute on the main hand's speed (6 at one point up to 10 at five), not a flat chance; live
+// combat logs show ~0.59 stacks per landed white hit on a 3.4-3.5 s two-hander at 5/5 (wowsims/forever EV-0009, MIT), which is
+// 10 PPM. Blizzard's 10 November hotfix (live push 113722, in client 70959 and in 2026_11_24_50_hotfixes_forever_live_pushes_71037):
+// effect 1's base points are 2, and the talent rank sets it (TraitDefinitionEffectPoints 25235, Set, curve 128299: 6/7/8/9/10 at
+// ranks 1-5; SpellEffectInfo::CalcValue applies it to the aura amount read below); effect 0's curve 85306 is -20 at every rank, and
+// the buff 408505 takes 20% off the cast time and the mana cost per stack at every rank. Blizzard's 16 November hotfix: "can no
+// longer benefit two casts": the buff's spell_proc row has one charge on the cast phase (PROC_ATTR_REQ_SPELLMOD), so the first
+// Lightning Bolt the stacks change takes all of them; a triggered bolt (Lightning Overload) pays no cost and has no cast time, so the
+// stacks give it nothing. Effect 2 is the stack count that shows "Maelstrom Ready!" (408501). With 1291078 Lightning Bolt hits can also add a
+// stack "with a $s1% reduced chance" (the same roll less that share). Windfury Totem's extra attack never adds a stack
+// (EV-0009: 0 of 261 landed strikes); Windfury Weapon's do. 408505 and 408501 are used by the next Lightning Bolt (spell_proc).
 class classic_spell_sha_maelstrom_weapon : public AuraScript
 {
+    static bool IsWindfuryTotemAttack(uint32 spellId)
+    {
+        return spellId == 8516 || spellId == 10608 || spellId == 10610;
+    }
+
     bool Validate(SpellInfo const* /*spellInfo*/) override
     {
         return ValidateSpellInfo({ SPELL_SHAMAN_MAELSTROM_WEAPON_BUFF, SPELL_SHAMAN_MAELSTROM_READY })
@@ -1044,10 +1341,11 @@ class classic_spell_sha_maelstrom_weapon : public AuraScript
         if (!damageInfo || !damageInfo->GetDamage())
             return false;
 
+        // Windfury Totem's strike is a melee ability hit since the 2026-11-14 live hotfix (no longer an extra swing)
         if (eventInfo.GetTypeMask() & PROC_FLAG_DEAL_MELEE_SWING)
             return true;
         if (eventInfo.GetTypeMask() & PROC_FLAG_DEAL_MELEE_ABILITY)
-            return true;
+            return !eventInfo.GetSpellInfo() || !IsWindfuryTotemAttack(eventInfo.GetSpellInfo()->Id);
 
         SpellInfo const* spellInfo = eventInfo.GetSpellInfo();
         return spellInfo && spellInfo->SpellFamilyName == SPELLFAMILY_SHAMAN && (spellInfo->SpellFamilyFlags[0] & 0x1)
@@ -1059,10 +1357,12 @@ class classic_spell_sha_maelstrom_weapon : public AuraScript
         PreventDefaultAction();
 
         Unit* shaman = GetTarget();
-        SpellEffectValue chance = GetAura()->GetEffect(EFFECT_1)->GetAmount();
+        // $mws: the main hand's weapon speed, whichever hand or spell rolls
+        float const ppm = float(GetAura()->GetEffect(EFFECT_1)->GetAmount());
+        float chance = shaman->GetPPMProcChance(shaman->GetBaseAttackTime(BASE_ATTACK), ppm, GetSpellInfo());
         if (!(eventInfo.GetTypeMask() & PROC_FLAG_DEAL_MELEE_SWING) && !(eventInfo.GetTypeMask() & PROC_FLAG_DEAL_MELEE_ABILITY))
             if (AuraEffect const* lightningBolt = shaman->GetAuraEffect(SPELL_SHAMAN_LIGHTNING_BOLT_MAELSTROM, EFFECT_0))
-                chance = lightningBolt->GetAmount();
+                chance = CalculatePct(chance, std::max(0.0f, 100.0f - float(lightningBolt->GetAmount())));
 
         if (!roll_chance(chance))
             return;
@@ -1147,32 +1447,69 @@ class classic_spell_sha_stormstrike : public SpellScript
                 caster->CastSpell(caster, SPELL_SHAMAN_IMPROVED_STORMSTRIKE_BUFF, CastSpellExtraArgs(talent));
     }
 
-    // "Instantly attack with both weapons": the client spell has one normalized weapon damage effect, which the spell code runs with the
-    // main hand only, so the off-hand weapon gets its swing here, after the main hand hit.
-    void HandleOffHandStrike()
-    {
-        Unit* caster = GetCaster();
-        Unit* target = GetHitUnit();
-        if (!target || !target->IsAlive() || !caster->haveOffhandWeapon())
-            return;
-
-        caster->AttackerStateUpdate(target, OFF_ATTACK, true);
-    }
+    // No off-hand swing: Forever's Stormstrike is one main-hand strike ("Instantly strike for $s3% weapon damage", live 70938 tooltip;
+    // effect 0 normalized weapon damage, effect 2 weapon percent 100), not Classic's "attack with both weapons".
 
     void Register() override
     {
-        AfterHit += SpellHitFn(classic_spell_sha_stormstrike::HandleOffHandStrike);
         AfterCast += SpellCastFn(classic_spell_sha_stormstrike::HandleAfterCast);
     }
 };
 
-// 1223031 - Improved Stormstrike (proc part): "Stormstrike's cooldown has a 20% chance to reset each time you Dodge or Parry."
-// (spell_proc: taken melee, dodge or parry; talent effect 2 = chance)
+// 17364 - Stormstrike (the debuff on the target): its charge is spent only by the shaman who cast it. Build 70450 notes: "Fixed an issue
+// where Stormstrike could be consumed by other players or pets that weren't the casting Shaman." The client proc flags (taken harmful
+// spell) let any attacker's spell spend it.
+class classic_spell_sha_stormstrike_debuff : public AuraScript
+{
+    bool CheckProc(ProcEventInfo& eventInfo)
+    {
+        Unit* actor = eventInfo.GetActor();
+        return actor && actor->GetGUID() == GetCasterGUID();
+    }
+
+    void Register() override
+    {
+        DoCheckProc += AuraCheckProcFn(classic_spell_sha_stormstrike_debuff::CheckProc);
+    }
+};
+
+// 8178 - Grounding Totem Effect: the totem is destroyed once it has redirected a spell. Build 70450 notes: "Grounding Totem is now
+// correctly destroyed after redirecting a spell." The redirect spends the magnet aura's charge (WorldObject::GetMagicHitRedirectTarget,
+// removal by expire, at the spell's hit time for a missile), but only a spell that did enough damage killed the totem, so a redirected
+// crowd control or a weak hit left it standing. The kill waits for the totem's next update: it is the aura's caster, and its own
+// auras are being walked here.
+class classic_spell_sha_grounding_totem_effect : public AuraScript
+{
+    void HandleRemove(AuraEffect const* /*aurEff*/, AuraEffectHandleModes /*mode*/)
+    {
+        if (GetTargetApplication()->GetRemoveMode() != AURA_REMOVE_BY_EXPIRE || GetAura()->GetCharges() > 0)
+            return;
+
+        Unit* totem = GetCaster();
+        if (!totem || !totem->IsTotem() || !totem->IsAlive())
+            return;
+
+        totem->m_Events.AddEventAtOffset([totem]()
+        {
+            if (totem->IsAlive())
+                totem->KillSelf();
+        }, 1ms);
+    }
+
+    void Register() override
+    {
+        AfterEffectRemove += AuraEffectRemoveFn(classic_spell_sha_grounding_totem_effect::HandleRemove, EFFECT_0, SPELL_AURA_ANY, AURA_EFFECT_HANDLE_REAL);
+    }
+};
+
+// 1223031 - Improved Stormstrike (proc part): "Stormstrike's cooldown has a $m2% chance to reset each time you Dodge or Parry."
+// (spell_proc: taken melee, dodge or parry). $m2 is effect 1, which the talent rank raises to 50/100%; effect 2 is a flat 20 that
+// no rank changes and the tooltip does not name (live 70938 data; wowsims/forever reads effect 1 too).
 class classic_spell_sha_improved_stormstrike : public AuraScript
 {
     bool Validate(SpellInfo const* /*spellInfo*/) override
     {
-        return ValidateSpellEffect({ { SPELL_SHAMAN_IMPROVED_STORMSTRIKE, EFFECT_2 } });
+        return ValidateSpellEffect({ { SPELL_SHAMAN_IMPROVED_STORMSTRIKE, EFFECT_1 } });
     }
 
     bool CheckProc(ProcEventInfo& /*eventInfo*/)
@@ -1196,8 +1533,8 @@ class classic_spell_sha_improved_stormstrike : public AuraScript
     {
         DoCheckProc += AuraCheckProcFn(classic_spell_sha_improved_stormstrike::CheckProc);
         OnEffectProc += AuraEffectProcFn(classic_spell_sha_improved_stormstrike::PreventProc, EFFECT_0, SPELL_AURA_DUMMY);
-        OnEffectProc += AuraEffectProcFn(classic_spell_sha_improved_stormstrike::PreventProc, EFFECT_1, SPELL_AURA_DUMMY);
-        OnEffectProc += AuraEffectProcFn(classic_spell_sha_improved_stormstrike::HandleProc, EFFECT_2, SPELL_AURA_DUMMY);
+        OnEffectProc += AuraEffectProcFn(classic_spell_sha_improved_stormstrike::HandleProc, EFFECT_1, SPELL_AURA_DUMMY);
+        OnEffectProc += AuraEffectProcFn(classic_spell_sha_improved_stormstrike::PreventProc, EFFECT_2, SPELL_AURA_DUMMY);
     }
 };
 
@@ -1548,15 +1885,21 @@ class classic_spell_sha_lightning_shield : public AuraScript
 // 8515, 10609, 10612 - Windfury Totem (passive, ranks 1-3); 8230, 8250, 10521, 15036 - Flametongue Totem (passive, ranks 1-4): the totem's area aura on
 // the party members. The client data has no trigger spell on these effects: the Windfury ones carry the Windfury Totem attack spell (8516, 10608, 10610)
 // in the base points of the effect, Flametongue rank 1, 3 and 4 the proc spell (8253, 10523, 16389) there and rank 2 (8250) nothing at all, so the party
-// members' melee hits cast nothing and neither totem did anything. Windfury grants the member 1 extra attack (the spell is a self buff), Flametongue
-// casts its proc spell (fire damage by weapon speed, classic_spell_sha_flametongue_proc) on the target of the hit.
+// members' melee hits cast nothing and neither totem did anything. Both cast their proc spell at the target of the hit. Flametongue's is fire damage by
+// weapon speed (classic_spell_sha_flametongue_proc). Windfury's is no longer an extra attack on the member: since the 2026-11-14 live hotfix (client
+// 71037) it is a main hand weapon damage hit on the enemy (SPELL_EFFECT_WEAPON_DAMAGE at TARGET_UNIT_TARGET_ENEMY), so cast on the member it failed
+// with bad targets and no strike landed. The strike adds the raid aura's effect 1 (a dummy, 246 at rank 3) as attack power; live ranks 1 and 2 add none
+// (wowsims/forever, MIT, docs/evidence EV-0002, sim/core/buffs/drivers.go newWindfuryTotemStrike). A weapon damage effect's base points are added to the
+// weapon's damage, so the attack power goes in as base points: AP / 14 x the main hand's (non-normalized) speed, as Unit::CalculateDamage does.
 class classic_spell_sha_weapon_totem_aura : public AuraScript
 {
+    static constexpr uint32 SPELL_SHAMAN_WINDFURY_TOTEM_R3 = 10612;
+
     struct TotemProc
     {
         uint32 AuraSpellId;
         uint32 ProcSpellId;
-        bool OnSelf;
+        bool IsWindfury;
     };
 
     static constexpr TotemProc Procs[] =
@@ -1579,10 +1922,29 @@ class classic_spell_sha_weapon_totem_aura : public AuraScript
         return proc && ValidateSpellInfo({ proc->ProcSpellId });
     }
 
-    // melee hits only: the 1.60 data lets a spell hit of the party member proc these auras too
+    static bool HasWindfuryTotemAura(Unit const* member)
+    {
+        for (TotemProc const& proc : Procs)
+            if (proc.IsWindfury && member->HasAura(proc.AuraSpellId))
+                return true;
+        return false;
+    }
+
+    // Main hand melee hits only: the 1.60 data lets a spell hit of the party member proc these auras too, and both live 70938
+    // tooltips say "Each main hand hit" (off-hand swings rolled Windfury Totem here). Flametongue Totem "no longer stacks with ...
+    // Windfury Totem" (Blizzard beta notes 2026-09-24), still so on 70425 ("Flametongue Totem still does nothing under Windfury
+    // Totem", wowsims/forever EV-0102, MIT); Grace of Air does stack with Windfury there, so no other air rule.
     bool CheckProc(ProcEventInfo& eventInfo)
     {
-        return (eventInfo.GetTypeMask() & PROC_FLAG_DEAL_MELEE_SWING) || (eventInfo.GetTypeMask() & PROC_FLAG_DEAL_MELEE_ABILITY);
+        if (!(eventInfo.GetTypeMask() & PROC_FLAG_DEAL_MELEE_SWING) && !(eventInfo.GetTypeMask() & PROC_FLAG_DEAL_MELEE_ABILITY))
+            return false;
+
+        DamageInfo const* damageInfo = eventInfo.GetDamageInfo();
+        if (!damageInfo || damageInfo->GetAttackType() != BASE_ATTACK)
+            return false;
+
+        TotemProc const* proc = Find(GetSpellInfo()->Id);
+        return proc && (proc->IsWindfury || !HasWindfuryTotemAura(GetTarget()));
     }
 
     void HandleProc(AuraEffect const* aurEff, ProcEventInfo& eventInfo)
@@ -1591,17 +1953,138 @@ class classic_spell_sha_weapon_totem_aura : public AuraScript
 
         TotemProc const* proc = Find(GetSpellInfo()->Id);
         Unit* member = GetTarget();
-        Unit* target = proc->OnSelf ? member : eventInfo.GetActionTarget();
-        if (!target || !target->IsAlive())
+        Unit* target = eventInfo.GetActionTarget();
+        if (!target || target == member || !target->IsAlive())
             return;
 
-        member->CastSpell(target, proc->ProcSpellId, CastSpellExtraArgs(aurEff));
+        CastSpellExtraArgs args(aurEff);
+        if (proc->IsWindfury && proc->AuraSpellId == SPELL_SHAMAN_WINDFURY_TOTEM_R3)
+            if (AuraEffect const* attackPower = GetAura()->GetEffect(EFFECT_1))
+                if (attackPower->GetAmount() > 0)
+                    args.AddSpellBP0(float(attackPower->GetAmount()) / 14.0f * member->GetAPMultiplier(BASE_ATTACK, false));
+
+        member->CastSpell(target, proc->ProcSpellId, args);
     }
 
     void Register() override
     {
         DoCheckProc += AuraCheckProcFn(classic_spell_sha_weapon_totem_aura::CheckProc);
         OnEffectProc += AuraEffectProcFn(classic_spell_sha_weapon_totem_aura::HandleProc, EFFECT_0, SPELL_AURA_PROC_TRIGGER_SPELL);
+    }
+};
+
+// 8516, 10608, 10610 - Windfury Totem (the strike, ranks 1-3): a main hand weapon damage hit since the 2026-11-14 live hotfix (see
+// classic_spell_sha_weapon_totem_aura). A landed strike gives the rage of a landed main hand white swing, crit or not (wowsims/forever, MIT,
+// docs/evidence EV-0138), which a spell hit does not give by itself (Unit::AttackerStateUpdate rewards white swings only).
+class classic_spell_sha_windfury_totem_strike : public SpellScript
+{
+    void GiveSwingRage()
+    {
+        Unit* caster = GetCaster();
+        if (!caster || caster->GetPowerType() != POWER_RAGE || GetHitUnit() == caster)
+            return;
+
+        float const rage = caster->GetClassicSwingRage(BASE_ATTACK, IsHitCrit());
+        if (rage > 0.0f)
+            caster->RewardClassicRage(rage, true);
+    }
+
+    void Register() override
+    {
+        AfterHit += SpellHitFn(classic_spell_sha_windfury_totem_strike::GiveSwingRage);
+    }
+};
+
+// 408510 - Water Shield: "When a spell, melee, or ranged attack hits the caster or when one of the caster's spells gets a critical result,
+// 2% of maximum mana is restored to the caster, expending one water globe. Only one globe will activate every few seconds." (live 70938).
+// The client row hears hits taken and the shaman's own helpful and harmful spells on one mask (ProcFlags 221864) with no hit mask, so
+// every spell the shaman landed spent a globe; the crit condition is on the dealt side only. Charges (3), the 3.5 s internal cooldown
+// and the trigger spell 408511 stay the client's.
+class classic_spell_sha_water_shield : public AuraScript
+{
+    bool CheckProc(ProcEventInfo& eventInfo)
+    {
+        if (eventInfo.GetTypeMask() & (PROC_FLAG_DEAL_HELPFUL_SPELL | PROC_FLAG_DEAL_HARMFUL_SPELL))
+            return (eventInfo.GetHitMask() & PROC_HIT_CRITICAL) != 0;
+        return true;
+    }
+
+    void Register() override
+    {
+        DoCheckProc += AuraCheckProcFn(classic_spell_sha_water_shield::CheckProc);
+    }
+};
+
+// 437009 - Totemic Call (level 22 trainer spell, Totemic Projection in the beta): "Relocates your active totems to your location." (live
+// 70938; 30 s cooldown, 25% of base mana). The client effect only summons NPC 15214 (SummonProperties 5878) at the caster, which moved
+// nothing; the summon is replaced by moving every totem the shaman has out to the shaman's position.
+// 28999 - Elemental Reach: the live 70707 tooltip the core sends (hotfixes 2026_11_03_41) ends "...and reduces the cooldown of Totemic
+// Projection by ${$m3/-1000} sec." Effect 2 of the talent is that cut as a dummy (-20000 ms) nothing read; it is taken off the cooldown
+// once the cast has started it (Spell::_cast sends the cooldown before the AfterCast hooks run).
+class classic_spell_sha_totemic_call : public SpellScript
+{
+    static constexpr uint32 SPELL_SHAMAN_ELEMENTAL_REACH = 28999;
+
+    void ShortenCooldown()
+    {
+        Unit* caster = GetCaster();
+        AuraEffect const* reach = caster->GetAuraEffect(SPELL_SHAMAN_ELEMENTAL_REACH, EFFECT_2);
+        if (!reach || reach->GetAmountAsInt() >= 0)
+            return;
+
+        caster->GetSpellHistory()->ModifyCooldown(GetSpellInfo(), Milliseconds(reach->GetAmountAsInt()));
+    }
+
+    void HandleRelocate(SpellEffIndex effIndex)
+    {
+        PreventHitDefaultEffect(effIndex);
+
+        Unit* caster = GetCaster();
+        for (uint8 slot = SUMMON_SLOT_TOTEM; slot < MAX_TOTEM_SLOT; ++slot)
+        {
+            if (caster->m_SummonSlot[slot].IsEmpty())
+                continue;
+
+            Creature* totem = ObjectAccessor::GetCreature(*caster, caster->m_SummonSlot[slot]);
+            if (totem && totem->IsTotem() && totem->IsAlive())
+                totem->NearTeleportTo(caster->GetPositionX(), caster->GetPositionY(), caster->GetPositionZ(), totem->GetOrientation());
+        }
+    }
+
+    void Register() override
+    {
+        OnEffectHit += SpellEffectFn(classic_spell_sha_totemic_call::HandleRelocate, EFFECT_0, SPELL_EFFECT_SUMMON);
+        AfterCast += SpellCastFn(classic_spell_sha_totemic_call::ShortenCooldown);
+    }
+};
+
+// 16268 - Spirit Weapons: "Gives a chance to parry enemy melee attacks, reduces all threat generated by your attacks by $s1% while Rockbiter
+// Weapon is not active, and increases all threat generated by $s3% while Rockbiter Weapon is active." The threat is the client's own auras:
+// effect 0 (-30%, every school) always, and effect 1 raises Rockbiter Weapon (Passive) 16313's threat aura by 86 points, so 0.7 x 1.86 is
+// the +30% effect 2 states as a dummy. Nothing gave the parry: shamans never learn Parry 3127 (its SkillLineAbility row is warrior, paladin,
+// hunter and rogue) and only SPELL_EFFECT_PARRY sets the flag (wowsims/forever, MIT, sim/shaman/talents_enhancement.go applySpiritWeapons
+// sets CanParry for the talent). The talent's aura sets it here.
+class classic_spell_sha_spirit_weapons : public AuraScript
+{
+    static constexpr uint32 SPELL_PARRY = 3127;
+
+    void HandleApply(AuraEffect const* /*aurEff*/, AuraEffectHandleModes /*mode*/)
+    {
+        if (Player* player = GetTarget()->ToPlayer())
+            player->SetCanParry(true);
+    }
+
+    void HandleRemove(AuraEffect const* /*aurEff*/, AuraEffectHandleModes /*mode*/)
+    {
+        // a shaman has no other parry source: keep the flag only if Parry itself is known
+        if (Player* player = GetTarget()->ToPlayer())
+            player->SetCanParry(player->HasSpell(SPELL_PARRY));
+    }
+
+    void Register() override
+    {
+        AfterEffectApply += AuraEffectApplyFn(classic_spell_sha_spirit_weapons::HandleApply, EFFECT_2, SPELL_AURA_DUMMY, AURA_EFFECT_HANDLE_REAL);
+        AfterEffectRemove += AuraEffectRemoveFn(classic_spell_sha_spirit_weapons::HandleRemove, EFFECT_2, SPELL_AURA_DUMMY, AURA_EFFECT_HANDLE_REAL);
     }
 };
 
@@ -1647,6 +2130,7 @@ void AddSC_classic_talents_mage_shaman()
     RegisterSpellScript(classic_spell_mage_improved_blizzard);
     RegisterSpellScript(classic_spell_mage_counterspell);
     RegisterSpellScript(classic_spell_mage_heating_up);
+    RegisterSpellScript(classic_spell_mage_heating_up_buff);
     RegisterSpellScript(classic_spell_mage_cold_snap);
     RegisterSpellScript(classic_spell_mage_ice_lance);
     RegisterSpellScript(classic_spell_mage_combustion);
@@ -1655,6 +2139,7 @@ void AddSC_classic_talents_mage_shaman()
     RegisterSpellScript(classic_spell_mage_magic_absorption);
     RegisterSpellScript(classic_spell_mage_arcane_concentration);
     RegisterSpellScript(classic_spell_mage_frostbite);
+    RegisterSpellScript(classic_spell_mage_armor_chill);
     RegisterSpellAndAuraScriptPair(classic_spell_mage_fire_power, classic_spell_mage_fire_power_aura);
     RegisterSpellScript(classic_spell_mage_arcane_wrath);
     RegisterSpellScript(classic_spell_mage_frost_ward_absorb);
@@ -1663,15 +2148,19 @@ void AddSC_classic_talents_mage_shaman()
     RegisterSpellScript(classic_spell_mage_arcane_blast);
     RegisterSpellScript(classic_spell_mage_missile_barrage);
     RegisterSpellScript(classic_spell_mage_arcane_missiles_barrage);
+    RegisterSpellScript(classic_spell_mage_arcane_missiles_concentration);
 
     // Shaman
     RegisterSpellScript(classic_spell_sha_flurry);
+    RegisterSpellScript(classic_spell_sha_flurry_buff);
     RegisterSpellScript(classic_spell_sha_elemental_devastation);
     RegisterSpellScript(classic_spell_sha_lightning_overload);
     RegisterSpellScript(classic_spell_sha_maelstrom_weapon);
     RegisterSpellScript(classic_spell_sha_maelstrom_weapon_buff);
     RegisterSpellScript(classic_spell_sha_earthbind_totem_passive);
     RegisterSpellScript(classic_spell_sha_stormstrike);
+    RegisterSpellScript(classic_spell_sha_stormstrike_debuff);
+    RegisterSpellScript(classic_spell_sha_grounding_totem_effect);
     RegisterSpellScript(classic_spell_sha_improved_stormstrike);
     RegisterSpellScript(classic_spell_sha_fire_nova);
     RegisterSpellScript(classic_spell_sha_lava_burst);
@@ -1682,5 +2171,9 @@ void AddSC_classic_talents_mage_shaman()
     RegisterSpellScript(classic_spell_sha_ancestral_guidance);
     RegisterSpellScript(classic_spell_sha_lightning_shield);
     RegisterSpellScript(classic_spell_sha_weapon_totem_aura);
+    RegisterSpellScript(classic_spell_sha_windfury_totem_strike);
     RegisterSpellScript(classic_spell_sha_ancestral_healing);
+    RegisterSpellScript(classic_spell_sha_water_shield);
+    RegisterSpellScript(classic_spell_sha_totemic_call);
+    RegisterSpellScript(classic_spell_sha_spirit_weapons);
 }

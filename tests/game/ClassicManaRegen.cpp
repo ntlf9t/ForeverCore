@@ -16,22 +16,33 @@
  */
 
 #include "tc_catch2.h"
+#include "ClassicManaRegen.h"
 
-#include "../../src/server/game/Entities/Unit/ClassicManaRegen.h"
-
-TEST_CASE("Spirit regeneration is interrupted for 5 seconds after a mana spell", "[ClassicManaRegen]")
+// Classic 1.60 (WoW Forever, R-0036): the five second rule, and a paid channel holding it until the channel ends.
+TEST_CASE("ClassicManaRegen::IsInterrupted", "[ClassicManaRegen]")
 {
-    CHECK(ClassicManaRegen::IsInterrupted(0, false));
-    CHECK(ClassicManaRegen::IsInterrupted(4999, false));
-}
+    using ClassicManaRegen::IsInterrupted;
 
-TEST_CASE("Spirit regeneration runs at the full rate from the fifth second, combat does not matter", "[ClassicManaRegen]")
-{
-    CHECK_FALSE(ClassicManaRegen::IsInterrupted(5000, false));
-    CHECK_FALSE(ClassicManaRegen::IsInterrupted(60000, false));
-}
+    SECTION("paying mana stops the regeneration for 5 seconds")
+    {
+        REQUIRE(IsInterrupted(0, false));
+        REQUIRE(IsInterrupted(4999, false));
+        REQUIRE_FALSE(IsInterrupted(5000, false));
+    }
 
-TEST_CASE("An interrupting aura keeps the regeneration interrupted", "[ClassicManaRegen]")
-{
-    CHECK(ClassicManaRegen::IsInterrupted(60000, true));
+    SECTION("a paid channel holds it past 5 seconds until it ends")
+    {
+        REQUIRE(IsInterrupted(8000, false, true));
+        REQUIRE_FALSE(IsInterrupted(8000, false, false));
+    }
+
+    SECTION("a channel ending inside the window does not end the window early")
+    {
+        REQUIRE(IsInterrupted(3000, false, false));
+    }
+
+    SECTION("an interrupting aura holds it whatever the time")
+    {
+        REQUIRE(IsInterrupted(60000, true));
+    }
 }

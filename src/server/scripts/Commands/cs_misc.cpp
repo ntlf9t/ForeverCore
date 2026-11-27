@@ -18,6 +18,7 @@
 #include "ScriptMgr.h"
 #include "AccountMgr.h"
 #include "ArenaTeamMgr.h"
+#include "Battleground.h"
 #include "CellImpl.h"
 #include "CharacterCache.h"
 #include "Chat.h"
@@ -75,6 +76,9 @@ public:
         {
             { "additem",          HandleAddItemCommand,          rbac::RBAC_PERM_COMMAND_ADDITEM,          Console::No },
             { "time",             HandleTimeCommand,             rbac::RBAC_PERM_COMMAND_TIME,             Console::No },
+            { "profession",       HandleProfessionCommand,       rbac::RBAC_PERM_COMMAND_PROFESSION,       Console::No },
+            { "profession show",  HandleProfessionShowCommand,   rbac::RBAC_PERM_COMMAND_PROFESSION,       Console::No },
+            { "profession hide",  HandleProfessionHideCommand,   rbac::RBAC_PERM_COMMAND_PROFESSION,       Console::No },
             { "bug",              HandleBugCommand,              rbac::RBAC_PERM_COMMAND_BUG,              Console::No },
             { "deathrecap",       HandleDeathRecapCommand,       rbac::RBAC_PERM_COMMAND_DEATHRECAP,       Console::No },
             { "time day",         HandleTimeDayCommand,          rbac::RBAC_PERM_COMMAND_TIME,             Console::No },
@@ -464,7 +468,9 @@ public:
             {
                 // all's well, set bg id
                 // when porting out from the bg, it will be reset to 0
-                _player->SetBattlegroundId(target->GetBattlegroundId(), target->GetBattlegroundTypeId(), BATTLEGROUND_QUEUE_NONE);
+                // Player::GetBattleground() finds the instance by its queue id, so take the target's (none = no battleground found)
+                Battleground const* targetBg = target->GetBattleground();
+                _player->SetBattlegroundId(target->GetBattlegroundId(), target->GetBattlegroundTypeId(), targetBg ? targetBg->GetQueueID() : BATTLEGROUND_QUEUE_NONE);
                 // remember current position as entry point for return at bg end teleportation
                 if (!_player->GetMap()->IsBattlegroundOrArena())
                     _player->SetBattlegroundEntryPoint();
@@ -614,7 +620,9 @@ public:
             {
                 // all's well, set bg id
                 // when porting out from the bg, it will be reset to 0
-                target->SetBattlegroundId(_player->GetBattlegroundId(), _player->GetBattlegroundTypeId(), BATTLEGROUND_QUEUE_NONE);
+                // Player::GetBattleground() finds the instance by its queue id, so take ours (none = no battleground found)
+                Battleground const* ownBg = _player->GetBattleground();
+                target->SetBattlegroundId(_player->GetBattlegroundId(), _player->GetBattlegroundTypeId(), ownBg ? ownBg->GetQueueID() : BATTLEGROUND_QUEUE_NONE);
                 // remember current position as entry point for return at bg end teleportation
                 if (!target->GetMap()->IsBattlegroundOrArena())
                     target->SetBattlegroundEntryPoint();
@@ -1370,6 +1378,161 @@ public:
         handler->PSendSysMessage(ru ? "Спасибо, отчёт #%u сохранён (с вашим местом, целью и журналом заданий)."
                                     : "Thanks, report #%u is saved (with your spot, target and quest log).", ticket->GetId());
         return true;
+    }
+
+    // .profession: with MaxPrimaryTradeSkill above 2 a character can learn more primary professions than the client has
+    // slots for (2). Only the 2 in a slot get a window and a Professions tab entry; .profession show <name> swaps one in.
+    static std::string ProfessionName(ChatHandler* handler, uint32 skillId)
+    {
+        SkillLineEntry const* skillLine = sSkillLineStore.LookupEntry(skillId);
+        if (!skillLine)
+            return std::to_string(skillId);
+        char const* name = skillLine->DisplayName[handler->GetSessionDbcLocale()];
+        if (!name || !*name)
+            name = skillLine->DisplayName[DEFAULT_LOCALE];
+        return name;
+    }
+
+    static bool HandleProfessionCommand(ChatHandler* handler)
+    {
+        Player* player = handler->GetSession()->GetPlayer();
+        bool const ru = handler->GetSession()->GetSessionDbLocaleIndex() == LOCALE_ruRU;
+        std::vector<uint32> const professions = player->GetPrimaryProfessions();
+        if (professions.empty())
+        {
+            handler->SendSysMessage(ru ? "У вас нет основных профессий." : "You have no primary professions.");
+            return true;
+        }
+
+        std::string shown, hidden;
+        for (uint32 skillId : professions)
+        {
+            std::string& list = player->GetProfessionSlotFor(skillId) != -1 ? shown : hidden;
+            if (!list.empty())
+                list += ", ";
+            list += Trinity::StringFormat("{} {}/{}", ProfessionName(handler, skillId), player->GetSkillValue(skillId), player->GetMaxSkillValue(skillId));
+        }
+
+        handler->PSendSysMessage(ru ? "Показаны: %s." : "Shown: %s.", shown.empty() ? "-" : shown.c_str());
+        if (!hidden.empty())
+            handler->PSendSysMessage(ru ? "Не в списке профессий игры: %s. Окно любой профессии открывается её заклинанием (/cast) или вкладками аддона Everlake."
+                                        : "Not in the game's profession list: %s. Each one still opens from its spell (/cast) or the Everlake addon's tabs.", hidden.c_str());
+        return true;
+    }
+
+    // A learned primary profession by exact name, then by the start of one, in the client's language or English. 0 = none
+    // (the reason is already sent).
+    static uint32 FindProfessionByName(ChatHandler* handler, Player* player, std::string_view name)
+    {
+        bool const ru = handler->GetSession()->GetSessionDbLocaleIndex() == LOCALE_ruRU;
+        std::string_view wanted = name;
+        while (!wanted.empty() && std::isspace(static_cast<unsigned char>(wanted.front())))
+            wanted.remove_prefix(1);
+        while (!wanted.empty() && std::isspace(static_cast<unsigned char>(wanted.back())))
+            wanted.remove_suffix(1);
+        if (wanted.empty())
+        {
+            handler->SendSysMessage(ru ? "Синтаксис: .profession show|hide <название>" : "Syntax: .profession show|hide <name>");
+            handler->SetSentErrorMessage(true);
+            return 0;
+        }
+
+        // exact name first, then the start of a name ("tail" for Tailoring), in the client's language or English
+        std::vector<uint32> const professions = player->GetPrimaryProfessions();
+        uint32 skillId = 0;
+        for (bool prefix : { false, true })
+        {
+            for (uint32 id : professions)
+            {
+                SkillLineEntry const* skillLine = sSkillLineStore.LookupEntry(id);
+                for (LocaleConstant locale : { handler->GetSessionDbcLocale(), DEFAULT_LOCALE })
+                {
+                    std::string_view const skillName = skillLine->DisplayName[locale];
+                    if (!skillName.empty() && (prefix ? StringStartsWithI(skillName, wanted) : StringEqualI(skillName, wanted)))
+                    {
+                        skillId = id;
+                        break;
+                    }
+                }
+                if (skillId)
+                    break;
+            }
+            if (skillId)
+                break;
+        }
+
+        if (!skillId)
+        {
+            handler->PSendSysMessage(ru ? "У вас нет профессии \"%s\". Список: .profession" : "You have no profession called \"%s\". See .profession for yours.",
+                std::string(wanted).c_str());
+            handler->SetSentErrorMessage(true);
+            return 0;
+        }
+
+        return skillId;
+    }
+
+    static bool HandleProfessionShowCommand(ChatHandler* handler, Tail name)
+    {
+        Player* player = handler->GetSession()->GetPlayer();
+        bool const ru = handler->GetSession()->GetSessionDbLocaleIndex() == LOCALE_ruRU;
+        uint32 const skillId = FindProfessionByName(handler, player, name);
+        if (!skillId)
+            return false;
+
+        std::string const shownName = ProfessionName(handler, skillId);
+        uint32 hiddenSkillId = 0;
+        switch (player->ShowProfession(skillId, &hiddenSkillId))
+        {
+            case Player::ShowProfessionResult::Ok:
+                if (hiddenSkillId)
+                    handler->PSendSysMessage(ru ? "%s теперь показана вместо %s." : "%s is shown now, in place of %s.",
+                        shownName.c_str(), ProfessionName(handler, hiddenSkillId).c_str());
+                else
+                    handler->PSendSysMessage(ru ? "%s теперь показана." : "%s is shown now.", shownName.c_str());
+                return true;
+            case Player::ShowProfessionResult::AlreadyShown:
+                handler->PSendSysMessage(ru ? "%s уже показана." : "%s is already shown.", shownName.c_str());
+                return true;
+            case Player::ShowProfessionResult::ToolsEquipped:
+                handler->SendSysMessage(ru ? "Сначала снимите инструменты профессии, которую она заменит."
+                                           : "Take off the profession tools of the one it would replace first.");
+                break;
+            default:
+                handler->PSendSysMessage(ru ? "%s - не основная профессия." : "%s is not a primary profession.", shownName.c_str());
+                break;
+        }
+        handler->SetSentErrorMessage(true);
+        return false;
+    }
+
+    static bool HandleProfessionHideCommand(ChatHandler* handler, Tail name)
+    {
+        Player* player = handler->GetSession()->GetPlayer();
+        bool const ru = handler->GetSession()->GetSessionDbLocaleIndex() == LOCALE_ruRU;
+        uint32 const skillId = FindProfessionByName(handler, player, name);
+        if (!skillId)
+            return false;
+
+        std::string const professionName = ProfessionName(handler, skillId);
+        switch (player->HideProfession(skillId))
+        {
+            case Player::ShowProfessionResult::Ok:
+                handler->PSendSysMessage(ru ? "%s скрыта, навык и рецепты сохранены. Слот свободен: можно изучить новую профессию."
+                                            : "%s is hidden; it keeps its skill and recipes. The slot is free for a new profession.", professionName.c_str());
+                return true;
+            case Player::ShowProfessionResult::AlreadyHidden:
+                handler->PSendSysMessage(ru ? "%s уже скрыта." : "%s is already hidden.", professionName.c_str());
+                return true;
+            case Player::ShowProfessionResult::ToolsEquipped:
+                handler->SendSysMessage(ru ? "Сначала снимите инструменты этой профессии." : "Take off this profession's tools first.");
+                break;
+            default:
+                handler->PSendSysMessage(ru ? "%s - не основная профессия." : "%s is not a primary profession.", professionName.c_str());
+                break;
+        }
+        handler->SetSentErrorMessage(true);
+        return false;
     }
 
     // .time: this character's own sky (DayCycle.h). Only the light and the sky change, for this player alone; the realm's

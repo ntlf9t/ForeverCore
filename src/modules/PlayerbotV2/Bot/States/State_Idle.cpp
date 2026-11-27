@@ -1,4 +1,4 @@
-﻿#include "Fleet/BotPool.h"
+#include "Fleet/BotPool.h"
 #include "../WanderRule.h"
 #include "StateBase.h"
 #include "Bot/BotAI.h"
@@ -176,26 +176,6 @@ static bool LeadHoldsBossPull(BotSnapshotView const& s, BotAI& ai, BotIntentEmit
         emit.say("the boss is next: pull it when you are ready, or say go");
     ai.set_last_rule_fired("idle:tank_lead_boss_stop");
     return true;
-}
-
-// Score an item against the bot's spec stat weights. Used by the
-// equip-upgrade rule (Phase 1 of ITEM_VENDOR_SYSTEM_PLAN.md). Decision
-// flow:
-//   - item_level alone contributes 1.0× (so a vastly higher ilvl wins
-//     even on stat mismatch — see V1's 20-ilvl override).
-//   - Each weighted stat contributes (value × spec_weight).
-//   - Weapons add weapon_dps_x10 × spec_weapon_dps_weight.
-// Returns a single comparable scalar; caller decides "swap if new > old + margin".
-static inline float ScoreItem(ItemStatBlock const& stats,
-                       uint16 item_level,
-                       std::array<float, 12> const& weights,
-                       float dps_weight)
-{
-    float score = static_cast<float>(item_level);
-    for (size_t i = 0; i < weights.size(); ++i)
-        score += static_cast<float>(stats.stats[i]) * weights[i];
-    score += static_cast<float>(stats.weapon_dps_x10) * dps_weight;
-    return score;
 }
 
 // (ClassSelfBuff lives in Bot/ClassTables.cpp — shared with whisper helpers.)
@@ -5214,7 +5194,7 @@ bool DungeonCombatPositioning(BotSnapshotView const& s, BotAI& ai,
         const uint32 fc_ms = ai.false_combat_ms(!any_seedable, now_ms);
         if (!any_seedable && fc_ms > kFalseCombatEscapeMs)
         {
-            if (Player* self_fc = ObjectAccessor::FindConnectedPlayer(s.raw().guid))
+            if (ObjectAccessor::FindConnectedPlayer(s.raw().guid))
             {
                 // Relocate toward the NEXT UN-KILLED boss's waypoint. The
                 // progression_waypoints are authored 1:1 at the boss locations
@@ -7557,45 +7537,6 @@ bool BgBossStagingPoint(uint32 entry, float& sx, float& sy, float& sz)
     }
 }
 
-// Navmesh reachability test for the dungeon tank-advance target selection.
-// This is the ROOT constraint the game itself enforces — the tank can only
-// advance to (and ultimately pull) a target it can actually WALK to — so the
-// advance must consult Detour, not a heuristic. It replaces an earlier
-// `|z-delta| > 80y` band-aid that faked reachability with a magic number and
-// was wrong: it permanently excluded the Deadmines ship-deck boss, which is
-// reachable by walking UP the scaffold/ramp even though it sits ~240y above
-// the ground path. With a real path test the behaviour is correct at both
-// ends: from the entrance the deck boss is whole-dungeon away so Detour
-// returns INCOMPLETE (296y A* cap) -> "not yet reachable", and waypoint/trash
-// progression carries the group toward it; from the scaffold base the ramp-up
-// path is short and NORMAL -> reachable -> the tank advances/pulls it.
-//
-// Cost: one Detour query per *candidate* on the OOC advance tick for the TANK
-// only (the advance branch is gated on no-close-target + post-kill pacing, and
-// we break on the first reachable boss) — nowhere near the per-bot hot path, so
-// it can't recreate the fleet pathfinding storm. SEH-guarded like every other
-// playerbot Detour call. World-thread only (the advance branch already does
-// live-object Cell scans, so it runs there).
-static bool DungeonTargetReachable(Player* self, float tx, float ty, float tz)
-{
-    if (!self) return false;
-    PathGenerator pg(self);
-    BotMovement::SehSafeCalculatePath(pg, tx, ty, tz);
-    PathType const t = pg.GetPathType();
-    // Reject anything that is not a complete walkable path: NOPATH, a partial
-    // INCOMPLETE (target beyond the A* cap / behind a gap), an air SHORTCUT, or
-    // an off-mesh end. Require the NORMAL flag AND that the path actually
-    // arrives at the target (guards the rare NORMAL|partial combination).
-    if (t & (PATHFIND_NOPATH | PATHFIND_INCOMPLETE | PATHFIND_SHORTCUT |
-             PATHFIND_FARFROMPOLY))
-        return false;
-    if (!(t & PATHFIND_NORMAL))
-        return false;
-    G3D::Vector3 const& e = pg.GetActualEndPosition();
-    const float dx = e.x - tx, dy = e.y - ty, dz = e.z - tz;
-    return (dx * dx + dy * dy + dz * dz) <= 13.0f * 13.0f;
-}
-
 // Combined reachability check + navmesh-aware intermediate step extraction.
 // Returns true (same criteria as DungeonTargetReachable) AND sets step_out to
 // the position at up to maxStep yards along the ACTUAL PATH, not a straight-
@@ -7723,7 +7664,8 @@ static bool DungeonTargetReachableAndStep(Player* self, float tx, float ty, floa
     {
         if (!gapDbg) return;
         static uint32 s_gms = 0; const uint32 gn = GameTime::GetGameTimeMS();
-        if (gn - s_gms < 1000u) return; s_gms = gn;
+        if (gn - s_gms < 1000u) return;
+        s_gms = gn;
         TC_LOG_INFO("playerbot.v2",
             "[gap_step] {} ret={} t=0x{:X} step=({:.1f},{:.1f},{:.1f}) off={} "
             "self=({:.1f},{:.1f},{:.1f}) tgt=({:.1f},{:.1f},{:.1f})",
@@ -16565,6 +16507,29 @@ bool BgDispatch(BotSnapshotView const& s, BotAI& ai,
         // through target acquisition; no formation follow is needed
         // for that small a roster.
 
+        // Arena, gates open, not fighting: go and find the other team. The teams start out of sight of each other (Mak'gora:
+        // 90 yards), so a bot that nobody came to hit stood at its start spot for the whole match (Karrz, 2026-11-08 2v2).
+        // Close enough: attack; further: run to the enemy. The combat state does the rest (healers heal from there).
+        if (s.is_alive() && !s.is_casting() && !s.in_combat() &&
+            s.bg_status() == 3 /*STATUS_IN_PROGRESS*/ && !s.raw().bg.arena_enemy.IsEmpty())
+        {
+            float self_x = 0.f, self_y = 0.f, self_z = 0.f;
+            s.position(self_x, self_y, self_z);
+            float const ex = s.raw().bg.arena_enemy_x, ey = s.raw().bg.arena_enemy_y, ez = s.raw().bg.arena_enemy_z;
+            float const dsq = (ex - self_x) * (ex - self_x) + (ey - self_y) * (ey - self_y);
+            if (dsq <= 35.0f * 35.0f && emit.start_attack(s.raw().bg.arena_enemy))
+            {
+                ai.set_last_rule_fired("idle:arena_attack_enemy");
+                return true;
+            }
+            if (dsq > 8.0f * 8.0f)
+            {
+                emit.move_to(ex, ey, ez, /*run=*/true);
+                ai.set_last_rule_fired("idle:arena_seek_enemy");
+                return true;
+            }
+        }
+
         // Arena positional intelligence — pillars / hazards / opening
         // rally. Gated on the script populating at least one of those
         // fields, so non-arena BGs see zero cost (vector empty checks).
@@ -16576,12 +16541,12 @@ bool BgDispatch(BotSnapshotView const& s, BotAI& ai,
         {
             float self_x = 0.f, self_y = 0.f, self_z = 0.f;
             s.position(self_x, self_y, self_z);
-            // Opening rally: while gates still up OR match elapsed
-            // is brief (start_delay_ms running), advance to the rally
-            // coord so bots don't dawdle in the starting cage AABB.
+            // Opening rally: once the gates are open and no enemy is known (all hidden), go to the middle. Not during the
+            // preparation minute: the bots wait at their start spot like players (walking out then made the battleground
+            // put them back at the start every second, the "jumping" Karrz saw on 2026-11-08).
             if ((bg_advice.opening_rally_x != 0.f ||
                  bg_advice.opening_rally_y != 0.f) &&
-                s.bg_start_delay_ms() > 0)
+                s.bg_status() == 3 /*STATUS_IN_PROGRESS*/ && s.bg_start_delay_ms() == 0)
             {
                 float dx = bg_advice.opening_rally_x - self_x;
                 float dy = bg_advice.opening_rally_y - self_y;
@@ -17019,8 +16984,6 @@ bool BgDispatch(BotSnapshotView const& s, BotAI& ai,
             uint8 my_team_id = s.team();  // 1 = alliance, 2 = horde
             BotSnapshot::BgNodeState const* target = nullptr;
             float best_dsq = std::numeric_limits<float>::max();
-            int   best_priority = 99;  // lower = better
-            uint8 best_weight = 0;     // higher = better (tie-breaker)
             // Helper: look up the script-side priority weight by matching
             // the live node's (x, y) to the script's nodes[] entries
             // within a 5y tolerance. Returns 0 when no match (default).
@@ -17089,8 +17052,6 @@ bool BgDispatch(BotSnapshotView const& s, BotAI& ai,
                        atk_cands[tier_end].prio == atk_cands[0].prio)
                     ++tier_end;
                 AtkCand const& pick = atk_cands[bg_team_rank % tier_end];
-                best_priority = pick.prio;
-                best_weight   = pick.weight;
                 best_dsq      = pick.dsq;
                 target        = pick.node;
             }
@@ -21089,7 +21050,6 @@ bool AutoactDispatch(BotSnapshotView const& s, BotAI& ai,
         if (!s.in_combat() && !s.is_casting() && !s.raw().movement.is_mounted &&
             s.best_mount_spell() != 0)
         {
-            float far_target_x = 0.f, far_target_y = 0.f;
             bool  has_far_target = false;
             constexpr float kMountThreshold   = 80.0f;
             constexpr float kMountThresholdSq = kMountThreshold * kMountThreshold;
@@ -21099,7 +21059,7 @@ bool AutoactDispatch(BotSnapshotView const& s, BotAI& ai,
                 const auto& poi = s.current_objective_poi();
                 const float dx = poi.x - bx, dy = poi.y - by;
                 if (dx*dx + dy*dy > kMountThresholdSq)
-                { far_target_x = poi.x; far_target_y = poi.y; has_far_target = true; }
+                { has_far_target = true; }
             }
             if (!has_far_target)
             {
@@ -21111,7 +21071,6 @@ bool AutoactDispatch(BotSnapshotView const& s, BotAI& ai,
                         const float dx = u.x - bx, dy = u.y - by;
                         if (dx*dx + dy*dy > kMountThresholdSq)
                         {
-                            far_target_x = u.x; far_target_y = u.y;
                             has_far_target = true;
                         }
                         break;
@@ -21129,7 +21088,6 @@ bool AutoactDispatch(BotSnapshotView const& s, BotAI& ai,
                         const float dx = u.x - bx, dy = u.y - by;
                         if (dx*dx + dy*dy > kMountThresholdSq)
                         {
-                            far_target_x = u.x; far_target_y = u.y;
                             has_far_target = true;
                         }
                         break;

@@ -713,7 +713,11 @@ bool ConvertADT(ChunkedFile& adt, std::string const& mapName, std::string const&
                 else switch (liquidTypeEntry->second.SoundBank)
                 {
                     case LIQUID_TYPE_WATER: liquid_flags[i][j] |= map_liquidHeaderTypeFlags::Water; break;
-                    case LIQUID_TYPE_OCEAN: liquid_flags[i][j] |= map_liquidHeaderTypeFlags::Ocean; if (!ignoreDeepWater && attrs.Deep) liquid_flags[i][j] |= map_liquidHeaderTypeFlags::DarkWater; break;
+                    case LIQUID_TYPE_OCEAN:
+                        liquid_flags[i][j] |= map_liquidHeaderTypeFlags::Ocean;
+                        if (!ignoreDeepWater && attrs.Deep)
+                            liquid_flags[i][j] |= map_liquidHeaderTypeFlags::DarkWater;
+                        break;
                     case LIQUID_TYPE_MAGMA: liquid_flags[i][j] |= map_liquidHeaderTypeFlags::Magma; break;
                     case LIQUID_TYPE_SLIME: liquid_flags[i][j] |= map_liquidHeaderTypeFlags::Slime; break;
                     default:

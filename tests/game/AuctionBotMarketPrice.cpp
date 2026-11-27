@@ -45,7 +45,7 @@ namespace
 
     struct MarketPricesOff
     {
-        ~MarketPricesOff() { AuctionBotVanilla::SetMarketPrices({}); }
+        ~MarketPricesOff() { AuctionBotVanilla::SetMarketPrices({}); AuctionBotVanilla::SetMarketPricesOnly(false); }
     };
 }
 

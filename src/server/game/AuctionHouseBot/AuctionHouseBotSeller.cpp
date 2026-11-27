@@ -16,6 +16,7 @@
  */
 
 #include "AuctionHouseBotSeller.h"
+#include "ItemStackSize.h"
 #include "AuctionHouseBotVanilla.h"
 #include "AuctionHouseMgr.h"
 #include "DatabaseEnv.h"
@@ -745,7 +746,9 @@ bool AuctionBotSeller::SetPricesOfItem(ItemTemplate const* itemProto, SellerConf
 uint32 AuctionBotSeller::GetStackSizeForItem(ItemTemplate const* itemProto, SellerConfiguration& config) const
 {
     if (config.GetRandomStackRatioPerClass(ItemClass(itemProto->GetClass())) > urand(0, 99))
-        return urand(1, itemProto->GetMaxStackSize());
+        // Everlake-only (docs/everlake-changes.md): stock stack size, so StackSize.* (999 trade goods) doesn't turn every
+        // bot listing into a huge stack
+        return urand(1, ItemStackSize::GetStockMaxStackSize(itemProto->GetId(), itemProto->GetMaxStackSize()));
     else
         return 1;
 }
@@ -978,6 +981,8 @@ bool AuctionBotSeller::PostAuction(SellerConfiguration& config, AuctionHouseObje
 
 // AuctionHouseBot.Items.Crafted.MinStock: the random fill only adds items when listings run out, and a few wands among
 // hundreds of green weapons can then stay away for days. Every crafted item of the pool is kept listed this many times.
+// AuctionHouseBot.Items.TradeGoods.MinStock: the same for profession materials, in full stacks, so a crafter always finds
+// Linen Cloth or Copper Bars to level with; what players buy is put back on the next update.
 bool AuctionBotSeller::HasMinStock() const
 {
     return (sAuctionBotConfig->GetConfig(CONFIG_AHBOT_ITEMS_CRAFTED_MIN_STOCK) && !_craftedStock.empty())
@@ -997,7 +1002,10 @@ void AuctionBotSeller::AddMinStock(SellerConfiguration& config, AuctionHouseObje
         if ((posting.Owner.IsEmpty() || sAuctionBotConfig->IsBotChar(posting.Owner)) && !posting.Items.empty())
         {
             ++listed[posting.Items[0]->GetEntry()];
-            if (posting.GetTotalItemCount() >= AuctionBotVanilla::MaterialStackSize(posting.Items[0]->GetTemplate()->GetMaxStackSize()))
+            ItemTemplate const* proto = posting.Items[0]->GetTemplate();
+            if (posting.GetTotalItemCount() >= AuctionBotVanilla::MaterialStackSize(proto->GetQuality(),
+                    ItemStackSize::GetStockMaxStackSize(proto->GetId(), proto->GetMaxStackSize()), proto->GetMaxStackSize(),
+                    sAuctionBotConfig->GetConfig(CONFIG_AHBOT_ITEMS_TRADEGOODS_BLUE_STACK)))
                 ++fullStacks[posting.Items[0]->GetEntry()];
         }
     }
@@ -1021,7 +1029,9 @@ void AuctionBotSeller::AddMinStock(SellerConfiguration& config, AuctionHouseObje
                     TC_LOG_ERROR("ahbot", "AHBot: Missing material template for item {}", itemId);
                     continue;
                 }
-                stackCount = AuctionBotVanilla::MaterialStackSize(proto->GetMaxStackSize());
+                stackCount = AuctionBotVanilla::MaterialStackSize(proto->GetQuality(),
+                    ItemStackSize::GetStockMaxStackSize(itemId, proto->GetMaxStackSize()), proto->GetMaxStackSize(),
+                    sAuctionBotConfig->GetConfig(CONFIG_AHBOT_ITEMS_TRADEGOODS_BLUE_STACK));
             }
             while (have < minStock && budget > 0)
             {

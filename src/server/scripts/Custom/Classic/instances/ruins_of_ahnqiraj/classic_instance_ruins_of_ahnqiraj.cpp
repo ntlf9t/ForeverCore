@@ -31,6 +31,7 @@
 #include "Map.h"
 #include "MotionMaster.h"
 #include "ObjectMgr.h"
+#include "PhasingHandler.h"
 #include "Player.h"
 #include "QuaternionData.h"
 #include "ReputationMgr.h"
@@ -65,11 +66,6 @@ ClassicAQ20EncounterId const ClassicAQ20EncounterIds[] =
     { CLASSIC_AQ20_TYPE_AYAMISS,   722 },
     { CLASSIC_AQ20_TYPE_OSSIRIAN,  723 }
 };
-
-bool ClassicAQ20IsBossType(uint32 type)
-{
-    return type < CLASSIC_AQ20_MAX_ENCOUNTER && type != CLASSIC_AQ20_TYPE_GENERAL_ANDOROV;
-}
 
 struct ClassicAQ20SpawnLocation
 {
@@ -682,7 +678,7 @@ public:
                 {
                     Position const doorPos(-8526.0f, 1507.4f, 49.0f, 4.20662f);
                     if (GameObject* pAQDoor = GameObject::CreateGameObject(CLASSIC_AQ20_GO_AQ_DOOR, instance, doorPos,
-                        QuaternionData(0.0f, 0.0f, 0.861534f, -0.5077f), 255, GO_STATE_READY))
+                        QuaternionData(0.0f, 0.0f, 0.861534f, -0.5077f), InitialPhaseShift(), 255, GO_STATE_READY))
                     {
                         pAQDoor->SetSpawnedByDefault(false);
                         if (instance->AddToMap(pAQDoor))
@@ -1371,10 +1367,10 @@ public:
                 helpersAlive++;
 
             // Rep gain was buffed in patch 1.10.
-            int32 const repForKill = 50;
-            int32 const repPerHelper = 45;
+            constexpr int32 repForKill = 50;
+            constexpr int32 repPerHelper = 45;
 
-            auto GiveRep = [factionEntry, helpersAlive, repForKill, repPerHelper](Player* pPlayer)
+            auto GiveRep = [factionEntry, helpersAlive](Player* pPlayer)
             {
                 if (pPlayer->GetReputationMgr().GetRank(factionEntry) <= REP_EXALTED)
                 {
@@ -1475,7 +1471,7 @@ public:
                     }
 
                     GameObject* pCrystal = GameObject::CreateGameObject(CLASSIC_AQ20_GO_OSSIRIAN_CRYSTAL, instance,
-                        Position(newLoc.x, newLoc.y, newLoc.z, 0.0f), QuaternionData(), 255, GO_STATE_READY);
+                        Position(newLoc.x, newLoc.y, newLoc.z, 0.0f), QuaternionData(), InitialPhaseShift(), 255, GO_STATE_READY);
                     if (pCrystal)
                     {
                         pCrystal->SetSpawnedByDefault(false);

@@ -7981,94 +7981,6 @@ Result API::accept_quest(ObjectGuid quest_giver, uint32 quest_id)
     return Result::Ok;
 }
 
-// Score a single choice-reward item from a completable quest. Higher score wins.
-// Decision tree (matches QUEST_SYSTEM_PLAN.md L1.A):
-//   1. Item not usable by bot at all (CanUseItem != OK) Ã¢Â†Â’ vendor value only.
-//   2. Item is equippable for an empty equipment slot Ã¢Â†Â’ ilvl * 100.
-//   3. Item is equippable, slot already occupied Ã¢Â†Â’ (delta_ilvl) * 100 + (delta_quality) * 10.
-//      Negative deltas allowed; the comparison still produces a score we can rank.
-//   4. Tabards / shirts (cosmetic): cap at vendor value (no equip-bonus weight).
-// Vendor value is item->GetSellPrice() * count; clamped to int32 to keep score
-// arithmetic straightforward (huge gold values can overflow int otherwise).
-static int32 ScoreQuestReward(Player* bot, Quest const* quest, uint32 choice_index)
-{
-    if (!bot || !quest) return 0;
-    if (choice_index >= quest->GetRewChoiceItemsCount()) return 0;
-
-    uint32 const item_id = quest->RewardChoiceItemId[choice_index];
-    uint32 const count   = quest->RewardChoiceItemCount[choice_index];
-    if (!item_id) return 0;
-
-    ItemTemplate const* tmpl = sObjectMgr->GetItemTemplate(item_id);
-    if (!tmpl) return 0;
-
-    // Vendor base Ã¢Â€Â” used as a tiebreaker plus the floor for un-equippable items.
-    // SellPrice is in copper; cast to int32 first so a 0-stack is just 0 not UB.
-    int32 const vendor_value = static_cast<int32>(tmpl->GetSellPrice()) *
-                               static_cast<int32>(count > 0 ? count : 1);
-
-    // Cosmetic slots: tabard/shirt have InventoryType but no useful stats; cap
-    // at vendor value so a bot doesn't pick a tabard over a usable upgrade.
-    InventoryType const inv = tmpl->GetInventoryType();
-    if (inv == INVTYPE_TABARD || inv == INVTYPE_BODY)
-        return vendor_value;
-
-    // Mock-equippable test: CanUseItem rejects wrong-class / wrong-armor /
-    // level-too-low. We still want vendor value as a fallback.
-    if (bot->CanUseItem(tmpl) != EQUIP_ERR_OK)
-        return vendor_value;
-
-    // Resolve which equip slot this item would land in for *this* bot. If no
-    // slot fits (off-hand on a class without dual-wield, ranged on a non-hunter
-    // when item is a bow, etc.), fall back to vendor.
-    uint16 dest = 0;
-    InventoryResult const equip_err = bot->CanEquipNewItem(NULL_SLOT, dest, item_id, false);
-    if (equip_err != EQUIP_ERR_OK)
-        return vendor_value;
-
-    uint8 const equip_slot = dest & 0xFF;
-    if (equip_slot >= EQUIPMENT_SLOT_END) return vendor_value;
-
-    // Item level for ranking. Use the LEVEL-SCALED effective ilvl the bot will
-    // actually wear the item at Ã¢Â€Â” TC 12.0 scales many items via a curve, so the
-    // static base ilvl can be wildly off (a base-120 reward collapsing to
-    // effective ilvl 5 at L16). The old code used GetBaseItemLevel() despite the
-    // comment promising scaled Ã¢Â€Â” fixed 2026-06-17 (under-gearing campaign) so
-    // quest-reward picks match what the bot wears.
-    int32 const new_ilvl = ::Playerbot::Gear::EffectiveItemLevelForLevel(tmpl, bot->GetLevel());
-    int32 const new_qual = static_cast<int32>(tmpl->GetQuality());
-
-    // Stat-block fit: primary stat alignment + armor/weapon proficiency.
-    // Modern items use either fixed primary (STR/AGI/INT) or "smart" stats
-    // (AGI_STR_INT etc.) - the shared Gear scorer handles both. Same scorer
-    // used by gear distribution and starter-quest auto-completion so all
-    // three pickers agree on what's a good fit.
-    uint16 const spec = uint16(::Playerbot::Classic::EffectiveSpecId(bot));
-    int32 const fit = ::Playerbot::Gear::ScoreItemForClass(
-        tmpl, bot->GetClass(), spec, bot->GetLevel());
-
-    Item const* cur = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, equip_slot);
-    if (!cur)
-    {
-        // Empty slot - guaranteed upgrade. Score off ilvl with a flat bonus
-        // so even a low-ilvl-but-usable item beats vendor value of common gear.
-        return new_ilvl * 100 + new_qual * 10 + 5000 + fit;
-    }
-
-    ItemTemplate const* cur_tmpl = cur->GetTemplate();
-    // Effective ilvl of the equipped item (live item Ã¢Â†Â’ real scaled value).
-    int32 const cur_ilvl = static_cast<int32>(cur->GetItemLevel(bot));
-    int32 const cur_qual = cur_tmpl ? static_cast<int32>(cur_tmpl->GetQuality())       : 0;
-
-    int32 const delta = (new_ilvl - cur_ilvl) * 100 + (new_qual - cur_qual) * 10;
-
-    // Even when the slot's current item dominates, surface vendor value as a
-    // secondary signal so two non-upgrades can be compared meaningfully.
-    // Primary-stat fit is layered in so a wrong-primary higher-ilvl reward
-    // loses to a right-primary slightly-lower-ilvl alternative.
-    return delta + (vendor_value / 100) + fit;
-}
-
 // Quest reward choice for a role: the choice that improves the bot's gear the most, by the role scorer
 // (Gear::ScoreItemRaid: the same stat weights the gear generator ranks by, so a healer takes the +healing piece and a
 // warrior the +attack power one) against what is worn in the slot the reward lands in. A ring or trinket is compared with
@@ -10052,6 +9964,12 @@ Result API::bg_queue(ObjectGuid battlemaster, uint16 bg_type_id, uint8 arena_typ
         return Result::Locked;
     }
 
+    // a template with no map (Classic data has no "All Arenas" map unless the arena SQL is in) would read address 0
+    if (bg_tmpl->MapIDs.empty())
+    {
+        TC_LOG_INFO("playerbot.v2", "[bg_queue] {} reject: no_map (bg_type_id={})", p_->GetName(), bg_type_id);
+        return Result::NotKnown;
+    }
     PVPDifficultyEntry const* bracket =
         DB2Manager::GetBattlegroundBracketByLevel(bg_tmpl->MapIDs.front(), p_->GetLevel());
     if (!bracket)
@@ -10072,22 +9990,20 @@ Result API::bg_queue(ObjectGuid battlemaster, uint16 bg_type_id, uint8 arena_typ
     // SKIRMISH arenas (no arena-team / MMR dependency), mirroring
     // HandleBattlemasterJoinArena with arena teams disabled.
     const bool is_arena = arena_type > 0 || bg_tmpl->IsArena();
-    // Bots queue UNRATED SKIRMISH only (they have no persistent ArenaTeam).
-    // Per BattlegroundMgr::IsValidQueueId, the unrated path is the dedicated
-    // ArenaSkirmish queue type which (in this core) is 3v3-ONLY and still
-    // carries the Rated bit set. The plain Arena queue type REQUIRES rated +
-    // an ArenaTeam, so it can never be a bot path. Hence arena == 3v3 skirmish.
-    if (is_arena && arena_type != 3)
+    // Bots queue the SAME arena queue a real party joins (HandleBattlemasterJoinArena): the Arena queue id, rated bit set,
+    // team size 2, 3 or 5, rating 1/1 and no arena team. A bot team in the old 3v3 skirmish queue could never meet a real
+    // party, and 2v2 was impossible. With no arena team the match changes no rating.
+    if (is_arena && arena_type != 2 && arena_type != 3 && arena_type != 5)
     {
         TC_LOG_INFO("playerbot.v2",
-            "[bg_queue] {} reject: arena_skirmish_is_3v3_only (arena_type={} bg_type_id={})",
+            "[bg_queue] {} reject: arena_type_not_2_3_5 (arena_type={} bg_type_id={})",
             p_->GetName(), uint32(arena_type), bg_type_id);
         return Result::NotKnown;
     }
     BattlegroundQueueTypeId qid = is_arena
         ? BattlegroundMgr::BGQueueTypeId(bg_type_id,
-                                         BattlegroundQueueIdType::ArenaSkirmish,
-                                         /*rated*/ true,   // IsValidQueueId requires the bit set for skirmish
+                                         BattlegroundQueueIdType::Arena,
+                                         /*rated*/ true,   // IsValidQueueId requires the bit for the Arena queue
                                          /*teamSize*/ arena_type)
         : BattlegroundMgr::BGQueueTypeId(bg_type_id,
                                          BattlegroundQueueIdType::Battleground,
@@ -10289,6 +10205,22 @@ Result API::bg_port(uint16 bg_type_id, bool accept)
         {
             qid = q;
             break;
+        }
+    }
+    // An arena (or random battleground) invite names the match's own type (Mak'gora Arena 1169), while the queue slot holds the queue
+    // that picked it ("All Arenas" 6): take the slot of that kind the bot is invited from. Before, bots never entered an arena.
+    if (qid == BATTLEGROUND_QUEUE_NONE)
+    {
+        for (uint8 i = 0; i < PLAYER_MAX_BATTLEGROUND_QUEUES; ++i)
+        {
+            BattlegroundQueueTypeId q = p_->GetBattlegroundQueueTypeId(i);
+            if (q != BATTLEGROUND_QUEUE_NONE
+                && (q.BattlemasterListId == BATTLEGROUND_AA || BattlegroundMgr::IsRandomBattleground(q.BattlemasterListId))
+                && p_->IsInvitedForBattlegroundQueueType(q))
+            {
+                qid = q;
+                break;
+            }
         }
     }
     if (qid == BATTLEGROUND_QUEUE_NONE)
@@ -11821,7 +11753,7 @@ namespace
 // training points allow (cost per chain from classic_pet_spell_training_points), with autocast on, as a player's pet is trained at 60.
 void RaiseGrantedHunterPet(Pet* pet, Player const* owner)
 {
-    pet->InitLoyalty(Pet::BEST_FRIEND, Pet::GetLoyaltyStartPoints(Pet::BEST_FRIEND));
+    pet->InitLoyalty(Pet::BEST_FRIEND, 0);
     pet->SetPower(POWER_HAPPINESS, Pet::HAPPINESS_MAX);
 
     CreatureTemplate const* tpl = pet->GetCreatureTemplate();

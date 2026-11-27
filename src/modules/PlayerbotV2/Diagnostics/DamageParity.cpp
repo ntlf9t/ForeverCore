@@ -86,7 +86,6 @@ std::map<std::uint32_t, SpellAgg> g_aggs;            // spell id (| kPetFlag) ->
 std::map<std::uint32_t, SpellAgg> g_aggs_watched;    // the same, for hits that landed while the watched aura was on the dummy
 std::map<std::uint32_t, std::uint32_t> g_casts;      // spell id -> casts the core accepted from the subject in the leg, under g_mu
 std::string g_watch_aura;                            // an aura name to split the tally by ("" = none)
-std::uint32_t g_watch_caster_low = 0;
 
 // The outcome the next damage event of the same spell on the same victim belongs to: the outcome hook runs just before the damage is dealt.
 struct Pending

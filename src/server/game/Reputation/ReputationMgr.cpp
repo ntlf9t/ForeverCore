@@ -16,6 +16,7 @@
  */
 
 #include "ReputationMgr.h"
+#include "RenownProgress.h"
 #include "CharacterPackets.h"
 #include "DatabaseEnv.h"
 #include "DB2Stores.h"
@@ -595,30 +596,11 @@ bool ReputationMgr::SetOneFactionReputation(FactionEntry const* factionEntry, in
                 int32 maxRenownLevel = GetRenownMaxLevel(factionEntry);
 
                 // walk the levels one by one: the cost of each level can differ (RenownThresholdCurveID)
-                int32 newRenownLevel = oldRenownLevel;
-                newStanding = standing - baseRep;
-                while (newStanding < 0 && newRenownLevel > 0)
-                    newStanding += GetRenownLevelThreshold(factionEntry, newRenownLevel--);
-                if (newStanding < 0)
-                {
-                    reputationChange -= newStanding;
-                    newStanding = 0;
-                }
-                while (newRenownLevel < maxRenownLevel)
-                {
-                    int32 levelThreshold = GetRenownLevelThreshold(factionEntry, newRenownLevel + 1);
-                    if (levelThreshold <= 0 || newStanding < levelThreshold)
-                        break;
-                    newStanding -= levelThreshold;
-                    ++newRenownLevel;
-                }
-
-                if (newRenownLevel >= maxRenownLevel)
-                {
-                    newRenownLevel = maxRenownLevel;
-                    reputationChange -= newStanding;
-                    newStanding = 0;
-                }
+                Trinity::RenownProgress::Result const renown = Trinity::RenownProgress::Walk(oldRenownLevel, standing - baseRep, maxRenownLevel,
+                    [&](int32 level) { return GetRenownLevelThreshold(factionEntry, level); });
+                int32 const newRenownLevel = renown.Level;
+                newStanding = renown.Standing;
+                reputationChange -= renown.Discarded;
 
                 itr->second.VisualStandingIncrease = reputationChange;
 

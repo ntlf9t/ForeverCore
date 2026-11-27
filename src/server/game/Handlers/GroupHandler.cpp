@@ -20,6 +20,7 @@
 #include "ClassicSetRole.h"
 #include "Common.h"
 #include "DatabaseEnv.h"
+#include "FullName.h"
 #include "Group.h"
 #include "GroupFinderListings.h"
 #include "GroupMgr.h"
@@ -65,16 +66,17 @@ void WorldSession::SendPartyResult(PartyOperation operation, const std::string& 
 void WorldSession::HandlePartyInviteOpcode(WorldPackets::Party::PartyInviteClient& packet)
 {
     Player* invitingPlayer = GetPlayer();
-    // The unit menu / portrait Invite can send the target by guid (empty name) or as "Name-Realm"; typed /invite sends the plain name.
+    // The unit menu / portrait Invite can send the target by guid (empty name). By name, the 1.60 client sends the surname in
+    // the realm slot (TargetRealm): the friends list and chat links invite "Name-Surname", typed /invite "Name" or
+    // "Name Surname". Without the surname the invite went to another character with that name, or to nobody.
     Player* invitedPlayer = nullptr;
     if (!packet.TargetGUID.IsEmpty() && packet.TargetGUID.IsPlayer())
         invitedPlayer = ObjectAccessor::FindPlayer(packet.TargetGUID);
     if (!invitedPlayer && !packet.TargetName.empty())
     {
-        invitedPlayer = ObjectAccessor::FindPlayerByName(packet.TargetName);
-        if (!invitedPlayer)
-            if (size_t const dash = packet.TargetName.find('-'); dash != std::string::npos && dash > 0)
-                invitedPlayer = ObjectAccessor::FindPlayerByName(std::string_view(packet.TargetName).substr(0, dash));
+        std::string fullName = Trinity::FullName::WithSurname(packet.TargetName, packet.TargetRealm);
+        if (Trinity::FullName::Normalize(fullName))
+            invitedPlayer = ObjectAccessor::FindPlayerByName(fullName);
     }
 
     // no player

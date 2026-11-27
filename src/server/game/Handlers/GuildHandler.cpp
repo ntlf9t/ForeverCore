@@ -32,6 +32,7 @@
 #include "LFG.h"
 #include "LFGPacketsCommon.h"
 #include "Log.h"
+#include "FullName.h"
 #include "ObjectMgr.h"
 #include "ObjectAccessor.h"
 #include "Player.h"
@@ -59,7 +60,8 @@ void WorldSession::HandleGuildQueryOpcode(WorldPackets::Guild::QueryGuildInfo& q
 void WorldSession::HandleGuildInviteByName(WorldPackets::Guild::GuildInviteByName& packet)
 {
     TC_LOG_DEBUG("guild", "CMSG_GUILD_INVITE [{}]: Invited: {}", GetPlayerInfo(), packet.Name);
-    if (normalizePlayerName(packet.Name))
+    // "Name Surname": keep the surname, or the invite goes to another Name (Trinity::FullName::Normalize)
+    if (Trinity::FullName::Normalize(packet.Name))
         if (Guild* guild = GetPlayer()->GetGuild())
             guild->HandleInviteMember(this, packet.Name);
 }
@@ -602,7 +604,7 @@ void WorldSession::HandleGuildSetGuildMaster(WorldPackets::Guild::GuildSetGuildM
 {
     TC_LOG_DEBUG("guild", "CMSG_GUILD_SET_GUILD_MASTER [{}]: Target: {}", GetPlayerInfo(), packet.NewMasterName);
 
-    if (normalizePlayerName(packet.NewMasterName))
+    if (Trinity::FullName::Normalize(packet.NewMasterName))
         if (Guild* guild = GetPlayer()->GetGuild())
             guild->HandleSetNewGuildMaster(this, packet.NewMasterName, false);
 }

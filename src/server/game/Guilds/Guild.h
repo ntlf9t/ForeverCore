@@ -28,6 +28,7 @@
 #include "UniqueTrackablePtr.h"
 #include <functional>
 #include <set>
+#include <span>
 #include <unordered_map>
 
 class GuildAchievementMgr;
@@ -100,6 +101,11 @@ enum class GuildRankId : uint8
 
 enum class GuildRankOrder : uint8 { };
 
+// A guild's ranks, as (id, order) pairs, make a usable set when one of them is the guild master rank (id 0) and the orders run
+// from 0 to count - 1 with none missing or doubled. The ids may have gaps: deleting a rank leaves one (0, 1, 3) while the
+// orders close up again (0, 1, 2).
+TC_GAME_API bool IsGuildRankSetValid(std::span<std::pair<GuildRankId, GuildRankOrder> const> ranks);
+
 enum GuildRankRights
 {
     GR_RIGHT_NONE                       = 0x00000000,
@@ -109,7 +115,7 @@ enum GuildRankRights
     GR_RIGHT_OFFCHATSPEAK               = 0x00000008,
     GR_RIGHT_INVITE                     = 0x00000010,
     GR_RIGHT_REMOVE                     = 0x00000020,
-    GR_RIGHT_ROSTER                     = 0x00000040,
+    GR_RIGHT_LEAVE                      = 0x00000040,
     GR_RIGHT_PROMOTE                    = 0x00000080,
     GR_RIGHT_DEMOTE                     = 0x00000100,
     GR_RIGHT_UNK_200                    = 0x00000200,
@@ -813,7 +819,7 @@ class TC_GAME_API Guild
         void SendEventBankMoneyChanged() const;
         void SendEventMOTD(WorldSession* session, bool broadcast = false) const;
         void SendEventNewLeader(Member* newLeader, Member* oldLeader, bool isSelfPromoted = false) const;
-        void SendEventPlayerLeft(Member* leaver, Member* remover = nullptr, bool isRemoved = false) const;
+        void SendEventPlayerLeft(Member const* leaver, Member const* remover = nullptr, bool isRemoved = false) const;
         void SendEventPresenceChanged(WorldSession* session, bool loggedOn, bool broadcast = false) const;
 
         // Load from DB
@@ -939,14 +945,8 @@ class TC_GAME_API Guild
             return (itr != m_members.end()) ? &itr->second : nullptr;
         }
 
-        inline Member* GetMember(std::string_view name)
-        {
-            for (auto itr = m_members.begin(); itr != m_members.end(); ++itr)
-                if (itr->second.GetName() == name)
-                    return &itr->second;
-
-            return nullptr;
-        }
+        // "Bob" or "Bob Smith": several members may be called Bob, the full name picks one (Trinity::FullName::Pick)
+        Member* GetMember(std::string_view name);
 
         static void _DeleteMemberFromDB(CharacterDatabaseTransaction trans, ObjectGuid::LowType lowguid);
 

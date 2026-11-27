@@ -608,6 +608,11 @@ char const* Battleground::GetMountRefusal(Player const* player) const
     return nullptr;
 }
 
+uint8 Battleground::GetLfgRole(ChrSpecializationEntry const* spec)
+{
+    return uint8(spec ? spec->GetRole() : ChrSpecializationRole::Dps);
+}
+
 bool Battleground::IsMountRefused(Player const* player, bool checkStartArea) const
 {
     if (checkStartArea && GetStatus() == STATUS_WAIT_JOIN && IsEnclosedStartArea(GetMapId()))
@@ -783,7 +788,8 @@ void Battleground::EndBattleground(Team winner)
     {
         { 30,  24955, 24954 },                              // Alterac Valley Mark of Honor 20560
         { 489, 24951, 24950 },                              // Warsong Gulch Mark of Honor 20558
-        { 529, 24953, 24952 }                               // Arathi Basin Mark of Honor 20559
+        { 529, 24953, 24952 },                              // Arathi Basin Mark of Honor 20559
+        { 2997, 1255230, 1255231 }                          // WoW Forever: Darkspear Islands Mark of Honor 274895 (3 for a win, 1 for a loss)
     };
     ClassicMarkSpells const* classicMarks = nullptr;
     for (ClassicMarkSpells const& marks : ClassicMarks)
@@ -1444,6 +1450,7 @@ void Battleground::BuildPvPLogDataPacket(WorldPackets::Battleground::PVPMatchSta
             playerData.Race = player->GetRace();
             playerData.Class = player->GetClass();
             playerData.HonorLevel = player->GetHonorLevel();
+            playerData.Role = GetLfgRole(player->GetPrimarySpecializationEntry());
 
             pvpLogData.Statistics.push_back(playerData);
         }

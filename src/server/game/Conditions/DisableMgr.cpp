@@ -390,7 +390,9 @@ bool IsDisabledFor(DisableType type, uint32 entry, WorldObject const* ref, uint8
                         case DIFFICULTY_25_HC:
                             return (disabledModes & RAID_STATUSFLAG_25MAN_HEROIC) != 0;
                         default:
-                            return false;
+                            // Classic 1.60: the vanilla raids have only 40 player (9, 186, 226) and 20 player (148, 185) or
+                            // other single difficulties; the normal flag closes those too (it used to leave them open)
+                            return (disabledModes & DUNGEON_STATUSFLAG_NORMAL) != 0;
                     }
                 }
                 else if (mapEntry->InstanceType == MAP_COMMON)

@@ -34,6 +34,7 @@
 #include "ObjectMgr.h"
 #include "Player.h"
 #include "TemporarySummon.h"
+#include "World.h"
 #include "classic_boss_pack.h"
 #include "classic_molten_core.h"
 #include "classic_script_text.h"

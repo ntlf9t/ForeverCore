@@ -25,6 +25,7 @@
 #include "BattlenetAccountMgr.h"
 #include "BigNumber.h"
 #include "CliRunnable.h"
+#include "CrashStacks.h"
 #include "Configuration/Config.h"
 #include "DatabaseEnv.h"
 #include "DatabaseLoader.h"
@@ -41,6 +42,7 @@
 #include "OpenSSLCrypto.h"
 #include "OutdoorPvP/OutdoorPvPMgr.h"
 #include "ProcessPriority.h"
+#include "QueueDrain.h"
 #include "RASession.h"
 #include "RealmList.h"
 #include "ScriptLoader.h"
@@ -52,6 +54,7 @@
 #include "TerrainMgr.h"
 #include "ThreadPool.h"
 #include "World.h"
+#include "WorldSession.h"
 #include "WorldSocketMgr.h"
 #include "Util.h"
 #include <openssl/opensslv.h>
@@ -64,6 +67,8 @@
 #include <iostream>
 #include <csignal>
 #include <algorithm>
+#include <atomic>
+#include <functional>
 #include <filesystem>
 #include <map>
 
@@ -123,11 +128,17 @@ private:
 };
 
 void SignalHandler(boost::system::error_code const& error, int signalNumber);
+// A stop signal (docker stop, a restart from the app) with SignalShutdownDelay set: the world thread starts the normal
+// shutdown countdown instead of stopping at once (World::ShutdownServ must not run on the signal's network thread).
+std::atomic<uint32> SignalShutdownDelay{ 0 };
+std::atomic<bool> SignalShutdownRequested{ false };
+std::atomic<uint32> SignalsReceived{ 0 };
 std::unique_ptr<Trinity::Net::AsyncAcceptor> StartRaSocketAcceptor(Trinity::Asio::IoContext& ioContext);
 bool StartDB();
 int CreateAccountFromCommandLine(variables_map const& vm);
 void StopDB();
 void WorldUpdateLoop();
+void SavePlayersBeforeShutdown();
 void ClearOnlineAccounts(uint32 realmId);
 void PruneCrashFiles(size_t keep);
 void AddModuleScripts();                             // generated from src/modules, empty when no module is built
@@ -140,6 +151,7 @@ variables_map GetConsoleArguments(int argc, char** argv, fs::path& configFile, f
 int main(int argc, char** argv)
 {
     signal(SIGABRT, &Trinity::AbortHandler);
+    CrashStacks::Install();
 
     Trinity::VerifyOsVersion();
 
@@ -282,7 +294,15 @@ int main(int argc, char** argv)
 #if TRINITY_PLATFORM == TRINITY_PLATFORM_WINDOWS
     signals.add(SIGBREAK);
 #endif
-    signals.async_wait(SignalHandler);
+    SignalShutdownDelay = uint32(std::max(0, sConfigMgr->GetIntDefault("SignalShutdownDelay", 0)));
+    std::function<void(boost::system::error_code const&, int)> onSignal;
+    onSignal = [&signals, &onSignal](boost::system::error_code const& error, int signalNumber)
+    {
+        SignalHandler(error, signalNumber);
+        if (!error && !World::IsStopped())
+            signals.async_wait(onSignal);   // a second signal during the countdown stops at once
+    };
+    signals.async_wait(onSignal);
 
     // Start the Boost based thread pool
     int numThreads = sConfigMgr->GetIntDefault("ThreadPool", 1);
@@ -465,6 +485,9 @@ int main(int argc, char** argv)
     WorldUpdateLoop();
 
     // Shutdown starts here
+    // Players first, before anything else is taken down (see SavePlayersBeforeShutdown)
+    SavePlayersBeforeShutdown();
+
     WorldPackets::Auth::ConnectTo::ShutdownEncryption();
     WorldPackets::Auth::EnterEncryptedMode::ShutdownEncryption();
 
@@ -573,6 +596,8 @@ void WorldUpdateLoop()
     if (!halfMaxCoreStuckTime)
         halfMaxCoreStuckTime = std::numeric_limits<uint32>::max();
 
+    CrashStacks::RegisterWorldThread();
+
     LoginDatabase.WarnAboutSyncQueries(true);
     CharacterDatabase.WarnAboutSyncQueries(true);
     WorldDatabase.WarnAboutSyncQueries(true);
@@ -595,6 +620,9 @@ void WorldUpdateLoop()
             continue;
         }
 
+        if (SignalShutdownRequested.exchange(false) && !sWorld->IsShuttingDown())
+            sWorld->ShutdownServ(SignalShutdownDelay, 0, SHUTDOWN_EXIT_CODE, "Realm restart");
+
         sWorld->Update(diff);
         realPrevTime = realCurrTime;
 
@@ -615,10 +643,52 @@ void WorldUpdateLoop()
     HotfixDatabase.WarnAboutSyncQueries(false);
 }
 
-void SignalHandler(boost::system::error_code const& error, int /*signalNumber*/)
+// The world has stopped: log every player out and wait until the saves are in the database, before any other shutdown
+// step. The saves used to be queued much later (when the network was taken down, after the scripts' OnShutdown hooks and
+// the bots had gone) and written only when the database pools closed at the very end, so anything that failed, hung or
+// was killed in between still rolled every online character back to its last periodic save. Here a logout is the same
+// as any other one (maps, scripts and bots are all still there), and nothing else happens until it is on disk.
+void SavePlayersBeforeShutdown()
 {
-    if (!error)
-        World::StopNow(SHUTDOWN_EXIT_CODE);
+    uint32 players = 0;
+    for (auto const& [accountId, session] : sWorld->GetAllSessions())
+        if (session && session->GetPlayer())
+            ++players;
+
+    TC_LOG_INFO("server.worldserver", "Shutdown: saving {} online players ({} sessions)...", players, sWorld->GetActiveAndQueuedSessionCount());
+
+    sWorld->KickAll();              // closes every connection
+    sWorld->UpdateSessions(1);      // the kicked sessions log their player out (Player::SaveToDB) and are removed
+
+    auto drain = [](char const* name, auto& database)
+    {
+        Trinity::Database::WaitForEmptyQueue([&database] { return database.QueueSize(); }, [name](size_t remaining)
+        {
+            TC_LOG_INFO("server.worldserver", "Shutdown: still {} queued {} database queries.", remaining, name);
+        });
+    };
+    drain("character", CharacterDatabase);
+    drain("login", LoginDatabase);
+
+    TC_LOG_INFO("server.worldserver", "Shutdown: {} players saved, {} sessions left.", players, sWorld->GetActiveAndQueuedSessionCount());
+}
+
+void SignalHandler(boost::system::error_code const& error, int signalNumber)
+{
+    if (error)
+        return;
+
+    // First signal with a delay set: count down in game so players are warned, then stop the normal way (players saved).
+    // A second signal, or no delay: stop now; the kicked players are still saved, the database queues drain before closing.
+    if (SignalShutdownDelay && SignalsReceived++ == 0)
+    {
+        TC_LOG_INFO("server.worldserver", "Signal {} received, shutting down in {} seconds (send it again to stop now)", signalNumber, SignalShutdownDelay.load());
+        SignalShutdownRequested = true;
+        return;
+    }
+
+    TC_LOG_INFO("server.worldserver", "Signal {} received, stopping now", signalNumber);
+    World::StopNow(SHUTDOWN_EXIT_CODE);
 }
 
 void FreezeDetector::Handler(std::weak_ptr<FreezeDetector> freezeDetectorRef, boost::system::error_code const& error)
@@ -642,6 +712,8 @@ void FreezeDetector::Handler(std::weak_ptr<FreezeDetector> freezeDetectorRef, bo
                 if (msTimeDiff > freezeDetector->_maxCoreStuckTimeInMs)
                 {
                     TC_LOG_ERROR("server.worldserver", "World Thread hangs for {} ms, forcing a crash!", msTimeDiff);
+                    // where the world thread is stuck: it prints its own stack to stderr (the console / docker logs)
+                    CrashStacks::DumpWorldThreadStack(3000);
                     ABORT_MSG("World Thread hangs for %u ms, forcing a crash!", msTimeDiff);
                 }
             }

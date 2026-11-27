@@ -242,6 +242,7 @@ void ConfigReader::apply_from_loaded_config()
     bhv_dungeon_loot_         = c.GetBoolDefault("Playerbot.Behavior.DungeonLoot", true, true);
     bhv_warrior_stance_dance_ = c.GetBoolDefault("Playerbot.Behavior.WarriorStanceDance", true, true);
     bhv_bot_whisperable_      = c.GetBoolDefault("Playerbot.Behavior.BotWhisperable", true, true);
+    perf_lean_bot_sessions_   = c.GetBoolDefault("Playerbot.Perf.LeanBotSessions", true, true);
     chatter_conversation_     = c.GetBoolDefault("Playerbot.Chatter.Conversation", true, true);
     {
         ChatModelConfig& m = chat_model_;

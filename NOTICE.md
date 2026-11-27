@@ -52,7 +52,7 @@ redistributing. Source files of the module do not carry per-file headers; this n
 
 - This branch is advocaite's TrinityCore `forever` tree (https://github.com/advocaite/TrinityCore, GPL-2.0, copyright the TrinityCore
   project and contributors) plus WoW Forever Bots. The files that were changed are derived from TrinityCore and stay under its GPL-2.0.
-- The 1.12 numbers (spell values, creature stats, ...) are read from the VMaNGOS database dump by `tools/classic_spell_values/`. The dump is
+- The 1.12 numbers (spell values, creature stats, ...) are read from the VMaNGOS database dump by a builder script that is not part of this branch. The dump is
   not part of this repository; it belongs to its authors.
 - Libraries under `dep/` keep their own licenses (see each folder).
 - mod-playerbots (AzerothCore) is AGPL-3.0: used only as a reference for ideas, no code copied. SimulationCraft is GPL-3.0: data used as reference.
@@ -118,3 +118,15 @@ redistributing. Source files of the module do not carry per-file headers; this n
   [Efficient Games](https://efficient.games) (https://github.com/JIVESCORP/eg-link-output-wowf), licensed under
   [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), picked and converted to our tables. Quest givers, turn-ins, classes
   and previous quests in `_71_` also from [NorgannonDB](https://github.com/zmarotrix/NorgannonDB) by zmarotrix (GPL-3.0).
+- Live WoW Forever quest data (quest order, givers and turn-ins) in `sql/custom/world/2026_11_12_15_*.sql`, `2026_11_13_86_*.sql` and
+  `2026_11_13_87_*.sql`: from [Questie](https://github.com/Questie/QuestieDB) (Questie team, GPL-3.0), its Forever corrections and
+  play traces. Changed: converted to our database tables, only where ours lacked it.
+- Live WoW Forever world data (quest records, object templates, vendor items, trainer levels) in
+  `sql/custom/world/2026_11_12_14_*.sql`, `2026_11_13_88_*.sql` and `2026_11_13_90_*.sql`: Data from
+  [Efficient Games](https://efficient.games) (https://github.com/JIVESCORP/eg-link-output-wowf), licensed under
+  [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changed: only the records we lacked or had different were picked and
+  converted to our database tables.
+- Quest givers, drops and vendor items in `sql/custom/world/2026_11_13_91_world_forever_everlake_data.sql`: from Everlake's world data
+  ([buildthehomelab/wow-everlake-world-data](https://github.com/buildthehomelab/wow-everlake-world-data), GPL-3.0), which in turn
+  credits EG Link (CC BY 4.0), Polestar forever-db, QuestieDB, ForeverDB.net (GPL-3.0), NorgannonDB by zmarotrix (GPL-3.0) and Icy Veins'
+  WoW Forever database (db.icy-veins.com/wow-forever). Changed: compared with our world and only rows we lacked were written as ours.

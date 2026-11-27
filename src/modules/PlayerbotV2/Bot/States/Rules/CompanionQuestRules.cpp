@@ -28,7 +28,6 @@ namespace Playerbot {
 
 namespace {
 
-constexpr float kInteractSq    = 5.0f * 5.0f;
 // Emit inside this radius only: the live CanInteractWithQuestGiver gate is checked at dispatch, after the bot
 // may have drifted (same margin as idle:quest_accept).
 constexpr float kActEmitSq     = 4.5f * 4.5f;

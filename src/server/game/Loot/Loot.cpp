@@ -757,10 +757,15 @@ Loot::Loot(Map* map, ObjectGuid owner, LootType type, Group const* group) : gold
 
 Loot::~Loot()
 {
+    // PlayersLooting is how a dying loot finds every player whose loot view still points at it, so each one is released
+    // here and none is left holding a freed pointer. Release only views that really hold this loot (another loot may have
+    // taken the same view key), and skip a player whose session is already gone (bot logout teardown).
     GuidSet activeLooters = std::move(PlayersLooting);
     for (ObjectGuid playerGuid : activeLooters)
         if (Player* player = ObjectAccessor::FindConnectedPlayer(playerGuid))
-            player->GetSession()->DoLootRelease(this);
+            if (WorldSession* session = player->GetSession())
+                if (Trinity::Containers::MapGetValuePtr(player->GetAELootView(), GetGUID()) == this)
+                    session->DoLootRelease(this);
 }
 
 void Loot::NotifyLootList(Map const* map) const
@@ -787,38 +792,26 @@ void Loot::NotifyItemRemoved(uint8 lootListId, Map const* map)
 {
     // notify all players that are looting this that the item was removed
     // convert the index to the slot the player sees
-    for (auto itr = PlayersLooting.begin(); itr != PlayersLooting.end();)
+    // A looter not on this map stays in PlayersLooting: it is how ~Loot finds the views to release (dropping it here left that
+    // player's view pointing at this loot after it was freed).
+    LootItem const& item = items[lootListId];
+    for (ObjectGuid const& looterGuid : PlayersLooting)
     {
-        LootItem const& item = items[lootListId];
-        if (item.GetAllowedLooters().find(*itr) == item.GetAllowedLooters().end())
-        {
-            ++itr;
+        if (!item.GetAllowedLooters().contains(looterGuid))
             continue;
-        }
 
-        if (Player* player = ObjectAccessor::GetPlayer(map, *itr))
-        {
+        if (Player* player = ObjectAccessor::GetPlayer(map, looterGuid))
             player->SendNotifyLootItemRemoved(GetGUID(), GetOwnerGUID(), lootListId);
-            ++itr;
-        }
-        else
-            itr = PlayersLooting.erase(itr);
     }
 }
 
 void Loot::NotifyMoneyRemoved(Map const* map)
 {
     // notify all players that are looting this that the money was removed
-    for (auto itr = PlayersLooting.begin(); itr != PlayersLooting.end();)
-    {
-        if (Player* player = ObjectAccessor::GetPlayer(map, *itr))
-        {
+    // looters off this map stay in PlayersLooting (see NotifyItemRemoved)
+    for (ObjectGuid const& looterGuid : PlayersLooting)
+        if (Player* player = ObjectAccessor::GetPlayer(map, looterGuid))
             player->SendNotifyLootMoneyRemoved(GetGUID());
-            ++itr;
-        }
-        else
-            itr = PlayersLooting.erase(itr);
-    }
 }
 
 namespace
@@ -856,6 +849,9 @@ std::string LootSourceLabel(Map* map, ObjectGuid const& owner)
 
 void Loot::LogTable(Map* map) const
 {
+    // Everlake: building the item list costs a template lookup per item on every corpse opened; skip it when nobody logs it
+    if (!sLog->ShouldLog("playerbot.v2", LOG_LEVEL_INFO))
+        return;
     std::string list;
     for (LootItem const& item : items)
         list += (list.empty() ? "" : ", ") + LootItemLabel(item);

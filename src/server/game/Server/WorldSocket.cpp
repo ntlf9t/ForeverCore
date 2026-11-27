@@ -136,7 +136,8 @@ void WorldSocket::Start()
         uint32(std::max(sConfigMgr->GetIntDefault("Network.ConnectionsPerIp", 16), 0)));
     if (!_ipConnectionSlot)
     {
-        TC_LOG_ERROR("network", "WorldSocket::Start: {} already has Network.ConnectionsPerIp open connections, refusing another", address.to_string());
+        TC_LOG_ERROR("network", "WorldSocket::Start: {} already has Network.ConnectionsPerIp ({}) open connections, refusing another",
+            address.to_string(), WorldConnectionLimit.GetCount(address.to_string()));
         CloseSocket();
         return;
     }
@@ -289,15 +290,15 @@ void WorldSocket::SendAuthSession()
 
 void WorldSocket::OnClose()
 {
+    // The address's place is given back when the connection closes, not when the WorldSocket object goes: the session keeps its
+    // closed sockets until the player's reconnect window runs out (WorldSession::Update), so a player who dropped and came back
+    // a few times could be refused with no connection open at all.
+    _ipConnectionSlot.reset();
+
     {
         std::scoped_lock sessionGuard(_worldSessionLock);
         _worldSession = nullptr;
     }
-
-    // The address's Network.ConnectionsPerIp slot is given back when the connection closes, not when this object is deleted:
-    // the WorldSession keeps its socket alive until the session itself goes (logout delay, reconnect window), so slots held
-    // to the destructor piled up and a player was refused with no connection of theirs open. CloseSocket calls this once.
-    _ipConnectionSlot.reset();
 }
 
 Trinity::Net::SocketReadCallbackResult WorldSocket::ReadHandler()

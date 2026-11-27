@@ -84,6 +84,26 @@ void WorldSession::HandleConfirmRespecWipeOpcode(WorldPackets::Talent::ConfirmRe
         return;
     }
 
+    // Classic 1.60 Legacy perk reset (Player::ResetClassicLegacyPerks)
+    if (confirmRespecWipe.RespecType == SPEC_RESET_CLASSIC_LEGACY_PERKS)
+    {
+        if (!unit->CanResetTalents(_player))
+            return;
+
+        uint64 legacyCost = _player->GetNextClassicLegacyResetCost();
+        if (!_player->HasEnoughMoney(legacyCost))
+            return; // the client shows the error itself
+
+        if (!_player->ResetClassicLegacyPerks(legacyCost))
+        {
+            _player->SendRespecWipeConfirm(ObjectGuid::Empty, 0, SPEC_RESET_CLASSIC_LEGACY_PERKS);
+            return;
+        }
+
+        unit->CastSpell(_player, 14867 /*SPELL_UNTALENT_VISUAL_EFFECT*/, true);
+        return;
+    }
+
     if (confirmRespecWipe.RespecType != SPEC_RESET_TALENTS)
     {
         TC_LOG_DEBUG("network", "WORLD: HandleConfirmRespecWipeOpcode - reset type {} is not implemented.", confirmRespecWipe.RespecType);

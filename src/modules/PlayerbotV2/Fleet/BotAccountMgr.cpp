@@ -1,7 +1,9 @@
 #include "BotAccountMgr.h"
+#include "BotAccountName.h"
 
 #include "AccountMgr.h"
 #include "BattlenetAccountMgr.h"
+#include "Config.h"
 #include "DatabaseEnv.h"
 #include "Log.h"
 
@@ -9,17 +11,31 @@
 #include <fmt/format.h>
 #include <random>
 #include <string>
+#include <string_view>
 
 namespace Playerbot::V2 {
 
 namespace {
 
-// Username pattern: PBV2_NNNN. Trinity's MAX_ACCOUNT_STR is 16, so
-// PBV2_ + up to 11 digits fits easily; we use 4-digit zero-padded
-// indices and grow naturally beyond 9999 if a fleet ever needs it.
+// Username pattern: <Playerbot.AccountPrefix>NNNN, "PBV2_0001" by default (BotAccountName.h). Each realm on a shared
+// login server needs its own prefix. Read once: changing it needs a restart, and must not happen on a realm whose
+// pool already exists (its accounts keep their old names).
+std::string_view ConfiguredPrefix()
+{
+    static std::string const configured = sConfigMgr->GetStringDefault("Playerbot.AccountPrefix", std::string(AccountName::kDefaultPrefix));
+    static std::string_view const prefix = [] {
+        std::string_view const chosen = AccountName::PrefixOrDefault(configured);
+        if (chosen != configured)
+            TC_LOG_ERROR("playerbot.v2", "[BotAccountMgr] Playerbot.AccountPrefix '{}' is not 1-{} letters, digits or '_': using '{}'.",
+                configured, AccountName::kMaxPrefixLength, chosen);
+        return chosen;
+    }();
+    return prefix;
+}
+
 std::string PoolAccountName(uint32 idx)
 {
-    return fmt::format("PBV2_{:04}", idx);
+    return AccountName::Make(ConfiguredPrefix(), idx);
 }
 
 // Generates a 16-char random alphanumeric password. Bots never log in

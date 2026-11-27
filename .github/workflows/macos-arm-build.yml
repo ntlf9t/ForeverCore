@@ -1,8 +1,8 @@
 name: macOS arm64
 
+# Everlake: Linux only for now; run this by hand when needed
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
 
 jobs:
   build:

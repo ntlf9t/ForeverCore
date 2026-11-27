@@ -436,6 +436,7 @@ struct CleanDamage
 
     uint32 absorbed_damage;
     uint32 mitigated_damage;
+    float rageDamage = -1.0f;    // WoW Forever: a melee swing's damage before armor and the block (crit x2, crushing x1.5), for rage taken; < 0: not a swing
 
     WeaponAttackType attackType;
     MeleeHitOutcome hitOutCome;
@@ -571,6 +572,7 @@ struct CalcDamageInfo
     ProcFlagsInit ProcAttacker;
     ProcFlagsInit ProcVictim;
     uint32 CleanDamage;          // Used only for rage calculation
+    float RageDamage;            // WoW Forever: damage before armor and the block (crit x2, crushing x1.5), the victim's rage taken
     MeleeHitOutcome HitOutCome;  /// @todo remove this field (need use TargetState)
 };
 
@@ -861,8 +863,11 @@ class TC_GAME_API Unit : public WorldObject
         void UpdateAttackTimeField(WeaponAttackType att);
         void ApplyAttackTimePercentMod(WeaponAttackType att, float val, bool apply);
         void ApplyCastTimePercentMod(float val, bool apply);
+        void ApplySpellHastePercentMod(float val, bool apply);
+        void ApplyHasteRegenPercentMod(float val, bool apply);
 
         void SetModCastingSpeed(float castingSpeed) { SetUpdateFieldValue(m_values.ModifyValue(&Unit::m_unitData).ModifyValue(&UF::UnitData::ModCastingSpeed), castingSpeed); }
+        void SetModCastingSpeedNeg(float castingSpeedNeg) { SetUpdateFieldValue(m_values.ModifyValue(&Unit::m_unitData).ModifyValue(&UF::UnitData::ModCastingSpeedNeg), castingSpeedNeg); }
         void SetModSpellHaste(float spellHaste) { SetUpdateFieldValue(m_values.ModifyValue(&Unit::m_unitData).ModifyValue(&UF::UnitData::ModSpellHaste), spellHaste); }
         void SetModHaste(float haste) { SetUpdateFieldValue(m_values.ModifyValue(&Unit::m_unitData).ModifyValue(&UF::UnitData::ModHaste), haste); }
         void SetModRangedHaste(float rangedHaste) { SetUpdateFieldValue(m_values.ModifyValue(&Unit::m_unitData).ModifyValue(&UF::UnitData::ModRangedHaste), rangedHaste); }
@@ -1012,6 +1017,7 @@ class TC_GAME_API Unit : public WorldObject
         float GetUnitCriticalChanceDone(WeaponAttackType attackType) const;
         float GetUnitCriticalChanceTaken(Unit const* attacker, WeaponAttackType attackType, float critDone) const;
         float GetUnitCriticalChanceAgainst(WeaponAttackType attackType, Unit const* victim) const;
+        float GetClassicCritAgainst(WeaponAttackType attackType, Unit const* victim, float critChance) const;
         float GetMechanicResistChance(SpellInfo const* spellInfo) const;
         bool CanUseAttackType(uint8 attacktype) const;
 
@@ -1686,6 +1692,7 @@ class TC_GAME_API Unit : public WorldObject
         void _UnregisterAreaTrigger(AreaTrigger* areaTrigger);
         AreaTrigger* GetAreaTrigger(uint32 spellId) const;
         std::vector<AreaTrigger*> GetAreaTriggers(uint32 spellId) const;
+        std::vector<AreaTrigger*> GetAreaTriggers(std::function<bool(AreaTrigger const*)> const& predicate) const;
 
         enum class AreaTriggerRemoveReason : uint8
         {
@@ -1759,6 +1766,9 @@ class TC_GAME_API Unit : public WorldObject
         static void CalcHealAbsorb(HealInfo& healInfo);
 
         void UpdateSpeed(UnitMoveType mtype);
+        // Everlake: speed rate from the best main bonus (percent), the product of the stacking bonuses and the best
+        // non-stacking bonus (both multipliers): the larger multiplier, then the main bonus on top
+        static float CombineSpeedBonuses(float mainSpeedMod, float stackBonus, float nonStackBonus);
         float GetSpeed(UnitMoveType mtype) const;
         float GetSpeedRate(UnitMoveType mtype) const { return m_speed_rate[mtype]; }
         void SetSpeed(UnitMoveType mtype, float newValue);
@@ -1858,7 +1868,8 @@ class TC_GAME_API Unit : public WorldObject
 
         int32 RewardRage(uint32 baseRage);
         // Classic 1.60 (vanilla) combat: rage from damage, weapon / defense skill of the attack table, blocked amount
-        int32 RewardClassicRage(float damage, bool attacker);   // damage stays fractional (Dual Wield Specialization bonus on small hits)
+        int32 RewardClassicRage(float ragePoints, bool attacker);   // Forever rage (ClassicRage.h), points stay fractional until here
+        float GetClassicSwingRage(WeaponAttackType attType, bool crit) const;
         int32 GetClassicWeaponSkill(WeaponAttackType attType, Unit const* victim) const;
         int32 GetClassicDefenseSkill(Unit const* attacker) const;
         virtual uint32 GetClassicShieldBlockValue() const { return GetLevel() / 2 + uint32(std::max(0.0f, GetStat(STAT_STRENGTH)) / 20.0f); }
@@ -1947,6 +1958,12 @@ class TC_GAME_API Unit : public WorldObject
         // counts from here), and the last failure reason told to the client (told once, not every update)
         uint32 m_classicAutoShotStillSince = 0;
         SpellCastResult m_classicAutoShotLastReported = SPELL_CAST_OK;
+        // Classic 1.60 Auto Shot retry timer: a shot came due but could not start at m_classicAutoShotRetryAnchor, so attempts wait
+        // for the half-second checks after it; m_classicAutoShotLastAttempt is the last check made
+        bool m_classicAutoShotRetrying = false;
+        uint32 m_classicAutoShotRetryAnchor = 0;
+        uint32 m_classicAutoShotLastAttempt = 0;
+        void StartClassicAutoShotRetry(uint32 now);
 
         bool m_ControlledByPlayer;
 

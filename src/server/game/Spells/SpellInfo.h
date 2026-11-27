@@ -274,6 +274,7 @@ public:
     int32 CalcValueAsInt(WorldObject const* caster = nullptr, SpellEffectValue const* basePoints = nullptr, Unit const* target = nullptr, float* variance = nullptr, uint32 castItemId = 0, int32 itemLevel = -1) const;
     SpellEffectValue CalcValue(WorldObject const* caster = nullptr, SpellEffectValue const* basePoints = nullptr, Unit const* target = nullptr, float* variance = nullptr, uint32 castItemId = 0, int32 itemLevel = -1) const;
     SpellEffectValue CalcBaseValue(WorldObject const* caster, Unit const* target, uint32 itemId, int32 itemLevel) const;
+    float GetClassicVariance(WorldObject const* caster) const;
     bool UsesClassicFlatBasePoints(WorldObject const* caster) const;
     float ClassicCreatureLevelSpellScale(uint8 casterLevel) const;
     float CalcValueMultiplier(WorldObject* caster, Spell* spell = nullptr) const;
@@ -525,6 +526,7 @@ class TC_GAME_API SpellInfo
         bool IsChanneled() const;
         bool IsMoveAllowedChannel() const;
         bool IsNextMeleeSwingSpell() const;
+        bool IsAutoShot() const;
         bool IsRangedWeaponSpell() const;
         bool IsAutoRepeatRangedSpell() const;
         bool IsEmpowerSpell() const;
@@ -593,6 +595,7 @@ class TC_GAME_API SpellInfo
         SpellInfo const* GetAuraRankForLevel(uint8 level) const;
         bool IsRankOf(SpellInfo const* spellInfo) const;
         bool IsDifferentRankOf(SpellInfo const* spellInfo) const;
+        bool IsClassicUnchainedRankOf(SpellInfo const* other) const;
         bool IsHighRankOf(SpellInfo const* spellInfo) const;
 
         uint32 GetSpellXSpellVisualId(WorldObject const* caster = nullptr, WorldObject const* viewer = nullptr) const;

@@ -33,6 +33,7 @@
 #include "Map.h"
 #include "ObjectAccessor.h"
 #include "Player.h"
+#include "SpellInfo.h"
 #include "SpellScript.h"
 #include "TemporarySummon.h"
 #include "classic_dungeon_encounter_tracker.h"

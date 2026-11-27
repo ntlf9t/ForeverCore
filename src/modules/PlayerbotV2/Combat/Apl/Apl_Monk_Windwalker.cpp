@@ -78,7 +78,6 @@ constexpr uint32 FLYING_SERPENT_KICK    = 101545;
 constexpr uint32 SLICING_WINDS          = 1217413;      // talent override of Flying Serpent Kick (2 Chi lunge)
 
 constexpr uint8 POWER_CHI_IDX    = 12;
-constexpr uint8 POWER_ENERGY_IDX = 3;
 
 bool HasLiveTarget(ApPredicateContext const& ctx)
 {

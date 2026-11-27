@@ -34,8 +34,8 @@ namespace
 //  - server group 0x4D (retail 0x4C, assumed by symmetry)
 constexpr uint32 ClassicClientConnectionGroup = 0x45;
 constexpr uint32 RetailClientConnectionGroup = 0x44;
-constexpr uint32 ClassicServerConnectionGroup = 0x4D;
-constexpr uint32 RetailServerConnectionGroup = 0x4C;
+[[maybe_unused]] constexpr uint32 ClassicServerConnectionGroup = 0x4D; // not mapped yet
+[[maybe_unused]] constexpr uint32 RetailServerConnectionGroup = 0x4C; // not mapped yet
 
 // explicit Classic 1.60.1.70009 client opcode -> retail core opcode overrides
 std::unordered_map<uint32, uint32> const ClientOpcodes =
@@ -70,6 +70,10 @@ std::unordered_set<uint32> const BlockedServerOpcodes =
     // open (the 96-byte answer starts with zero counts). Classic has nothing to answer with, so the answer is not sent.
     SMSG_GUILD_CHALLENGE_UPDATE,
     SMSG_CHANNEL_LIST,      // Classic chat index 0x1D (reader rva 0xA10E70), layout not verified yet
+    // Our number for it on 70790+ clients (0x47020D) was worked out, never seen in a sniff. A 1.60.1.70938 client reads it as
+    // another message and crashes entering the world (ERROR #132, a packed GUID read from an empty buffer), on every
+    // character. Without the answer the mail window's To box offers no own characters, as before core PR #57.
+    SMSG_GET_ACCOUNT_CHARACTER_LIST_RESULT,
 };
 
 // Classic layout differs; the client waits for the message, so send a placeholder of the expected size
@@ -85,7 +89,7 @@ constexpr uint32 WithOpcodeGroup(uint32 opcode, uint32 group) { return (group <<
 
 // Hypothesis under test: every opcode group is shifted by +1 in Classic (verified for the connection groups 0x44/0x4C)
 constexpr uint32 FirstRetailClientGroup = 0x2A;
-constexpr uint32 LastRetailClientGroup = RetailClientConnectionGroup;
+[[maybe_unused]] constexpr uint32 LastRetailClientGroup = RetailClientConnectionGroup; // not used yet
 constexpr uint32 FirstRetailServerGroup = 0x45;
 constexpr uint32 LastRetailServerGroup = 0x6A;
 constexpr uint32 ChatRetailServerGroup = 0x4A;
@@ -99,16 +103,28 @@ constexpr uint32 GuildRetailServerGroup = 0x51;
 //    ACCOUNT_DATA_TIMES 0x1B6, SERVER_TIME_OFFSET 0x1C0, TUTORIAL_FLAGS 0x269, MIRROR_VARS 0x372, BATTLENET_RESPONSE 0x2B0;
 //    the inserted message is index 0x98: the official 70338 sniff has PARTY_UPDATE (0x97) unchanged at 0x470097
 // Classic.OpcodeGroupShift: -1 (default) = from the realm's game build (realmlist.gamebuild >= 70291 -> 1), or 0 / 1.
+static uint32 GroupShiftForBuild(uint32 build)
+{
+    static int32 const configured = sConfigMgr->GetIntDefault("Classic.OpcodeGroupShift", -1);
+    if (configured >= 0)
+        return uint32(configured);
+    return build >= 70291 ? 1 : 0;
+}
+
+// the realm's game build (realmlist.gamebuild), read once
+static uint32 CurrentRealmBuild()
+{
+    static uint32 const build = []() -> uint32
+    {
+        std::shared_ptr<Realm const> realm = sRealmList->GetCurrentRealm();
+        return realm ? realm->Build : 0;
+    }();
+    return build;
+}
+
 static uint32 ExtraGroupShift()
 {
-    static uint32 const shift = []() -> uint32
-    {
-        int32 configured = sConfigMgr->GetIntDefault("Classic.OpcodeGroupShift", -1);
-        if (configured >= 0)
-            return uint32(configured);
-        std::shared_ptr<Realm const> realm = sRealmList->GetCurrentRealm();
-        return realm && realm->Build >= 70291 ? 1 : 0;
-    }();
+    static uint32 const shift = GroupShiftForBuild(CurrentRealmBuild());
     return shift;
 }
 
@@ -248,23 +264,31 @@ uint32 ServerFromBaseBuild(uint32 opcode, BuildMessageChanges const& changes)
 }
 }
 
+// Everlake: TranslateClientOpcode / TranslateServerOpcode use this connection's client build once it is known, the realm's build
+// (realmlist.gamebuild) before that. The ForBuild versions do the whole translation for one given build, so a test can check the
+// numbers a 70862 client sees.
 uint32 ClassicOpcodes::TranslateClientOpcode(uint32 classicOpcode, uint32 clientBuild)
 {
-    if (BuildMessageChanges const& changes = Build70790Changes(); AppliesTo(changes, clientBuild))
+    return TranslateClientOpcodeForBuild(classicOpcode, clientBuild ? clientBuild : CurrentRealmBuild());
+}
+
+uint32 ClassicOpcodes::TranslateClientOpcodeForBuild(uint32 classicOpcode, uint32 build)
+{
+    if (BuildMessageChanges const& changes = Build70790Changes(); AppliesTo(changes, build))
     {
         classicOpcode = ClientToBaseBuild(classicOpcode, changes);
         if (classicOpcode == UNKNOWN_OPCODE)
             return UNKNOWN_OPCODE;
     }
 
-    if (BuildMessageChanges const& changes = Build70755Changes(); AppliesTo(changes, clientBuild))
+    if (BuildMessageChanges const& changes = Build70755Changes(); AppliesTo(changes, build))
     {
         classicOpcode = ClientToBaseBuild(classicOpcode, changes);
         if (classicOpcode == UNKNOWN_OPCODE)
             return UNKNOWN_OPCODE;
     }
 
-    if (uint32 shift = ExtraGroupShift())
+    if (uint32 shift = GroupShiftForBuild(build))
     {
         // client: the connection group (70245 0x45) moved to 0x46
         if (OpcodeGroup(classicOpcode) == ClassicClientConnectionGroup + shift)
@@ -282,8 +306,13 @@ uint32 ClassicOpcodes::TranslateClientOpcode(uint32 classicOpcode, uint32 client
 
 uint32 ClassicOpcodes::TranslateServerOpcode(uint32 coreOpcode, uint32 clientBuild)
 {
+    return TranslateServerOpcodeForBuild(coreOpcode, clientBuild ? clientBuild : CurrentRealmBuild());
+}
+
+uint32 ClassicOpcodes::TranslateServerOpcodeForBuild(uint32 coreOpcode, uint32 build)
+{
     uint32 classicOpcode = TranslateServerOpcode70245(coreOpcode);
-    if (uint32 shift = ExtraGroupShift())
+    if (uint32 shift = GroupShiftForBuild(build))
     {
         uint32 group = OpcodeGroup(classicOpcode);
         // Classic.MainGroupInsertIndex = the first 70245 main-group index that moved (0x98, see above)
@@ -293,9 +322,9 @@ uint32 ClassicOpcodes::TranslateServerOpcode(uint32 coreOpcode, uint32 clientBui
         if (group >= FirstRetailServerGroup + 1 && group <= LastRetailServerGroup + 1)
             classicOpcode = WithOpcodeGroup(classicOpcode, group + shift);
     }
-    if (BuildMessageChanges const& changes = Build70755Changes(); AppliesTo(changes, clientBuild))
+    if (BuildMessageChanges const& changes = Build70755Changes(); AppliesTo(changes, build))
         classicOpcode = ServerFromBaseBuild(classicOpcode, changes);
-    if (BuildMessageChanges const& changes = Build70790Changes(); AppliesTo(changes, clientBuild))
+    if (BuildMessageChanges const& changes = Build70790Changes(); AppliesTo(changes, build))
         classicOpcode = ServerFromBaseBuild(classicOpcode, changes);
     return classicOpcode;
 }
@@ -350,7 +379,7 @@ uint32 ClassicOpcodes::TranslateServerOpcode70245(uint32 coreOpcode)
 // expects SERVER_FIRST_ACHIEVEMENTS on the number we send CORPSE_LOCATION on, and the corpse query crashed the game.
 // Classic.Build70790.BlockedServerMessages takes core numbers (hex or decimal); empty by default since the 70790 server numbering
 // (Build70790Changes) sends CORPSE_LOCATION on its own 70790 number.
-std::vector<uint32> const& Build70790Blocked()
+static std::vector<uint32> const& Build70790Blocked()
 {
     static std::vector<uint32> const blocked = ParseOpcodeList(sConfigMgr->GetStringDefault("Classic.Build70790.BlockedServerMessages", ""));
     return blocked;

@@ -149,7 +149,7 @@ enum AuraType : uint32
     SPELL_AURA_PERIODIC_HEALTH_FUNNEL                       = 62,
     SPELL_AURA_MOD_ADDITIONAL_POWER_COST                    = 63,
     SPELL_AURA_PERIODIC_MANA_LEECH                          = 64,
-    SPELL_AURA_MOD_CASTING_SPEED_NOT_STACK                  = 65,
+    SPELL_AURA_MOD_CASTING_SPEED                            = 65,
     SPELL_AURA_FEIGN_DEATH                                  = 66,
     SPELL_AURA_MOD_DISARM                                   = 67,
     SPELL_AURA_MOD_STALKED                                  = 68,
@@ -275,9 +275,9 @@ enum AuraType : uint32
     SPELL_AURA_MOD_UI_HEALING_RANGE                         = 188,
     SPELL_AURA_MOD_RATING                                   = 189,
     SPELL_AURA_MOD_FACTION_REPUTATION_GAIN                  = 190,
-    SPELL_AURA_USE_NORMAL_MOVEMENT_SPEED                    = 191,
+    SPELL_AURA_SPEED_LIMIT_MAX                              = 191,
     SPELL_AURA_MOD_MELEE_RANGED_HASTE                       = 192,
-    SPELL_AURA_MELEE_SLOW                                   = 193,
+    SPELL_AURA_MOD_MELEE_RANGED_CASTING_HASTE               = 193,
     SPELL_AURA_MOD_TARGET_ABSORB_SCHOOL                     = 194,
     SPELL_AURA_LEARN_SPELL                                  = 195,
     SPELL_AURA_MOD_COOLDOWN                                 = 196,  // only 24818 Noxious Breath
@@ -290,18 +290,18 @@ enum AuraType : uint32
     SPELL_AURA_PREVENT_INTERRUPT                            = 203,
     SPELL_AURA_PREVENT_CORPSE_RELEASE                       = 204,  // NYI
     SPELL_AURA_MOD_CHARGE_RECOVERY_BY_TYPE_MASK             = 205,
-    SPELL_AURA_MOD_INCREASE_VEHICLE_FLIGHT_SPEED            = 206,
+    SPELL_AURA_MOD_INCREASE_FLIGHT_SPEED                    = 206,
     SPELL_AURA_MOD_INCREASE_MOUNTED_FLIGHT_SPEED            = 207,
-    SPELL_AURA_MOD_INCREASE_FLIGHT_SPEED                    = 208,
-    SPELL_AURA_MOD_MOUNTED_FLIGHT_SPEED_ALWAYS              = 209,
-    SPELL_AURA_MOD_VEHICLE_SPEED_ALWAYS                     = 210,
-    SPELL_AURA_MOD_FLIGHT_SPEED_NOT_STACK                   = 211,
+    SPELL_AURA_MOD_INCREASE_FLIGHT_SPEED_ALWAYS             = 208,
+    SPELL_AURA_MOD_INCREASE_MOUNTED_FLIGHT_SPEED_ALWAYS     = 209,
+    SPELL_AURA_MOD_INCREASE_FLIGHT_SPEED_NOT_STACK          = 210,
+    SPELL_AURA_MOD_INCREASE_MOUNTED_FLIGHT_SPEED_NOT_STACK  = 211,
     SPELL_AURA_MOD_HONOR_GAIN_PCT_FROM_SOURCE               = 212,
     SPELL_AURA_MOD_RAGE_FROM_DAMAGE_DEALT                   = 213,
     SPELL_AURA_214                                          = 214,
     SPELL_AURA_ARENA_PREPARATION                            = 215,
-    SPELL_AURA_HASTE_SPELLS                                 = 216,
-    SPELL_AURA_MOD_MELEE_HASTE_2                            = 217,
+    SPELL_AURA_MOD_SPELL_SLOW_NO_STACK                      = 216,
+    SPELL_AURA_MOD_MELEE_SLOW_NO_STACK                      = 217,
     SPELL_AURA_ADD_PCT_MODIFIER_BY_SPELL_LABEL              = 218,
     SPELL_AURA_ADD_FLAT_MODIFIER_BY_SPELL_LABEL             = 219,
     SPELL_AURA_MOD_ABILITY_SCHOOL_MASK                      = 220,  // NYI
@@ -336,7 +336,7 @@ enum AuraType : uint32
     SPELL_AURA_MOD_DAMAGE_PERCENT_DONE_BY_TARGET_AURA_MECHANIC = 249,
     SPELL_AURA_MOD_INCREASE_HEALTH_2                        = 250,
     SPELL_AURA_MOD_ENEMY_DODGE                              = 251,
-    SPELL_AURA_MOD_SPEED_SLOW_ALL                           = 252,
+    SPELL_AURA_MOD_MELEE_RANGED_CASTING_SLOW_NO_STACK       = 252,
     SPELL_AURA_MOD_BLOCK_CRIT_CHANCE                        = 253,
     SPELL_AURA_MOD_DISARM_OFFHAND                           = 254,
     SPELL_AURA_MOD_MECHANIC_DAMAGE_TAKEN_PERCENT            = 255,
@@ -389,7 +389,7 @@ enum AuraType : uint32
     SPELL_AURA_302                                          = 302,
     SPELL_AURA_MOD_DAMAGE_DONE_VERSUS_AURASTATE             = 303,
     SPELL_AURA_MOD_FAKE_INEBRIATE                           = 304,
-    SPELL_AURA_MOD_MINIMUM_SPEED                            = 305,
+    SPELL_AURA_SPEED_LIMIT_MIN_PCT                          = 305,
     SPELL_AURA_MOD_CRIT_CHANCE_FOR_CASTER                   = 306,
     SPELL_AURA_CAST_WHILE_WALKING_BY_SPELL_LABEL            = 307,
     SPELL_AURA_MOD_CRIT_CHANCE_FOR_CASTER_WITH_ABILITIES    = 308,
@@ -403,7 +403,7 @@ enum AuraType : uint32
     SPELL_AURA_SCHOOL_ABSORB_OVERKILL                       = 316,
     SPELL_AURA_MOD_SPELL_POWER_PCT                          = 317,
     SPELL_AURA_MASTERY                                      = 318,
-    SPELL_AURA_MOD_MELEE_HASTE_3                            = 319,
+    SPELL_AURA_MOD_MELEE_HASTE_NO_REGEN                     = 319,
     SPELL_AURA_320                                          = 320,
     SPELL_AURA_MOD_NO_ACTIONS                               = 321,
     SPELL_AURA_INTERFERE_ENEMY_TARGETING                    = 322,
@@ -426,7 +426,7 @@ enum AuraType : uint32
     SPELL_AURA_MOD_CRIT_CHANCE_FOR_CASTER_PET               = 339,
     SPELL_AURA_MOD_RESURRECTED_HEALTH_BY_GUILD_MEMBER       = 340,  // Increases health gained when resurrected by a guild member by X
     SPELL_AURA_MOD_SPELL_CATEGORY_COOLDOWN                  = 341,  // Modifies cooldown of all spells using affected category
-    SPELL_AURA_MOD_MELEE_RANGED_HASTE_2                     = 342,
+    SPELL_AURA_MOD_MELEE_RANGED_HASTE_NO_REGEN              = 342,
     SPELL_AURA_MOD_MELEE_DAMAGE_FROM_CASTER                 = 343,
     SPELL_AURA_MOD_AUTOATTACK_DAMAGE                        = 344,
     SPELL_AURA_BYPASS_ARMOR_FOR_CASTER                      = 345,
@@ -439,7 +439,7 @@ enum AuraType : uint32
     SPELL_AURA_352                                          = 352,
     SPELL_AURA_MOD_CAMOUFLAGE                               = 353,  // NYI
     SPELL_AURA_MOD_HEALING_DONE_PCT_VERSUS_TARGET_HEALTH    = 354,  // Restoration Shaman mastery - mod healing based on target's health (less = more healing)
-    SPELL_AURA_MOD_CASTING_SPEED                            = 355,  // NYI
+    SPELL_AURA_MOD_CASTING_SLOW_NO_STACK                    = 355,
     SPELL_AURA_PROVIDE_TOTEM_CATEGORY                       = 356,
     SPELL_AURA_ENABLE_BOSS1_UNIT_FRAME                      = 357,
     SPELL_AURA_WORGEN_ALTERED_FORM                          = 358,
@@ -457,7 +457,7 @@ enum AuraType : uint32
     SPELL_AURA_SPELL_OVERRIDE_NAME_GROUP                    = 370,  // picks a random SpellOverrideName id from a group (group id in miscValue)
     SPELL_AURA_DISABLE_AUTOATTACK                           = 371,
     SPELL_AURA_OVERRIDE_MOUNT_FROM_SET                      = 372,  // NYI
-    SPELL_AURA_MOD_SPEED_NO_CONTROL                         = 373,  // NYI
+    SPELL_AURA_MOD_INCREASE_SPEED_NO_CONTROL                = 373,
     SPELL_AURA_MODIFY_FALL_DAMAGE_PCT                       = 374,
     SPELL_AURA_HIDE_MODEL_AND_EQUIPEMENT_SLOTS              = 375,
     SPELL_AURA_MOD_CURRENCY_GAIN_FROM_SOURCE                = 376,  // NYI
@@ -521,7 +521,7 @@ enum AuraType : uint32
     SPELL_AURA_434                                          = 434,
     SPELL_AURA_435                                          = 435,
     SPELL_AURA_MOD_ENVIRONMENTAL_DAMAGE_TAKEN               = 436,
-    SPELL_AURA_MOD_MINIMUM_SPEED_RATE                       = 437,
+    SPELL_AURA_SET_SPEED                                    = 437,
     SPELL_AURA_PRELOAD_PHASE                                = 438,  // NYI
     SPELL_AURA_439                                          = 439,
     SPELL_AURA_MOD_MULTISTRIKE_DAMAGE                       = 440,  // NYI
@@ -611,7 +611,7 @@ enum AuraType : uint32
     SPELL_AURA_MOD_ADV_FLYING_OVER_MAX_DECELERATION         = 524,
     SPELL_AURA_DISPLAY_PROFESSION_EQUIPMENT                 = 525, // NYI; MiscValue[0] = Profession (enum, not id)
     SPELL_AURA_526                                          = 526,
-    SPELL_AURA_527                                          = 527,
+    SPELL_AURA_MOD_INCREASE_BACKWARD_SPEED                  = 527,
     SPELL_AURA_ALLOW_BLOCKING_SPELLS                        = 528, // NYI
     SPELL_AURA_MOD_SPELL_BLOCK_CHANCE                       = 529, // NYI
     SPELL_AURA_530                                          = 530,
@@ -665,7 +665,7 @@ enum AuraType : uint32
     SPELL_AURA_578                                          = 578,
     SPELL_AURA_579                                          = 579,
     SPELL_AURA_580                                          = 580,
-    SPELL_AURA_581                                          = 581,
+    SPELL_AURA_MOD_RANGED_SLOW_NO_STACK                     = 581,
     SPELL_AURA_582                                          = 582,
     SPELL_AURA_583                                          = 583,
     SPELL_AURA_584                                          = 584,
@@ -699,7 +699,7 @@ enum AuraType : uint32
     SPELL_AURA_612                                          = 612,
     SPELL_AURA_613                                          = 613,
     SPELL_AURA_614                                          = 614,
-    SPELL_AURA_615                                          = 615,
+    SPELL_AURA_MOD_RANGED_HASTE_NO_REGEN                    = 615,
     SPELL_AURA_616                                          = 616,
     SPELL_AURA_617                                          = 617,
     SPELL_AURA_618                                          = 618,

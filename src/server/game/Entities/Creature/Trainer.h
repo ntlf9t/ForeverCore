@@ -20,12 +20,14 @@
 
 #include "Common.h"
 #include <array>
+#include <functional>
 #include <string>
 #include <vector>
 
 class Creature;
 class ObjectMgr;
 class Player;
+class SpellInfo;
 
 namespace Trainer
 {
@@ -61,7 +63,15 @@ namespace Trainer
 
         bool IsCastable() const;
         bool TeachesPetAbility() const;
+        bool IsCastToTeach() const;     // IsCastToTeach below, with SpellMgr::IsPetAbility
     };
+
+    // Classic 1.60 (advocaite/TrinityCore#113): a pet training spell (4195 Great Stamina, LEARN_SPELL of the pet ability 4187)
+    // has a LEARN_SPELL or LEARN_PET_SPELL effect whose trigger spell is a pet ability (isPetAbility: on a pet family skill line).
+    TC_GAME_API bool IsPetTrainingSpell(SpellInfo const& spellInfo, std::function<bool(uint32)> const& isPetAbility);
+    // A trainer casts a spell with a LEARN_SPELL effect on the player (a profession rank teaches its trigger spell), but a pet
+    // training spell is learned: the hunter keeps it and the Beast Training window casts it at any pet.
+    TC_GAME_API bool IsCastToTeach(SpellInfo const& spellInfo, std::function<bool(uint32)> const& isPetAbility);
 
     class Trainer
     {

@@ -28,10 +28,11 @@ namespace ClassicManaRegen
 {
     constexpr int64_t FiveSecondRuleMs = 5000;
 
-    // True while the regeneration is interrupted: mana was paid less than 5 s ago, or an aura interrupts it.
-    inline bool IsInterrupted(int64_t msSinceManaSpent, bool interruptAura)
+    // True while the regeneration is interrupted: mana was paid less than 5 s ago, a channel that paid mana is still running, or an aura
+    // interrupts it.
+    inline bool IsInterrupted(int64_t msSinceManaSpent, bool interruptAura, bool paidChannelRunning = false)
     {
-        return interruptAura || msSinceManaSpent < FiveSecondRuleMs;
+        return interruptAura || paidChannelRunning || msSinceManaSpent < FiveSecondRuleMs;
     }
 }
 

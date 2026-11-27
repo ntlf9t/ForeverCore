@@ -23,6 +23,7 @@
 #include "ScriptMgr.h"
 #include "Map.h"
 #include "MotionMaster.h"
+#include "Player.h"
 #include "ScriptedCreature.h"
 #include "TemporarySummon.h"
 

@@ -19,6 +19,7 @@
 #include "Creature.h"
 #include "CreatureRandomBuff.h"
 #include "DB2Stores.h"
+#include "DungeonCarryRule.h"
 #include "FlatSet.h"
 #include "Formulas.h"
 #include "Group.h"
@@ -61,7 +62,7 @@
  // 3.2.1. Initialize initial XP amount based on killer's level.
  // 3.2.2. Reward killer (see 4. for more details).
  // 4. Reward player.
- // 4.1. Give honor (player must be alive and not on BG).
+ // 4.1. Give honor (player must be alive).
  // 4.2. Give XP.
  // 4.2.1. If player is in group, adjust XP:
  //        * set to 0 if player's level is more than maximum level of not gray member;
@@ -177,8 +178,9 @@ inline void KillRewarder::_RewardXP(Player* player, float rate)
         // 4.2.3. Give XP to player.
         player->GiveXP(xp, _victim, _groupRate);
         if (Pet* pet = player->GetPet())
-            // 4.2.4. If player has pet, reward pet with XP (100% for single player, 50% for group case).
-            pet->GivePetXP(player->GetGroup() ? xp / 2 : xp);
+            // 4.2.4. If player has pet, reward pet with XP. Classic 1.60 (WoW Forever, Classic Hunter Lodge wiki, Pet-Fundamentals): the
+            //        pet gets the hunter's own kill XP before the rested bonus (GiveXP adds that), alone or in a group; it was halved in a group.
+            pet->GivePetXP(xp);
     }
 }
 
@@ -243,8 +245,9 @@ void KillRewarder::_RewardGroup(Group const* group, Player const* killer)
             _InitXP(_maxNotGrayMember, killer);
         // To avoid unnecessary calculations and calls,
         // proceed only if XP is not ZERO or player is not on battleground
-        // (battleground rewards only XP, that's why).
-        if (!_isBattleGround || _xp)
+        // (a battleground creature kill rewards only XP; a battleground player kill also pays honor, advocaite/TrinityCore#182,
+        // so it must not hang on the kill XP, which Rate.XP.BattlegroundKill = 0 makes 0).
+        if (!_isBattleGround || _isPvP || _xp)
         {
             bool const isDungeon = !_isPvP && sMapStore.LookupEntry(killer->GetMapId())->IsDungeon();
             if (!_isBattleGround)
@@ -289,8 +292,8 @@ void KillRewarder::Reward()
             _InitXP(killer, killer);
             // To avoid unnecessary calculations and calls,
             // proceed only if XP is not ZERO or player is not on battleground
-            // (battleground rewards only XP, that's why).
-            if (!_isBattleGround || _xp)
+            // (or the victim is a player: honor, see 3.1.)
+            if (!_isBattleGround || _isPvP || _xp)
                 // 3.2.2. Reward killer.
                 _RewardPlayer(killer, false);
         }

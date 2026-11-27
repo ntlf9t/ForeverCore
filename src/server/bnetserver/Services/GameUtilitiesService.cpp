@@ -27,6 +27,7 @@
 #include "Session.h"
 #include "Util.h"
 #include "Types.h"
+#include "Util.h"
 #include <zlib.h>
 
 namespace Battlenet::Services

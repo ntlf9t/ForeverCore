@@ -101,16 +101,21 @@ if(MSAN)
   message(STATUS "Clang: Enabled Memory Sanitizer MSan")
 endif()
 
+# Everlake: no alignment check. The client data records (DB2Structure.h) are packed to 1 byte on purpose to match the
+# file layout, so arrays, strings and flag types inside them sit at odd offsets and every call on them is reported.
+# x86-64 and ARM64 handle these unaligned loads.
 if(UBSAN)
   target_compile_options(trinity-compile-option-interface
     INTERFACE
       -fno-omit-frame-pointer
-      -fsanitize=undefined)
+      -fsanitize=undefined
+      -fno-sanitize=alignment)
 
   target_link_options(trinity-compile-option-interface
     INTERFACE
       -fno-omit-frame-pointer
-      -fsanitize=undefined)
+      -fsanitize=undefined
+      -fno-sanitize=alignment)
 
   message(STATUS "Clang: Enabled Undefined Behavior Sanitizer UBSan")
 endif()

@@ -49,7 +49,6 @@ constexpr float kFlightSpeedYds = 30.0f;
 // Fixed costs (cast time + loading screen).
 constexpr float kPortalCost     = 5.0f;     // cast + zone
 constexpr float kShipBoardCost  = 60.0f;    // half a typical 2-min period
-constexpr float kHearthCost     = 12.0f;    // 10s cast + small zone fee
 constexpr float kTeleportCost   = 3.0f;     // dungeon trigger
 // Elevator ride: half the average platform period (~15s) + a couple
 // seconds for stepping on/off. Calibrated below ship cost so the

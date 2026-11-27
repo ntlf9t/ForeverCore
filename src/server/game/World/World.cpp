@@ -27,6 +27,7 @@
 #include "ArenaTeamMgr.h"
 #include "AuctionHouseBot.h"
 #include "AuctionHouseMgr.h"
+#include "AutoRestartSchedule.h"
 #include "AuthenticationPackets.h"
 #include "BattlePetMgr.h"
 #include "BattlefieldMgr.h"
@@ -68,6 +69,7 @@
 #include "ItemBonusMgr.h"
 #include "ItemScoreAffix.h"
 #include "CreatureRandomBuff.h"
+#include "ItemStackSize.h"
 #include "LFGMgr.h"
 #include "Language.h"
 #include "LanguageMgr.h"
@@ -639,7 +641,7 @@ void World::LoadConfigSettings(bool reload)
         { .Name = "AllowTwoSide.Interaction.Channel"sv, .DefaultValue = false, .Index = CONFIG_ALLOW_TWO_SIDE_INTERACTION_CHANNEL },
         { .Name = "AllowTwoSide.Interaction.Group"sv, .DefaultValue = false, .Index = CONFIG_ALLOW_TWO_SIDE_INTERACTION_GROUP },
         { .Name = "AllowTwoSide.Interaction.Guild"sv, .DefaultValue = false, .Index = CONFIG_ALLOW_TWO_SIDE_INTERACTION_GUILD },
-        { .Name = "AllowTwoSide.Interaction.Auction"sv, .DefaultValue = true, .Index = CONFIG_ALLOW_TWO_SIDE_INTERACTION_AUCTION },
+        { .Name = "AllowTwoSide.Interaction.Auction"sv, .DefaultValue = false, .Index = CONFIG_ALLOW_TWO_SIDE_INTERACTION_AUCTION },
         { .Name = "AllowTwoSide.Trade"sv, .DefaultValue = false, .Index = CONFIG_ALLOW_TWO_SIDE_TRADE },
         { .Name = "ExtendedAccountNameLengthLimit"sv, .DefaultValue = false, .Index = CONFIG_EXTENDED_ACCOUNT_NAME_LENGTH_LIMIT },
         { .Name = "CharacterCreating.DisableAlliedRaceAchievementRequirement"sv, .DefaultValue = false, .Index = CONFIG_CHARACTER_CREATING_DISABLE_ALLIED_RACE_ACHIEVEMENT_REQUIREMENT },
@@ -807,7 +809,7 @@ void World::LoadConfigSettings(bool reload)
         { .Name = "RecruitAFriend.MaxLevel"sv, .DefaultValue = GetMaxLevelForExpansion(CURRENT_EXPANSION), .Index = CONFIG_MAX_RECRUIT_A_FRIEND_BONUS_PLAYER_LEVEL, .Min = 1 },
         { .Name = "RecruitAFriend.MaxDifference"sv, .DefaultValue = 4, .Index = CONFIG_MAX_RECRUIT_A_FRIEND_BONUS_PLAYER_LEVEL_DIFFERENCE },
         { .Name = "ResetSchedule.WeekDay"sv, .DefaultValue = 2, .Index = CONFIG_RESET_SCHEDULE_WEEK_DAY, .Min = 0, .Max = 6 },
-        { .Name = "ResetSchedule.Hour"sv, .DefaultValue = 8, .Index = CONFIG_RESET_SCHEDULE_HOUR, .Min = 0, .Max = 23 },
+        { .Name = "ResetSchedule.Hour"sv, .DefaultValue = 15, .Index = CONFIG_RESET_SCHEDULE_HOUR, .Min = 0, .Max = 23 },
         { .Name = "Instance.UnloadDelay"sv, .DefaultValue = 30 * MINUTE * IN_MILLISECONDS, .Index = CONFIG_INSTANCE_UNLOAD_DELAY },
         { .Name = "Quests.DailyResetTime"sv, .DefaultValue = 3, .Index = CONFIG_DAILY_QUEST_RESET_TIME_HOUR, .Min = 0, .Max = 23 },
         { .Name = "Quests.WeeklyResetWDay"sv, .DefaultValue = 3, .Index = CONFIG_WEEKLY_QUEST_RESET_TIME_WDAY, .Min = 0, .Max = 6 },
@@ -917,7 +919,7 @@ void World::LoadConfigSettings(bool reload)
         { .Name = "Battleground.RewardWinnerConquestLast"sv, .DefaultValue = 5000, .Index = CONFIG_BG_REWARD_WINNER_CONQUEST_LAST },
         { .Name = "Battleground.RewardLoserHonorFirst"sv, .DefaultValue = 4500, .Index = CONFIG_BG_REWARD_LOSER_HONOR_FIRST },
         { .Name = "Battleground.RewardLoserHonorLast"sv, .DefaultValue = 3500, .Index = CONFIG_BG_REWARD_LOSER_HONOR_LAST },
-        { .Name = "AccountInstancesPerHour"sv, .DefaultValue = 10, .Index = CONFIG_MAX_INSTANCES_PER_HOUR },
+        { .Name = "AccountInstancesPerHour"sv, .DefaultValue = 5, .Index = CONFIG_MAX_INSTANCES_PER_HOUR },
         { .Name = "AutoBroadcast.Center"sv, .DefaultValue = 0, .Index = CONFIG_AUTOBROADCAST_CENTER },
         { .Name = "AutoBroadcast.Timer"sv, .DefaultValue = 60000, .Index = CONFIG_AUTOBROADCAST_INTERVAL },
         { .Name = "MaxPingTime"sv, .DefaultValue = 30, .Index = CONFIG_DB_PING_INTERVAL },
@@ -1074,6 +1076,7 @@ void World::LoadConfigSettings(bool reload)
         { .Name = "Rate.MoveSpeed"sv, .DefaultValue = 1.0f, .Index = RATE_MOVESPEED, .Min = 0.01f },
         { .Name = "Rate.MoveSpeed.Creature"sv, .DefaultValue = 1.0f, .Index = RATE_MOVESPEED_CREATURE, .Min = 0.01f },
         { .Name = "Rate.Corpse.Decay.Looted"sv, .DefaultValue = 0.5f, .Index = RATE_CORPSE_DECAY_LOOTED },
+        { .Name = "Rate.PetHappiness.Decay"sv, .DefaultValue = 1.0f, .Index = RATE_PET_HAPPINESS_DECAY, .Min = 0.0f, .Max = 2.0f },
         { .Name = "DurabilityLoss.OnDeath"sv, .DefaultValue = 10.0f, .Index = RATE_DURABILITY_LOSS_ON_DEATH, .Min = 0.0f, .Max = 100.0f },
         { .Name = "DurabilityLossChance.Damage"sv, .DefaultValue = 0.5f, .Index = RATE_DURABILITY_LOSS_DAMAGE, .Min = 0.0f },
         { .Name = "DurabilityLossChance.Absorb"sv, .DefaultValue = 0.5f, .Index = RATE_DURABILITY_LOSS_ABSORB, .Min = 0.0f },
@@ -1479,6 +1482,8 @@ bool World::SetInitialWorldSettings()
 
     MMAP::MMapManager* mmmgr = MMAP::MMapManager::instance();
     mmmgr->InitializeThreadUnsafe(mapData);
+    mmmgr->SetWorldQueryNodes(sConfigMgr->GetIntDefault("Pathfinding.NavMeshQueryNodes", 32768));
+    TC_LOG_INFO("server.loading", "Navmesh A* node pool: {} open world, {} instances", mmmgr->GetWorldQueryNodes(), MMAP::MMapManager::INSTANCE_QUERY_NODES);
 
     ///- Initialize static helper structures
     AIRegistry::Initialize();
@@ -1623,6 +1628,10 @@ bool World::SetInitialWorldSettings()
 
     TC_LOG_INFO("server.loading", "Loading Disables");                         // must be before loading quests and items
     DisableMgr::LoadDisables();
+
+    // Everlake-only (docs/everlake-changes.md): keep this call through upstream merges
+    TC_LOG_INFO("server.loading", "Loading item stack sizes...");              // ItemSparse edits + client hotfixes, before LoadItemTemplates
+    ItemStackSize::Apply();
 
     TC_LOG_INFO("server.loading", "Loading Items...");                         // must be after LoadRandomEnchantmentsTable and LoadPageTexts
     sObjectMgr->LoadItemTemplates();
@@ -1794,6 +1803,9 @@ bool World::SetInitialWorldSettings()
 
     TC_LOG_INFO("server.loading", "Loading Vehicle Seat Addon Data...");
     sObjectMgr->LoadVehicleSeatAddon();                         // must be after loading DBC
+
+    TC_LOG_INFO("server.loading", "Loading Summon Properties Addon Data...");
+    sObjectMgr->LoadSummonPropertiesAddon();                    // must be after loading DBC
 
     TC_LOG_INFO("server.loading", "Loading SpellArea Data...");                // must be after quest load
     sSpellMgr->LoadSpellAreas();
@@ -2221,6 +2233,9 @@ bool World::SetInitialWorldSettings()
 
     TC_LOG_INFO("server.loading", "Calculate guild limitation(s) reset time...");
     InitGuildResetTime();
+
+    TC_LOG_INFO("server.loading", "Calculate next scheduled restart time...");
+    InitAutoRestartTime();
 
     TC_LOG_INFO("server.loading", "Calculate next currency reset time...");
     InitCurrencyResetTime();
@@ -3060,6 +3075,16 @@ void World::_UpdateGameTime()
             ShutdownMsg();
         }
     }
+
+    ///- ServerAutoShutdown.*: start the planned restart's countdown, unless a shutdown or restart is already under way
+    if (m_NextAutoRestartAnnounce && GameTime::GetGameTime() >= m_NextAutoRestartAnnounce)
+    {
+        m_NextAutoRestartAnnounce = 0;
+        if (IsStopped() || IsShuttingDown())
+            TC_LOG_INFO("misc", "Scheduled restart: a shutdown or restart is already counting down, leaving it alone");
+        else
+            ShutdownServ(uint32(std::max<time_t>(m_NextAutoRestart - GameTime::GetGameTime(), 1)), SHUTDOWN_MASK_RESTART, RESTART_EXIT_CODE);
+    }
 }
 
 /// Shutdown the server
@@ -3442,6 +3467,58 @@ void World::InitCalendarOldEventsDeletionTime()
         SetPersistentWorldVariable(NextOldCalendarEventDeletionTimeVarId, uint64(m_NextCalendarOldEventsDeletionTime));
 }
 
+void World::InitAutoRestartTime()
+{
+    m_NextAutoRestartAnnounce = 0;
+    m_NextAutoRestart = 0;
+
+    if (!sConfigMgr->GetBoolDefault("ServerAutoShutdown.Enabled", false))
+        return;
+
+    int32 const weekday = sConfigMgr->GetIntDefault("ServerAutoShutdown.Weekday", -1);
+    int32 const everyDays = sConfigMgr->GetIntDefault("ServerAutoShutdown.EveryDays", 1);
+    if ((weekday < 0 || weekday > 6) && (everyDays < 1 || everyDays > 365))
+    {
+        TC_LOG_ERROR("server.loading", "ServerAutoShutdown.EveryDays = {} is not 1-365: no scheduled restart", everyDays);
+        return;
+    }
+
+    int32 preAnnounce = sConfigMgr->GetIntDefault("ServerAutoShutdown.PreAnnounce.Seconds", HOUR);
+    if (preAnnounce < 0 || preAnnounce > DAY)
+    {
+        TC_LOG_ERROR("server.loading", "ServerAutoShutdown.PreAnnounce.Seconds = {} is not 0-86400: using 3600", preAnnounce);
+        preAnnounce = HOUR;
+    }
+
+    time_t const now = GameTime::GetGameTime();
+    Optional<Trinity::AutoRestart::Plan> next;
+    for (char const* key : { "ServerAutoShutdown.Time", "ServerAutoShutdown.Time2" })
+    {
+        std::string const text = sConfigMgr->GetStringDefault(key, key == std::string_view("ServerAutoShutdown.Time") ? "04:00:00" : "");
+        if (text.empty())
+            continue;
+
+        Optional<Trinity::AutoRestart::TimeOfDay> time = Trinity::AutoRestart::ParseTimeOfDay(text);
+        if (!time)
+        {
+            TC_LOG_ERROR("server.loading", "{} = \"{}\" is not HH:MM:SS: this restart time is not used", key, text);
+            continue;
+        }
+
+        Trinity::AutoRestart::Plan plan = Trinity::AutoRestart::PlanNext(now, *time, weekday, uint32(everyDays), uint32(preAnnounce));
+        if (!next || plan.RestartAt < next->RestartAt)
+            next = plan;
+    }
+
+    if (!next)
+        return;
+
+    m_NextAutoRestartAnnounce = next->AnnounceAt;
+    m_NextAutoRestart = next->RestartAt;
+    TC_LOG_INFO("server.loading", "Scheduled restart in {}, countdown from {} before",
+        secsToTimeString(uint64(next->RestartAt - now)), secsToTimeString(next->AnnounceSeconds));
+}
+
 void World::InitGuildResetTime()
 {
     time_t gtime = GetPersistentWorldVariable(NextGuildDailyResetTimeVarId);
@@ -3597,7 +3674,7 @@ void World::UpdateAreaDependentAuras()
 bool World::IsBattlePetJournalLockAcquired(ObjectGuid battlenetAccountGuid)
 {
     for (auto&& sessionForBnet : Trinity::Containers::MapEqualRange(m_sessionsByBnetGuid, battlenetAccountGuid))
-        if (sessionForBnet.second->GetBattlePetMgr()->HasJournalLock())
+        if (sessionForBnet.second->GetBattlePetMgr() && sessionForBnet.second->GetBattlePetMgr()->HasJournalLock())
             return true;
 
     return false;

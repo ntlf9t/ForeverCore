@@ -264,13 +264,7 @@ void WorldObject::SetIsStoredInWorldObjectGridContainer(bool on)
 
 bool WorldObject::IsStoredInWorldObjectGridContainer() const
 {
-    if (m_isStoredInWorldObjectGridContainer)
-        return true;
-
-    if (ToCreature() && ToCreature()->m_isTempWorldObject)
-        return true;
-
-    return false;
+    return m_isStoredInWorldObjectGridContainer || m_isTempWorldObject;
 }
 
 void WorldObject::setActive(bool on)
@@ -1247,6 +1241,10 @@ TempSummon* Map::SummonCreature(uint32 entry, Position const& pos, SummonPropert
         }
     }
 
+    InitialPhaseShift phase;
+    if (summoner && !(properties && properties->GetFlags().HasFlag(SummonPropertiesFlags::IgnoreSummonerPhase)))
+        phase = summoner;
+
     Unit* summonerUnit = summoner ? summoner->ToUnit() : nullptr;
 
     TempSummon* summon = nullptr;
@@ -1269,7 +1267,7 @@ TempSummon* Map::SummonCreature(uint32 entry, Position const& pos, SummonPropert
             break;
     }
 
-    if (!summon->Create(GenerateLowGuid<HighGuid::Creature>(), this, entry, pos, nullptr, vehId, true))
+    if (!summon->Create(GenerateLowGuid<HighGuid::Creature>(), this, phase, entry, pos, nullptr, vehId, true))
     {
         delete summon;
         return nullptr;
@@ -1281,9 +1279,6 @@ TempSummon* Map::SummonCreature(uint32 entry, Position const& pos, SummonPropert
         // This object must be added to transport before adding to map for the client to properly display it
         transport->AddPassenger(summon, transport->GetPositionOffsetTo(pos));
     }
-
-    if (summoner && !(properties && properties->GetFlags().HasFlag(SummonPropertiesFlags::IgnoreSummonerPhase)))
-        PhasingHandler::InheritPhaseShift(summon, summoner);
 
     summon->SetCreatedBySpell(spellId);
 
@@ -1465,11 +1460,9 @@ GameObject* WorldObject::SummonGameObject(uint32 entry, Position const& pos, Qua
     }
 
     Map* map = GetMap();
-    GameObject* go = GameObject::CreateGameObject(entry, map, pos, rot, 255, GO_STATE_READY);
+    GameObject* go = GameObject::CreateGameObject(entry, map, pos, rot, InitialPhaseShift(this), 255, GO_STATE_READY);
     if (!go)
         return nullptr;
-
-    PhasingHandler::InheritPhaseShift(go, this);
 
     go->SetRespawnTime(respawnTime.count());
     if (GetTypeId() == TYPEID_PLAYER || (GetTypeId() == TYPEID_UNIT && summonType == GO_SUMMON_TIMED_OR_CORPSE_DESPAWN)) //not sure how to handle this
@@ -1946,6 +1939,12 @@ SpellMissInfo WorldObject::MagicSpellHitResult(Unit* victim, SpellInfo const* sp
         if (modHitChance < 22.0f)
             modHitChance = 22.0f;
 
+        // Classic 1.60 (WoW Forever): a binary spell takes its full resist from the level-based hit only, and every spell hit bonus (talents,
+        // gear, the target's auras) is added after it: hit = level hit x (1 - average resist) + spell hit. So spell hit past the level-based
+        // miss still counteracts the resist (wowsims/forever, MIT, sim/core/spell_result.go; no log measurement). Vanilla (VMaNGOS)
+        // multiplied the whole hit, bonus included, by (1 - average resist).
+        float const levelHitChance = modHitChance;
+
         // Spellmod from SpellModOp::HitChance
         if (Player* modOwner = GetSpellModOwner())
             modOwner->ApplySpellMod(spellInfo, SpellModOp::HitChance, modHitChance);
@@ -1957,19 +1956,21 @@ SpellMissInfo WorldObject::MagicSpellHitResult(Unit* victim, SpellInfo const* sp
             modHitChance += victim->GetTotalAuraModifierByMiscMask(SPELL_AURA_MOD_ATTACKER_SPELL_HIT_CHANCE, schoolMask);
         }
 
-        float HitChance = modHitChance;
         // Increase hit chance from attacker SPELL_AURA_MOD_SPELL_HIT_CHANCE and attacker ratings
         if (Unit const* unit = ToUnit())
-            HitChance += unit->m_modSpellHitChance;
+            modHitChance += unit->m_modSpellHitChance;
+        float const hitBonus = modHitChance - levelHitChance;
 
-        // Classic 1.60 (vanilla, VMaNGOS MagicSpellHitChance): binary spells are fully resisted with the target's average resist
-        // chance for their school (no partial resists for them, Unit::CalcSpellResistedDamage)
+        float binaryHitChance = levelHitChance;
         if (spellInfo->HasAttribute(SPELL_ATTR0_CU_BINARY_SPELL) && (schoolMask & SPELL_SCHOOL_MASK_MAGIC)
             && !((schoolMask & SPELL_SCHOOL_MASK_HOLY) && victim->GetTypeId() != TYPEID_UNIT))
-            HitChance *= 1.0f - Unit::CalculateAverageResistReduction(this, schoolMask, victim, spellInfo);
+            binaryHitChance *= 1.0f - Unit::CalculateAverageResistReduction(this, schoolMask, victim, spellInfo);
+        float HitChance = binaryHitChance + hitBonus;
 
-        // vanilla: always at least 1% hit and at least 1% miss
-        RoundToInterval(HitChance, 1.0f, 99.0f);
+        // Classic 1.60 (WoW Forever): no 1% minimum miss and no 99% hit cap. Spell hit past the level-based miss keeps counting (against a
+        // binary spell's resist, Unit::CalculateAverageResistReduction above), and a target 4 or more levels below is never missed
+        // (wowsims/forever, MIT, sim/core/spell_result.go; no log measurement). Vanilla kept 1% hit and 1% miss.
+        RoundToInterval(HitChance, 0.0f, 100.0f);
 
         return 100.0f - HitChance;
     }();

@@ -9,6 +9,11 @@
 // own spell from the enchantment id (client SpellItemEnchantment and the imbue spells' enchant effects, 70532).
 namespace ClassicWeaponImbue
 {
+// The dummy aura every Windfury Weapon enchantment applies; its SpellAuraOptions hold the imbue's internal cooldown
+constexpr uint32 WINDFURY_WEAPON_AURA = 439431;
+// 439431 ProcCategoryRecovery in the 70790 client and live 70938 (used when the spell is missing)
+constexpr uint32 WINDFURY_WEAPON_ICD_MS = 1500;
+
 // Windfury Attack the rank grants on a 20% melee hit
 constexpr uint32 WindfuryAttackForEnchant(uint32 enchantId)
 {
@@ -17,7 +22,8 @@ constexpr uint32 WindfuryAttackForEnchant(uint32 enchantId)
         case 283:  return 8233;     // Windfury Weapon rank 1 (spell 8232)
         case 284:  return 8236;     // rank 2 (8235)
         case 525:  return 10484;    // rank 3 (10486)
-        case 1669: return 16361;    // rank 4 (16362)
+        case 1669:                  // rank 4 (16362)
+        case 7569: return 16361;    // Forever's own rank 4 enchantment (spell 461636), as ClassicProcRules::WindfuryRankSpell
         default:   return 0;
     }
 }

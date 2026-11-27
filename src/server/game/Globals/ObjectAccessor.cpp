@@ -16,9 +16,11 @@
  */
 
 #include "ObjectAccessor.h"
+#include "CharacterCache.h"
 #include "Corpse.h"
 #include "Creature.h"
 #include "DynamicObject.h"
+#include "FullName.h"
 #include "GameObject.h"
 #include "GridNotifiers.h"
 #include "Item.h"
@@ -28,6 +30,7 @@
 #include "Player.h"
 #include "Transport.h"
 #include <mutex>
+#include <vector>
 
 template<class T>
 void HashMapHolder<T>::Insert(T* o)
@@ -75,27 +78,52 @@ template class TC_GAME_API HashMapHolder<Player>;
 
 namespace PlayerNameMapHolder
 {
-    typedef std::unordered_map<std::string, Player*> MapType;
+    // Several online characters may share a name (only name + surname is unique), so a name maps to every one of them
+    typedef std::unordered_multimap<std::string, Player*> MapType;
     static MapType PlayerNameMap;
 
     void Insert(Player* p)
     {
-        PlayerNameMap[p->GetName()] = p;
+        auto range = PlayerNameMap.equal_range(p->GetName());
+        for (auto itr = range.first; itr != range.second; ++itr)
+            if (itr->second == p)
+                return;
+
+        PlayerNameMap.emplace(p->GetName(), p);
     }
 
     void Remove(Player* p)
     {
-        PlayerNameMap.erase(p->GetName());
+        // only this player: another Bob who is online stays findable
+        auto range = PlayerNameMap.equal_range(p->GetName());
+        for (auto itr = range.first; itr != range.second; ++itr)
+        {
+            if (itr->second == p)
+            {
+                PlayerNameMap.erase(itr);
+                return;
+            }
+        }
     }
 
+    // "Bob", "bob smith": the full name picks one of the Bobs online (Trinity::FullName::Pick)
     Player* Find(std::string_view name)
     {
-        std::string charName(name);
-        if (!normalizePlayerName(charName))
+        Trinity::FullName::Parts parts;
+        if (!Trinity::FullName::Split(name, parts))
             return nullptr;
 
-        auto itr = PlayerNameMap.find(charName);
-        return (itr != PlayerNameMap.end()) ? itr->second : nullptr;
+        std::vector<Player*> candidates;
+        std::vector<std::string> surnames;
+        auto range = PlayerNameMap.equal_range(parts.Name);
+        for (auto itr = range.first; itr != range.second; ++itr)
+        {
+            candidates.push_back(itr->second);
+            surnames.push_back(sCharacterCache->GetCharacterSurnameByGuid(itr->second->GetGUID()));
+        }
+
+        std::size_t picked = Trinity::FullName::Pick(std::vector<std::string_view>(surnames.begin(), surnames.end()), parts);
+        return picked < candidates.size() ? candidates[picked] : nullptr;
     }
 } // namespace PlayerNameMapHolder
 

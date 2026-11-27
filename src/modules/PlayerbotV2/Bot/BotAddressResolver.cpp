@@ -420,7 +420,7 @@ ResolvedAddress BotAddressResolver::Resolve(
         const float  sy = sender->GetPositionY();
         constexpr float kRadiusSq = 60.f * 60.f;
         CollectOwnedMatching(sender_account,
-            [sender_map, sx, sy, kRadiusSq](BotSnapshot const& s)
+            [sender_map, sx, sy](BotSnapshot const& s)
             {
                 if (s.position.map_id != sender_map) return false;
                 const float dx = s.position.x - sx, dy = s.position.y - sy;

@@ -335,6 +335,7 @@ public:
 
     // General, Trade and LookingForGroup: world bots answer a player's LFM / LFG / WTB line or question. Read only, before the
     // line is sent; the answers come a few seconds later.
+    using PlayerScript::OnChat;
     void OnChat(Player* player, uint32 type, uint32 /*lang*/, std::string& msg, Channel* channel) override
     {
         if (type == CHAT_MSG_CHANNEL && channel)

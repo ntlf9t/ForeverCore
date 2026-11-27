@@ -282,6 +282,7 @@ namespace WorldPackets
         class SetFactionInactive;
         class SetWatchedFaction;
         class SetPlayerDeclinedNames;
+        class GetAccountCharacterList;
         class SavePersonalEmblem;
 
         enum class LoginFailureReason : uint8;
@@ -559,6 +560,7 @@ namespace WorldPackets
         class MoveTeleportAck;
         class MovementAckMessage;
         class MovementSpeedAck;
+        class MoveSetTurnRateCheat;
         class MovementSpeedRangeAck;
         class MoveKnockBackAck;
         class SetActiveMover;
@@ -1275,10 +1277,25 @@ class TC_GAME_API WorldSession
         time_t GetCalendarEventCreationCooldown() const { return _calendarEventCreationCooldown; }
         void SetCalendarEventCreationCooldown(time_t cooldown) { _calendarEventCreationCooldown = cooldown; }
 
-        // Battle Pets
+        // Battle Pets. nullptr on a bot session that dropped it (DropClientOnlyManagers): check before use.
         BattlePets::BattlePetMgr* GetBattlePetMgr() const { return _battlePetMgr.get(); }
 
+        // Toys, mounts, heirlooms, appearances, illusions, outfits, warband scenes. nullptr on a bot session that dropped it
+        // (DropClientOnlyManagers): check before use.
         CollectionMgr* GetCollectionMgr() const { return _collectionMgr.get(); }
+
+        // Everlake: a bot session has no client to show a battle pet journal or a collection to, and each bot holding them costs
+        // memory (the appearance bitset grows to the highest appearance id the bot touches) and login-database work (ten
+        // collection queries at InitializeSession, every collected row written again at every save). This frees both managers.
+        // Only for a bot session, and only before a character is loading or logged in, so nothing holds a pointer into them yet.
+        // Returns whether they are gone. The session then skips the account collection queries and loads, and the bot's character
+        // keeps only what it saves itself: its own mount spells, not mounts, toys or appearances shared through the account.
+        bool DropClientOnlyManagers();
+        bool HasClientOnlyManagers() const { return _collectionMgr != nullptr; }
+        static constexpr bool MayDropClientOnlyManagers(bool isBot, bool hasPlayer, bool playerLoading)
+        {
+            return isBot && !hasPlayer && !playerLoading;
+        }
 
     public:                                                 // opcodes handlers
 
@@ -1306,8 +1323,8 @@ class TC_GAME_API WorldSession
         void LogUnprocessedTail(WorldPacket const* packet);
 
         void HandleCharEnum(CharacterDatabaseQueryHolder const& holder);
-        void HandleCharEnumOpcode(WorldPackets::Character::EnumCharacters& /*enumCharacters*/);
-        void HandleCharUndeleteEnumOpcode(WorldPackets::Character::EnumCharacters& /*enumCharacters*/);
+        void HandleCharEnumOpcode(WorldPackets::Character::EnumCharacters& enumCharacters);
+        void HandleCharUndeleteEnumOpcode(WorldPackets::Character::EnumCharacters& enumCharacters);
         void HandleCharDeleteOpcode(WorldPackets::Character::CharDelete& charDelete);
         void DeleteCharacter(ObjectGuid guid);
         void HandleCharCreateOpcode(WorldPackets::Character::CreateCharacter& charCreate);
@@ -1354,6 +1371,8 @@ class TC_GAME_API WorldSession
         void SendSetPlayerDeclinedNamesResult(DeclinedNameResult result, ObjectGuid guid);
         void SendUndeleteCooldownStatusResponse(uint32 currentCooldown, uint32 maxCooldown);
         void SendUndeleteCharacterResponse(CharacterUndeleteResult result, WorldPackets::Character::CharacterUndeleteInfo const* undeleteInfo);
+        void HandleGetAccountCharacterList(WorldPackets::Character::GetAccountCharacterList& getAccountCharacterList);
+        void SendAccountCharacterList(PreparedQueryResult result, uint32 token, bool consoleCommand);
 
         // played time
         void HandlePlayedTime(WorldPackets::Character::RequestPlayedTime& packet);
@@ -1376,6 +1395,7 @@ class TC_GAME_API WorldSession
 
         void HandleMoveTeleportAck(WorldPackets::Movement::MoveTeleportAck& packet);
         void HandleForceSpeedChangeAck(WorldPackets::Movement::MovementSpeedAck& packet);
+        void HandleMoveSetTurnRateCheat(WorldPackets::Movement::MoveSetTurnRateCheat& packet);
         void HandleSetAdvFlyingSpeedAck(WorldPackets::Movement::MovementSpeedAck& speedAck);
         void HandleSetAdvFlyingSpeedRangeAck(WorldPackets::Movement::MovementSpeedRangeAck& speedRangeAck);
         void HandleSetCollisionHeightAck(WorldPackets::Movement::MoveSetCollisionHeightAck& setCollisionHeightAck);
@@ -1565,7 +1585,6 @@ class TC_GAME_API WorldSession
         void HandleTaxiRequestEarlyLanding(WorldPackets::Taxi::TaxiRequestEarlyLanding& taxiRequestEarlyLanding);
 
         void HandleTabardVendorActivateOpcode(WorldPackets::NPC::TabardVendorActivate const& tabardVendorActivate);
-        void HandleBankerActivateOpcode(WorldPackets::Bank::BankerActivate const& bankerActivate);
         void HandleTrainerListOpcode(WorldPackets::NPC::Hello& packet);
         void HandleTrainerBuySpellOpcode(WorldPackets::NPC::TrainerBuySpell& packet);
         void HandlePetitionShowList(WorldPackets::Petition::PetitionShowList& packet);
@@ -1614,6 +1633,7 @@ class TC_GAME_API WorldSession
         void HandleAuctionSetFavoriteItem(WorldPackets::AuctionHouse::AuctionSetFavoriteItem& setFavoriteItem);
 
         // Bank
+        void HandleBankerActivateOpcode(WorldPackets::Bank::BankerActivate const& bankerActivate);
         void HandleAutoBankItemOpcode(WorldPackets::Bank::AutoBankItem& packet);
         void HandleAutoStoreBankItemOpcode(WorldPackets::Bank::AutoStoreBankItem& packet);
         void HandleBuyBankTab(WorldPackets::Bank::BuyBankTab const& buyBankTab);

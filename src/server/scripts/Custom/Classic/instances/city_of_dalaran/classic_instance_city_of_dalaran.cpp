@@ -62,6 +62,7 @@
 #include "ScriptedCreature.h"
 #include "SpellInfo.h"
 #include "TemporarySummon.h"
+#include "WorldSession.h"
 #include "classic_dungeon_encounter_tracker.h"
 #include <vector>
 

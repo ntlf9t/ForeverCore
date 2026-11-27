@@ -685,7 +685,7 @@ int32 ScoreItemRaid(ItemTemplate const* tpl, uint8 cls, uint16 spec, uint8 level
     if (tpl->GetClass() == ITEM_CLASS_WEAPON)
     {
         // Classic 1.60 (WoW Forever): a reduced caster weapon deals its share of the table (EV-0097)
-        float const dps = tpl->GetClassicDPS(ilvl, tpl->HasFlag(ITEM_FLAG4_REGULATED_COMMODITY));
+        float const dps = tpl->GetClassicDPS(ilvl, tpl->HasFlag(ITEM_FLAG5_CLASSIC_REDUCED_CASTER_DPS));
         if (slot == EQUIPMENT_SLOT_RANGED)
             total += w.ranged_dps * dps;
         else if (slot == EQUIPMENT_SLOT_OFFHAND)

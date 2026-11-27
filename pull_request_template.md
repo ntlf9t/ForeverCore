@@ -1,21 +1,31 @@
-<!-- Thanks! Please read CONTRIBUTING.md first: one fix per pull request, Blizzlike only, every data change names its source. -->
+<!--- (**********************************)
+      (** Fill in the following fields **)
+      (**********************************) --->
 
-**What this changes:**
+**Changes proposed:**
 
--
+-  
+-  
+-  
 
-**Source (where the data or behaviour comes from):**
+**Issues addressed:**
 
-<!-- Packet capture, client data, Questie, Wowhead link, video or screenshot. For a pure server fix (crash, packet, pathing) say so. -->
+Closes #  (insert issue tracker number)
 
-**Issues fixed:**
 
-Closes #
+**Tests performed:**
 
-**How it was tested:**
+(Does it build, tested in-game, etc.)
 
-<!-- Does it build? Checked in game? Which client build? -->
 
-- [ ] Builds
-- [ ] Tested in game
-- [ ] SQL files are safe to run twice
+**Known issues and TODO list:** (add/remove lines as needed)
+
+- [ ] 
+- [ ] 
+
+
+<!--- Notes
+- Enable the setting "[√] Allow edits from maintainers." when creating your pull request.
+- If this PR only contains SQL files, open a new issue instead and post or link the SQL in the issue.
+- When adding new SQL files, name them 9999_99_99_99_db_name.sql to reduce the chance of possible merge conflicts.
+--->

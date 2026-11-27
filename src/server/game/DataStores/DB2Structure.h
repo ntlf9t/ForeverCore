@@ -3907,7 +3907,7 @@ struct SpellDurationEntry
 {
     uint32 ID;
     int32 Duration;
-    int32 DurationPerLevel;
+    int32 DurationPerLevel;     // Classic 1.60.1.70790
     int32 MaxDuration;
     int32 DurationPerResource;
 };

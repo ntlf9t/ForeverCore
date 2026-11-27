@@ -76,6 +76,14 @@ namespace MMAP
 
             static bool isRebuildingTilesEnabledOnMap(uint32 mapId);
 
+            // A* node pool of each dtNavMeshQuery. Open-world maps (instanceId 0) get worldNodes, instanced copies keep
+            // INSTANCE_QUERY_NODES. Detour indexes nodes with 16 bits, so the value is clamped to [INSTANCE_QUERY_NODES, 65535].
+            // Applies to queries created after the call (set once at startup, before any map loads).
+            static constexpr int32 INSTANCE_QUERY_NODES = 8192;
+            static constexpr int32 MAX_QUERY_NODES = 65535;
+            void SetWorldQueryNodes(int32 worldNodes);
+            int32 GetWorldQueryNodes() const { return worldQueryNodes; }
+
         private:
             LoadResult loadMapData(std::string_view basePath, uint32 mapId, uint32 instanceId);
             uint32 packTileID(int32 x, int32 y);
@@ -85,6 +93,7 @@ namespace MMAP
             std::atomic<uint32> loadedTiles = 0;    // changed by several map threads (each map has its own load lock)
 
             std::unordered_map<uint32, uint32> parentMapData;
+            int32 worldQueryNodes = 32768;
     };
 
     // While one of these is alive on a thread, GetNavMeshQuery called on that thread returns a dtNavMeshQuery that belongs to

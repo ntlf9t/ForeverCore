@@ -152,34 +152,6 @@ ElevatorPoint NearestElevatorOnFloor(
     return {best->x, best->y, best->z, best->x, best->y, best->z, false, true};
 }
 
-// Nearest elevator stop on the bot's map regardless of Z — used by
-// step_off to find the destination floor's stop position when the bot
-// has been carried away from boarding Z. Same source precedence as
-// NearestElevatorOnFloor.
-ElevatorPoint NearestElevatorAnyZ(
-    BotSnapshotView const& s, float range)
-{
-    float bx, by, bz; s.position(bx, by, bz);
-    (void)bz;
-    if (auto const* stop = ElevatorIndex::Instance().NearestStopAnyZ(
-            s.map_id(), bx, by, range))
-        return FromStop(*stop);
-    auto rows = WorldMetadataStore::Instance().RecordsForMapAndKind(
-        s.map_id(), WorldMetadataKind::Elevator);
-    if (rows.empty()) return MakeInvalid();
-    float const r2 = range * range;
-    WorldMetadataRecord const* best = nullptr;
-    float best_dsq = r2;
-    for (auto const& r : rows)
-    {
-        const float dxh = r.x - bx, dyh = r.y - by;
-        const float dsq = dxh*dxh + dyh*dyh;
-        if (dsq < best_dsq) { best_dsq = dsq; best = &r; }
-    }
-    if (!best) return MakeInvalid();
-    return {best->x, best->y, best->z, best->x, best->y, best->z, false, true};
-}
-
 // Resolve the stop a bot should BOARD. Two cases:
 //   1. SAME FLOOR — the bot is already standing at a stop's Z (within 6y): the
 //      normal boarding case (and multi-floor lifts).

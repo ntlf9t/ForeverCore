@@ -127,6 +127,18 @@ if (MSVC)
       _SCL_SECURE_NO_WARNINGS)
 endif()
 
+# Everlake: protobuf 2.6.1 and the code its protoc generates work out field offsets through a made-up object at address
+# 16 (GOOGLE_PROTOBUF_GENERATED_MESSAGE_FIELD_OFFSET, OFFSET_OF_FIELD_). UBSan's vptr check reads that object's vtable
+# and crashes every program at start-up, so that one check is off here and in proto (src/server/proto).
+# Set on the source files, not the target: target options come before the -fsanitize=undefined it inherits, which
+# would turn the check back on.
+if (UBSAN AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  get_target_property(protobuf_sources protobuf SOURCES)
+  set_source_files_properties(${protobuf_sources}
+    PROPERTIES
+      COMPILE_OPTIONS -fno-sanitize=vptr)
+endif()
+
 set_target_properties(protobuf
   PROPERTIES
     FOLDER

@@ -23,6 +23,7 @@
 #include "MapObject.h"
 #include "QuaternionData.h"
 #include "AreaTriggerTemplate.h"
+#include <span>
 
 class AuraEffect;
 class AreaTriggerAI;
@@ -124,6 +125,9 @@ class TC_GAME_API AreaTrigger final : public WorldObject, public GridObject<Area
     public:
         static AreaTrigger* CreateAreaTrigger(AreaTriggerCreatePropertiesId areaTriggerCreatePropertiesId, Position const& pos, int32 duration, Unit* caster, Unit* target, SpellCastVisual spellVisual = { 0, 0 }, SpellInfo const* spellInfo = nullptr, Spell* spell = nullptr, AuraEffect const* aurEff = nullptr);
         static ObjectGuid CreateNewMovementForceId(Map* map, uint32 areaTriggerId);
+        // how many of the units entering this update count as inside: all of them without a MaxUnits limit, else only as
+        // many as the limit has room for after the units already inside (never more than entered, never below 0)
+        static std::ptrdiff_t GetEnteringUnitsInsideLimit(Optional<int32> maxUnits, std::ptrdiff_t insideUnits, std::ptrdiff_t enteringUnits);
         bool LoadFromDB(ObjectGuid::LowType spawnId, Map* map, bool addToMap, bool allowDuplicate);
 
         void Update(uint32 diff) override;
@@ -200,8 +204,8 @@ class TC_GAME_API AreaTrigger final : public WorldObject, public GridObject<Area
 
         void SetShape(AreaTriggerShapeInfo const& shape);
         float GetMaxSearchRadius() const;
-        void InitSplineOffsets(std::vector<Position> const& offsets, Optional<float> overrideSpeed = {}, Optional<bool> speedIsTimeInSeconds = {});
-        void InitSplines(std::vector<G3D::Vector3> const& splinePoints, Optional<float> overrideSpeed = {}, Optional<bool> speedIsTimeInSeconds = {});
+        void InitSplineOffsets(std::span<Position const> offsets, Optional<float> overrideSpeed = {}, Optional<bool> speedIsTimeInSeconds = {});
+        void InitSplines(std::span<G3D::Vector3 const> splinePoints, Optional<float> overrideSpeed = {}, Optional<bool> speedIsTimeInSeconds = {});
         bool HasSplines() const { return _spline != nullptr; }
         ::Movement::Spline<float> const& GetSpline() const { return *_spline; }
         uint32 GetElapsedTimeForMovement() const;
@@ -253,7 +257,7 @@ class TC_GAME_API AreaTrigger final : public WorldObject, public GridObject<Area
         void SearchUnitInCylinder(UF::AreaTriggerCylinder const& cylinder, std::vector<Unit*>& targetList);
         void SearchUnitInDisk(UF::AreaTriggerDisk const& disk, std::vector<Unit*>& targetList);
         void SearchUnitInBoundedPlane(UF::AreaTriggerBoundedPlane const& boundedPlane, std::vector<Unit*>& targetList);
-        void HandleUnitEnterExit(std::vector<Unit*> const& targetList, AreaTriggerExitReason exitMode = AreaTriggerExitReason::NotInside);
+        void HandleUnitEnterExit(std::span<Unit*> targetList, AreaTriggerExitReason exitMode = AreaTriggerExitReason::NotInside);
         void HandleUnitEnter(Unit* unit);
         void HandleUnitExitInternal(Unit* unit, AreaTriggerExitReason exitMode = AreaTriggerExitReason::NotInside);
 

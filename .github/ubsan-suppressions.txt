@@ -1,0 +1,4 @@
+# Everlake: UndefinedBehaviorSanitizer findings in existing code that are known and not fixed yet. CI reads this through
+# UBSAN_OPTIONS (linux-build.yml). Each entry should be fixed in its own pull request, with a test, and removed there.
+# A vptr_check entry matches the mangled type name of the object at the moment of the report; anchor it with ^ and $.
+

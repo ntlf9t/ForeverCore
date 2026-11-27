@@ -301,15 +301,54 @@ def names(kind):
 NAMES_CACHE = {}
 
 
-def item_tooltip_data(entries):
+def item_bonus_lists(random_bonus_list, bonus_list_ids):
+    """The bonus lists on an item_instance row: its random bonus list (the random suffix) and its bonusListIDs ("id id ...")."""
+    lists = [int(x) for x in (bonus_list_ids or '').split() if x.lstrip('-').isdigit()]
+    if random_bonus_list:
+        lists.insert(0, int(random_bonus_list))
+    return lists
+
+
+def armory_suffixes(lists):
+    """bonus list id -> (name, reducedCasterDps, [(statType, allocation)]) for the random suffixes among lists (world.armory_suffix)."""
+    lists = sorted(set(lists))
+    if not lists:
+        return {}
+    rows = query(world_db(), 'SELECT * FROM armory_suffix WHERE id IN (%s)' % ','.join(['%s'] * len(lists)), tuple(lists))
+    return {r['id']: (r['name'], bool(r['reducedCasterDps']), [(int(t), int(v)) for t, v in (s.split(':') for s in r['stats'].split(',') if s)])
+            for r in rows}
+
+
+def item_tooltip_data(entries, variants=()):
+    """Tooltips for item entries (key "entry") and for (entry, suffix bonus list) variants (key "entry:list"): a random suffix adds its
+    name, its stats (allocation x the item's random property points / 10000, as the game) and, on a weapon, WoW Forever's reduced
+    caster damage when the suffix carries it (EV-0110)."""
+    entries = sorted(set(entries) | {e for e, _ in variants})
     if not entries:
         return {}
     marks = ','.join(['%s'] * len(entries))
     rows = query(world_db(), 'SELECT a.*, i.name AS icon FROM armory_item a LEFT JOIN armory_icon i ON i.fileDataId = a.iconFileDataId '
                              'WHERE a.id IN (%s)' % marks, tuple(entries))
+    suffixes = armory_suffixes([s for _, s in variants])
     out = {}
-    for r in rows:
+    by_id = {r['id']: r for r in rows}
+    wanted = [(e, 0) for e in entries] + [(e, s) for e, s in variants if s in suffixes and e in by_id]
+    for entry, suffix_id in wanted:
+        if entry not in by_id:
+            continue
+        r = dict(by_id[entry])
         stats = [(int(t), int(v)) for t, v in (s.split(':') for s in r['stats'].split(',') if s)]
+        if suffix_id:
+            suffix_name, reduced, allocations = suffixes[suffix_id]
+            r['name'] = '%s %s' % (r['name'], suffix_name)
+            merged = dict(stats)
+            for t, alloc in allocations:
+                value = int(alloc * (r.get('randPropPoints') or 0) / 10000.0 + 0.5)
+                if value:
+                    merged[t] = merged.get(t, 0) + value
+            stats = list(merged.items())
+            if reduced and r.get('casterDmgMax'):
+                r['dmgMin'], r['dmgMax'] = r['casterDmgMin'], r['casterDmgMax']
         effects = []
         for e in (x for x in r['effects'].split('|') if x):
             trig, spell, name = (e.split(':', 2) + ['', ''])[:3]
@@ -345,7 +384,8 @@ def item_tooltip_data(entries):
         lines += [['green', e] for e in effects]
         if r['description']:
             lines.append(['flavor', '"%s"' % r['description']])
-        out[r['id']] = {'name': r['name'], 'q': r['quality'], 'ilvl': r['itemLevel'], 'icon': icon_url(r['icon']), 'lines': lines}
+        out['%d:%d' % (entry, suffix_id) if suffix_id else str(entry)] = {'name': r['name'], 'q': r['quality'], 'ilvl': r['itemLevel'],
+                                                                         'icon': icon_url(r['icon']), 'lines': lines}
     return out
 LOGO = ('<svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2.5 27.7 9.2v13.6L16 29.5 4.3 22.8V9.2Z" fill="#e6b04a"/>'
         '<path d="M16 8.5 22.5 12.2v7.6L16 23.5l-6.5-3.7v-7.6Z" fill="#0b1118"/><circle cx="16" cy="16" r="3.2" fill="#e6b04a"/></svg>')
@@ -1330,17 +1370,25 @@ class Handler(BaseHTTPRequestHandler):
             return self.page('Not found', '<p class="muted">No character called %s on %s.</p>' % (esc(name), esc(realm_name(realm_id))),
                              status=404, section='Armory')
         guild = query_one(cdb, 'SELECT g.name FROM guild_member m JOIN guild g ON g.guildid = m.guildid WHERE m.guid = %s', (c['guid'],))
-        gear = {r['slot']: r['itemEntry'] for r in query(cdb, 'SELECT ci.slot, ii.itemEntry FROM character_inventory ci JOIN item_instance ii '
-                                                              'ON ii.guid = ci.item WHERE ci.guid = %s AND ci.bag = 0 AND ci.slot < 19', (c['guid'],))}
-        tips = item_tooltip_data(sorted(set(gear.values())))
+        gear_rows = query(cdb, 'SELECT ci.slot, ii.itemEntry, ii.randomBonusListId, ii.bonusListIDs FROM character_inventory ci JOIN item_instance ii '
+                               'ON ii.guid = ci.item WHERE ci.guid = %s AND ci.bag = 0 AND ci.slot < 19', (c['guid'],))
+        gear = {r['slot']: r['itemEntry'] for r in gear_rows}
+        lists = {r['slot']: item_bonus_lists(r['randomBonusListId'], r['bonusListIDs']) for r in gear_rows}
+        suffix_of = {}                              # slot -> the item's random suffix bonus list, when it has one
+        known = armory_suffixes([x for v in lists.values() for x in v])
+        for s, ls in lists.items():
+            suffix_of[s] = next((x for x in ls if x in known), 0)
+        tips = item_tooltip_data(gear.values(), {(gear[s], x) for s, x in suffix_of.items() if x})
         races, classes, skills = names('race'), names('class'), names('skill')
 
         def slot(s):
             entry = gear.get(s)
-            tip = tips.get(entry)
+            key = '%d:%d' % (entry, suffix_of[s]) if entry and suffix_of.get(s) else str(entry)
+            tip = tips.get(key) or tips.get(str(entry))
             if not tip:
                 return '<div class="slot empty" title="%s"></div>' % esc(SLOT_NAMES[s])
-            return '<div class="slot q%d" data-item="%d"><img src="%s" alt="%s" loading="lazy"></div>' % (tip['q'], entry, esc(tip['icon']), esc(tip['name']))
+            return '<div class="slot q%d" data-item="%s"><img src="%s" alt="%s" loading="lazy"></div>' % (tip['q'], esc(key if key in tips else str(entry)),
+                                                                                                         esc(tip['icon']), esc(tip['name']))
 
         portrait = icon_url(CLASS_ICONS.get(c['class']))
         doll = ('<div class="doll"><div class="col">%s</div><div class="figure"><img src="%s" alt=""><div class="figure-cap">%s<br><span class="muted">%s</span>'
@@ -1400,7 +1448,7 @@ class Handler(BaseHTTPRequestHandler):
             ' · &lt;%s&gt;' % esc(guild['name']) if guild else '', faction(c['race']), ' <span class="tag green">Online</span>' if c['online'] else '')
         body = header + '<div class="cols">%s%s</div>' % ('<div class="stack">%s%s</div>' % (panel('Equipment', doll), panel('Character stats', stats)), side)
         data = '<script>window.ARMORY_ITEMS=%s;</script><script src="/static/armory.js?v=%s" defer></script>' % (json.dumps(
-            {str(k): v for k, v in tips.items()}).replace('</', '<\\/'), STATIC_VERSION)
+            dict(tips)).replace('</', '<\\/'), STATIC_VERSION)
         self.page(c['name'], body + data, section='Armory', heading=False)
 
     # staff

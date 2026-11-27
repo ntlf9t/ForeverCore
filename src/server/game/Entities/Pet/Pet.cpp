@@ -23,6 +23,7 @@
 #include "DatabaseEnv.h"
 #include "DB2Stores.h"
 #include "Group.h"
+#include "HunterPetForever.h"
 #include "InstanceScript.h"
 #include "Log.h"
 #include "Map.h"
@@ -39,15 +40,15 @@
 #include "SpellMgr.h"
 #include "SpellPackets.h"
 #include "Unit.h"
-#include "ClassicPetAttackSpeed.h"
 #include "Util.h"
+#include "WarlockPetForever.h"
 #include "World.h"
 #include "WorldSession.h"
 #include <algorithm>
+#include <limits>
 #include <sstream>
 #include <unordered_set>
 
-#define PET_XP_FACTOR 0.05f
 
 Pet::Pet(Player* owner, PetType type) :
     Guardian(nullptr, owner, true), m_removed(false),
@@ -58,7 +59,11 @@ Pet::Pet(Player* owner, PetType type) :
 
     m_unitTypeMask |= UNIT_MASK_PET;
     if (type == HUNTER_PET)
+    {
         m_unitTypeMask |= UNIT_MASK_HUNTER_PET;
+        // Classic 1.60 (WoW Forever): no spell crit of its own either (Lightning Breath); Unit::GetUnitCriticalChanceDone has the melee side
+        m_baseSpellCritChance = 0.0f;
+    }
 
     if (!(m_unitTypeMask & UNIT_MASK_CONTROLABLE_GUARDIAN))
     {
@@ -324,7 +329,7 @@ bool Pet::LoadPetFromDB(Player* owner, uint32 petEntry, uint32 petnumber, bool c
     InitStatsForLevel(petlevel);
     SetPetExperience(petInfo->Experience);
     if (HasLoyalty())
-        InitLoyalty(petInfo->LoyaltyLevel, petInfo->LoyaltyPoints);
+        InitLoyalty(petInfo->LoyaltyLevel, petInfo->LoyaltyPoints, petInfo->LoyaltySeconds);
 
     SynchronizeLevelWithOwner();
 
@@ -410,7 +415,7 @@ bool Pet::LoadPetFromDB(Player* owner, uint32 petEntry, uint32 petnumber, bool c
         owner->ToPlayer()->SetLastPetNumber(petInfo->PetNumber);
 
     owner->GetSession()->AddQueryHolderCallback(CharacterDatabase.DelayQueryHolder(std::make_shared<PetLoadQueryHolder>(ownerid, petInfo->PetNumber)))
-        .AfterComplete([this, owner, session = owner->GetSession(), isTemporarySummon, current, lastSaveTime = petInfo->LastSaveTime, specializationId = petInfo->SpecializationId](SQLQueryHolderBase const& holder)
+        .AfterComplete([this, owner, session = owner->GetSession(), isTemporarySummon, current, lastSaveTime = petInfo->LastSaveTime, specializationId = petInfo->SpecializationId, savedHealth = petInfo->Health](SQLQueryHolderBase const& holder)
     {
         if (session->GetPlayer() != owner || owner->GetPet() != this)
             return;
@@ -418,6 +423,9 @@ bool Pet::LoadPetFromDB(Player* owner, uint32 petEntry, uint32 petnumber, bool c
         // passing previous checks ensure that 'this' is still valid
         if (m_removed)
             return;
+
+        // damage or healing the pet took since it was added to the map, before this query came back (kept by the health restore below)
+        int64 const healthChangeWhileLoading = int64(GetHealth()) - int64(std::min<uint64>(savedHealth, GetMaxHealth()));
 
         uint32 timediff = uint32(GameTime::GetGameTime() - lastSaveTime);
         _LoadAuras(holder.GetPreparedResult(PetLoadQueryHolder::AURAS), holder.GetPreparedResult(PetLoadQueryHolder::AURA_EFFECTS), timediff);
@@ -432,10 +440,18 @@ bool Pet::LoadPetFromDB(Player* owner, uint32 petEntry, uint32 petnumber, bool c
             // Classic 1.60: a beast tamed before it kept its wild abilities has none (auto attack only); give them now
             if (getPetType() == HUNTER_PET && !KnowsActiveSpell())
                 LearnTameSpells();
+            // and its attack speed passive, for a pet tamed before the beast had one or since it changed
+            SyncTameAttackSpeed();
             if (GetMap()->IsBattleArena())
                 RemoveArenaAuras();
 
             CastPetAuras(current);
+
+            // The saved health was capped to the maximum without the auras (passives are not saved), and an aura that raises maximum
+            // health (Hunter Pet Scaling, Warlock Pet Scaling, Great Stamina) heals its whole amount when applied: put back what the pet had
+            // when it was saved, moved by what happened to it while loading. A demon summoned anew (not current) comes at full health.
+            if ((getPetType() == HUNTER_PET || (getPetType() == SUMMON_PET && current)) && IsAlive() && savedHealth)
+                SetHealth(uint64(std::clamp<int64>(int64(savedHealth) + healthChangeWhileLoading, 1, int64(GetMaxHealth()))));
         }
 
         TC_LOG_DEBUG("entities.pet", "New Pet has {}", GetGUID().ToString());
@@ -565,10 +581,10 @@ void Pet::SavePetToDB(PetSaveMode mode)
         stmt->setUInt16(16, GetSpecialization());
         trans->Append(stmt);
 
-        // Classic 1.60: hunter pet loyalty (sql/custom/characters 2026_10_12_20)
+        // Classic 1.60: hunter pet loyalty (sql/custom/characters 2026_10_12_20, loyalty_time 2026_11_13_81)
         if (HasLoyalty())
-            trans->PAppend("REPLACE INTO character_pet_loyalty (id, loyalty, loyalty_points) VALUES ({}, {}, {})",
-                m_charmInfo->GetPetNumber(), uint32(m_loyaltyLevel), m_loyaltyPoints);
+            trans->PAppend("REPLACE INTO character_pet_loyalty (id, loyalty, loyalty_points, loyalty_time) VALUES ({}, {}, {}, {})",
+                m_charmInfo->GetPetNumber(), uint32(m_loyaltyLevel), m_loyaltyPoints, m_loyaltySeconds);
 
         CharacterDatabase.CommitTransaction(trans);
     }
@@ -599,6 +615,7 @@ void Pet::FillPetInfo(PetStable::PetInfo* petInfo, Optional<ReactStates> forcedR
     petInfo->SpecializationId = GetSpecialization();
     petInfo->LoyaltyLevel = m_loyaltyLevel;
     petInfo->LoyaltyPoints = m_loyaltyPoints;
+    petInfo->LoyaltySeconds = m_loyaltySeconds;
 }
 
 void Pet::DeleteFromDB(uint32 petNumber)
@@ -722,6 +739,12 @@ void Pet::Update(uint32 diff)
                 }
             }
 
+            // Forever: a following pet left behind (e.g. Undercity elevator) catches up to its owner instead of getting stuck
+            if (!isPossessed() && !IsInCombat() && GetCharmInfo() && GetCharmInfo()->HasCommandState(COMMAND_FOLLOW)
+                && !GetTransport() && !owner->GetTransport() && !owner->IsInFlight() && !owner->IsFalling()
+                && GetExactDist(owner) > 40.0f)
+                NearTeleportTo(owner->GetPosition());
+
             if (m_duration > 0)
             {
                 if (uint32(m_duration) > diff)
@@ -736,6 +759,7 @@ void Pet::Update(uint32 diff)
             // Classic 1.60: hunter pets slowly lose happiness, 1.5 times as fast in combat (VMaNGOS Pet::LooseHappiness)
             if (HasHappiness())
             {
+                // A bot hunter has no client to feed its pet: the pet of a bot stays content.
                 if (Player const* owner = GetOwner(); owner && owner->GetSession() && owner->GetSession()->IsBot())
                     SetPower(POWER_HAPPINESS, HAPPINESS_MAX);
                 else if (m_happinessTimer > diff)
@@ -743,11 +767,13 @@ void Pet::Update(uint32 diff)
                 else
                 {
                     m_happinessTimer = HAPPINESS_LOSS_INTERVAL;
-                    ModifyPower(POWER_HAPPINESS, -(IsInCombat() ? HAPPINESS_LOSS * 3 / 2 : HAPPINESS_LOSS));
+                    int32 loss = int32(HAPPINESS_LOSS * (IsInCombat() ? 1.5f : 1.0f) * sWorld->getRate(RATE_PET_HAPPINESS_DECAY));
+                    ModifyPower(POWER_HAPPINESS, -loss);
                 }
             }
 
-            // Classic 1.60: loyalty every 12 s by happiness: happy +20, content +10, unhappy -20 (VMaNGOS Pet::TickLoyaltyChange)
+            // Classic 1.60 (WoW Forever): loyalty counts the time the pet is out, alive (vanilla: points every 12 s by happiness, lost while
+            // unhappy, and a Rebellious pet ran away; the Forever rule has no loss)
             if (HasLoyalty())
             {
                 if (m_loyaltyTimer > diff)
@@ -755,15 +781,7 @@ void Pet::Update(uint32 diff)
                 else
                 {
                     m_loyaltyTimer = LOYALTY_TICK_INTERVAL;
-                    int32 change = 0;
-                    switch (GetHappinessState())
-                    {
-                        case HAPPY:   change = 20; break;
-                        case CONTENT: change = 10; break;
-                        case UNHAPPY: change = -20; break;
-                    }
-                    if (!ModifyLoyalty(change))
-                        return;                             // ran away, removed
+                    AddLoyaltyProgress(0, LOYALTY_TICK_INTERVAL / IN_MILLISECONDS);
                 }
             }
 
@@ -777,15 +795,15 @@ void Pet::Update(uint32 diff)
                     switch (GetPowerType())
                     {
                         case POWER_FOCUS:
-                            Regenerate(POWER_FOCUS);
-                            m_focusRegenTimer += PET_FOCUS_REGEN_INTERVAL - diff;
-                            if (!m_focusRegenTimer) ++m_focusRegenTimer;
-
-                            // Reset if large diff (lag) causes focus to get 'stuck'
-                            if (m_focusRegenTimer > PET_FOCUS_REGEN_INTERVAL)
-                                m_focusRegenTimer = PET_FOCUS_REGEN_INTERVAL;
-
+                        {
+                            // Classic 1.60: one tick a second, so a world update longer than that (lag) gets the ticks it covered, up to 5
+                            uint32 const overdue = diff - m_focusRegenTimer;
+                            uint32 const ticks = std::min<uint32>(1 + overdue / PET_FOCUS_REGEN_INTERVAL, 5);
+                            for (uint32 i = 0; i < ticks; ++i)
+                                Regenerate(POWER_FOCUS);
+                            m_focusRegenTimer = PET_FOCUS_REGEN_INTERVAL - overdue % PET_FOCUS_REGEN_INTERVAL;
                             break;
+                        }
 
                         // in creature::update
                         //case POWER_ENERGY:
@@ -862,6 +880,10 @@ void Pet::GivePetXP(uint32 xp)
     if (!IsAlive())
         return;
 
+    // Classic 1.60 (WoW Forever): the kill XP also counts toward the next loyalty rank, a pet at the hunter's level included
+    if (HasLoyalty())
+        AddLoyaltyProgress(xp, 0);
+
     uint8 maxlevel = std::min((uint8)sWorld->getIntConfig(CONFIG_MAX_PLAYER_LEVEL), GetOwner()->GetLevel());
     uint8 petlevel = GetLevel();
 
@@ -887,14 +909,12 @@ void Pet::GivePetXP(uint32 xp)
     // Not affected by special conditions - give it new XP
     SetPetExperience(petlevel < maxlevel ? newXP : 0);
 
-    // Classic 1.60: kills that give experience also give loyalty (VMaNGOS Pet::KillLoyaltyBonus)
-    if (HasLoyalty())
-        KillLoyaltyBonus(petlevel);
 }
 
+// Classic 1.60 (WoW Forever): 20% of the hunter's XP for the level (Classic Hunter Lodge wiki, Pet-Fundamentals); vanilla was 5%
 uint32 Pet::GetHunterPetNextLevelExperience(uint8 level)
 {
-    return uint32(sObjectMgr->GetXPForLevel(level) * PET_XP_FACTOR);
+    return HunterPetForever::NextLevelXp(sObjectMgr->GetXPForLevel(level));
 }
 
 void Pet::GivePetLevel(uint8 level)
@@ -996,85 +1016,38 @@ int32 Pet::GetFoodBenefit(uint8 petLevel, uint32 foodLevel)
     return 0;
 }
 
-// Classic 1.60 hunter pet loyalty: points needed to reach the next level / points a level starts with (VMaNGOS Pet::LevelUpLoyalty /
-// LevelStartLoyalty; 100 points per minute while happy)
-int32 Pet::GetLoyaltyLevelUpPoints(uint8 loyaltyLevel)
-{
-    static constexpr std::array<int32, 6> LevelUp = { 5500, 11500, 17000, 23500, 31000, 39500 };
-    return LevelUp[std::clamp<uint8>(loyaltyLevel, REBELLIOUS, BEST_FRIEND) - 1];
-}
-
-int32 Pet::GetLoyaltyStartPoints(uint8 loyaltyLevel)
-{
-    static constexpr std::array<int32, 6> Start = { 2000, 4500, 7000, 10000, 13500, 17500 };
-    return Start[std::clamp<uint8>(loyaltyLevel, REBELLIOUS, BEST_FRIEND) - 1];
-}
-
-void Pet::InitLoyalty(uint8 loyaltyLevel, int32 loyaltyPoints)
+void Pet::InitLoyalty(uint8 loyaltyLevel, int32 loyaltyPoints, uint32 loyaltySeconds /*= 0*/)
 {
     m_loyaltyLevel = std::clamp<uint8>(loyaltyLevel, REBELLIOUS, BEST_FRIEND);
-    m_loyaltyPoints = std::clamp<int32>(loyaltyPoints, 0, GetLoyaltyLevelUpPoints(m_loyaltyLevel));
+    m_loyaltyPoints = std::max<int32>(loyaltyPoints, 0);
+    m_loyaltySeconds = loyaltySeconds;
     m_loyaltyTimer = LOYALTY_TICK_INTERVAL;
 }
 
-bool Pet::ModifyLoyalty(int32 addvalue)
+// Classic 1.60 (WoW Forever, Classic Hunter Lodge wiki, Pet-Fundamentals): a loyalty rank needs 5% of the hunter's XP for the pet's level,
+// earned since the last rank, and 0, 30, 45, 60 or 90 minutes out for ranks 2 to 6. Each rank adds the pet's level in training points.
+void Pet::AddLoyaltyProgress(uint32 xp, uint32 seconds)
 {
-    if (!HasLoyalty() || !addvalue)
-        return true;
-
-    uint8 loyaltyLevel = m_loyaltyLevel;
-    if (loyaltyLevel >= BEST_FRIEND && addvalue + m_loyaltyPoints > GetLoyaltyLevelUpPoints(loyaltyLevel))
-        return true;
-
-    m_loyaltyPoints += addvalue;
-
-    if (m_loyaltyPoints < 0)
-    {
-        if (loyaltyLevel > REBELLIOUS)
-        {
-            // level down: the pet loses training points (level * 1)
-            --loyaltyLevel;
-            m_loyaltyPoints = GetLoyaltyStartPoints(loyaltyLevel);
-        }
-        else
-        {
-            // vanilla: a Rebellious pet that keeps losing loyalty runs away for good
-            m_loyaltyPoints = 0;
-            Player* owner = GetOwner();
-            TC_LOG_INFO("entities.pet", "Pet {} ({}) of {} ran away: Rebellious and unhappy (happiness {})", GetName(), GetEntry(),
-                owner->GetName(), GetPower(POWER_HAPPINESS));
-            ChatHandler(owner->GetSession()).SendSysMessage("Your pet has run away");
-            Remove(PET_SAVE_AS_DELETED);
-            return false;
-        }
-    }
-    else if (m_loyaltyPoints > GetLoyaltyLevelUpPoints(loyaltyLevel))
-    {
-        // level up: the pet gains training points (level * 1)
-        ++loyaltyLevel;
-        m_loyaltyPoints = GetLoyaltyStartPoints(loyaltyLevel);
-    }
-
-    if (loyaltyLevel != m_loyaltyLevel)
-    {
-        m_loyaltyLevel = loyaltyLevel;
-        UpdateTrainingPoints();
-    }
-
-    // the client reads loyalty only from the stable pet values: sent on level changes alone, the points it shows never moved
-    // between loyalty levels ("pets do not gain loyalty experience")
-    if (Player* owner = GetOwner())
-        owner->UpdateStablePetLoyalty(m_charmInfo->GetPetNumber(), m_loyaltyLevel, m_loyaltyPoints);
-    return true;
-}
-
-void Pet::KillLoyaltyBonus(uint8 level)
-{
-    if (level > 100)
+    if (!HasLoyalty() || m_loyaltyLevel >= BEST_FRIEND)
         return;
 
-    // at lower levels gain is faster, the lower the loyalty the more is gained
-    ModifyLoyalty(int32((100 - level) / 10) + (BEST_FRIEND - m_loyaltyLevel));
+    // capped well above any requirement, so a long stay out cannot overflow the counters
+    m_loyaltyPoints = int32(std::min<uint64>(uint64(m_loyaltyPoints) + xp, uint64(std::numeric_limits<int32>::max() / 2)));
+    m_loyaltySeconds = uint32(std::min<uint64>(uint64(m_loyaltySeconds) + seconds, 24 * HOUR));
+
+    if (!HunterPetForever::CanRankUp(m_loyaltyLevel, uint32(m_loyaltyPoints), m_loyaltySeconds, sObjectMgr->GetXPForLevel(GetLevel())))
+        return;
+
+    ++m_loyaltyLevel;
+    m_loyaltyPoints = 0;
+    m_loyaltySeconds = 0;
+    UpdateTrainingPoints();
+
+    TC_LOG_DEBUG("entities.pet", "Pet {} ({}) reached loyalty level {}", GetName(), GetGUID().ToString(), uint32(m_loyaltyLevel));
+
+    // the client reads loyalty only from the stable pet values
+    if (Player* owner = GetOwner())
+        owner->UpdateStablePetLoyalty(m_charmInfo->GetPetNumber(), m_loyaltyLevel, m_loyaltyPoints, m_loyaltySeconds);
 }
 
 uint32 Pet::GetSpellTrainingPoints(uint32 spellId)
@@ -1269,6 +1242,41 @@ void Pet::LearnTameSpells()
             learnSpell(spellId);                            // replaces a lower rank of it
 }
 
+void Pet::SyncTameAttackSpeed()
+{
+    if (getPetType() != HUNTER_PET)
+        return;
+
+    uint32 ownPassive = 0;
+    if (std::vector<uint32> const* spells = GetTameSpells(GetEntry()))
+        for (uint32 spellId : *spells)
+            if (HunterPetForever::IsAttackSpeedPassive(spellId))
+                ownPassive = spellId;
+
+    // one speed at a time: a passive that is not this beast's own goes (the beast's row changed, or it never had one)
+    for (uint32 spellId : HunterPetForever::AttackSpeedPassives)
+        if (spellId != ownPassive && HasSpell(spellId))
+            unlearnSpell(spellId, false, false);
+
+    if (ownPassive && !HasSpell(ownPassive))
+        learnSpell(ownPassive);
+}
+
+int32 Pet::GetAttackSpeedPassivePercent() const
+{
+    for (uint32 spellId : HunterPetForever::AttackSpeedPassives)
+    {
+        if (!HasSpell(spellId))
+            continue;
+
+        if (SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(spellId, DIFFICULTY_NONE))
+            for (SpellEffectInfo const& effect : spellInfo->GetEffects())
+                if (effect.IsAura(SPELL_AURA_MOD_ATTACKSPEED))
+                    return effect.CalcValueAsInt(this);
+    }
+    return 0;
+}
+
 bool Pet::KnowsActiveSpell() const
 {
     for (auto const& [spellId, petSpell] : m_spells)
@@ -1316,7 +1324,7 @@ bool Pet::CreateBaseAtTamed(CreatureTemplate const* cinfo, Map* map)
 
     SetPetNameTimestamp(0);
     SetPetExperience(0);
-    SetPetNextLevelExperience(uint32(sObjectMgr->GetXPForLevel(GetLevel() + 1) * PET_XP_FACTOR));
+    SetPetNextLevelExperience(GetHunterPetNextLevelExperience(GetLevel() + 1));
     ReplaceAllNpcFlags(UNIT_NPC_FLAG_NONE);
     ReplaceAllNpcFlags2(UNIT_NPC_FLAG_2_NONE);
 
@@ -1327,9 +1335,8 @@ bool Pet::CreateBaseAtTamed(CreatureTemplate const* cinfo, Map* map)
         SetPowerType(POWER_FOCUS);
         SetSheath(SHEATH_STATE_MELEE);
         ReplaceAllPetFlags(UNIT_PET_FLAG_CAN_BE_RENAMED | UNIT_PET_FLAG_CAN_BE_ABANDONED);
-        // Classic 1.60: a freshly tamed beast is Rebellious (vanilla)
-        m_loyaltyLevel = REBELLIOUS;
-        m_loyaltyPoints = LOYALTY_TAMED;
+        // Classic 1.60: a freshly tamed beast is Rebellious
+        InitLoyalty(REBELLIOUS, 0, 0);
     }
 
     return true;
@@ -1379,10 +1386,12 @@ bool Guardian::InitStatsForLevel(uint8 petlevel)
 
     SetStatFlatModifier(UNIT_MOD_ARMOR, BASE_VALUE, float(petlevel * 50));
 
-    // Classic 1.60: a hunter pet swings at 2.0 sec and keeps the speed it had in the wild through its Faster / Slower Attack passive
-    // (ClassicPetAttackSpeed.h, learned in LearnPetPassives); other pets keep their creature's attack speed
-    uint32 const attackTime = petType == HUNTER_PET ? ClassicPetAttackSpeed::BaseAttackTimeMs
-                            : cinfo->BaseAttackTime ? cinfo->BaseAttackTime : BASE_ATTACK_TIME;
+    // Classic 1.60 (WoW Forever): every hunter pet swings once in 2.0 sec, whatever the beast did in the wild, and a faster or
+    // slower beast knows a Faster Attack or Slower Attack passive that changes it (classic_pet_tame_spell, SyncTameAttackSpeed).
+    // Other pets keep their creature's attack speed; retail forced 2.0 sec on all of them.
+    uint32 attackTime = cinfo->BaseAttackTime ? cinfo->BaseAttackTime : BASE_ATTACK_TIME;
+    if (petType == HUNTER_PET)
+        attackTime = HunterPetForever::BaseAttackTimeMs;
     SetBaseAttackTime(BASE_ATTACK, attackTime);
     SetBaseAttackTime(OFF_ATTACK, attackTime);
     SetBaseAttackTime(RANGED_ATTACK, cinfo->RangeAttackTime ? cinfo->RangeAttackTime : BASE_ATTACK_TIME);
@@ -1438,22 +1447,34 @@ bool Guardian::InitStatsForLevel(uint8 petlevel)
     {
         case SUMMON_PET:
         {
-            // Classic 1.60 (vanilla): no bonus damage from the warlock's fire or shadow damage (The Burning Crusade)
-            SetBaseWeaponDamage(BASE_ATTACK, MINDAMAGE, float(petlevel - (petlevel / 4)));
-            SetBaseWeaponDamage(BASE_ATTACK, MAXDAMAGE, float(petlevel + (petlevel / 4)));
+            // No bonus damage here: the warlock's share reaches a demon through 416189 Warlock Pet Scaling (classic_warlock_pet_scaling.cpp)
+            float minDamage = float(petlevel - (petlevel / 4));
+            float maxDamage = float(petlevel + (petlevel / 4));
+
+            // WoW Forever: the Sayaad's and Voidwalker's weapons are shares of the creature dps for their level (wowsims/forever EV-0075,
+            // EV-0076). The Voidwalker's melee is then halved in Guardian::UpdateDamagePhysical.
+            if (WarlockPetForever::SwingModel const* swing = WarlockPetForever::DemonSwing(GetEntry()))
+            {
+                float const creatureDps = sDB2Manager.EvaluateExpectedStat(ExpectedStatType::CreatureAutoAttackDps, petlevel, -2, 0, CLASS_NONE, 0);
+                minDamage = WarlockPetForever::MinDamage(*swing, creatureDps);
+                maxDamage = WarlockPetForever::MaxDamage(*swing, creatureDps);
+            }
+
+            SetBaseWeaponDamage(BASE_ATTACK, MINDAMAGE, minDamage);
+            SetBaseWeaponDamage(BASE_ATTACK, MAXDAMAGE, maxDamage);
 
             //SetStatFlatModifier(UNIT_MOD_ATTACK_POWER, BASE_VALUE, float(cinfo->attackpower));
             break;
         }
         case HUNTER_PET:
         {
-            ToPet()->SetPetNextLevelExperience(uint32(sObjectMgr->GetXPForLevel(petlevel)*PET_XP_FACTOR));
-            //these formula may not be correct; however, it is designed to be close to what it should be
-            //this makes dps 0.5 of pets level
-            SetBaseWeaponDamage(BASE_ATTACK, MINDAMAGE, float(petlevel - (petlevel / 4)));
-            //damage range is then petlevel / 2
-            SetBaseWeaponDamage(BASE_ATTACK, MAXDAMAGE, float(petlevel + (petlevel / 4)));
-            //damage is increased afterwards as strength and pet scaling modify attack power
+            ToPet()->SetPetNextLevelExperience(Pet::GetHunterPetNextLevelExperience(petlevel));
+            // Classic 1.60 (WoW Forever): the swing is the creature auto attack dps of the pet's level less the pet's own attack power,
+            // over 2.0 s, 20% either side (HunterPetForever::SwingAverage, EV-0071); attack power adds on top. Retail TrinityCore used
+            // level -/+ level / 4.
+            float const creatureDps = sDB2Manager.EvaluateExpectedStat(ExpectedStatType::CreatureAutoAttackDps, petlevel, -2, 0, CLASS_NONE, 0);
+            SetBaseWeaponDamage(BASE_ATTACK, MINDAMAGE, HunterPetForever::SwingMin(creatureDps));
+            SetBaseWeaponDamage(BASE_ATTACK, MAXDAMAGE, HunterPetForever::SwingMax(creatureDps));
             break;
         }
         default:
@@ -1640,9 +1661,7 @@ bool Pet::HaveInDiet(ItemTemplate const* item) const
     if (!cFamily)
         return false;
 
-    uint32 diet = cFamily->PetFoodMask;
-    uint32 FoodMask = 1u << (item->FoodType - 1);
-    return (diet & FoodMask) != 0;
+    return HunterPetForever::EatsFoodType(uint32(cFamily->PetFoodMask), item->FoodType);
 }
 
 void Pet::_LoadSpells(PreparedQueryResult result)
@@ -1745,7 +1764,9 @@ void Pet::_LoadAuras(PreparedQueryResult auraResult, PreparedQueryResult effectR
 
     /*
                     0      1           2                3           4           5            6           7              8
-    SELECT casterGuid, spell, effectMask, recalculateMask, difficulty, stackCount, maxDuration, remainTime, remainCharges FROM pet_aura WHERE guid = ?
+    SELECT casterGuid, spell, effectMask, recalculateMask, difficulty, stackCount, maxDuration, remainTime, remainCharges,
+                          9            10            11            12            13
+           dstLocationMapId, dstLocationX, dstLocationY, dstLocationZ, dstLocationO FROM pet_aura WHERE guid = ?
     */
     if (auraResult)
     {
@@ -1768,6 +1789,7 @@ void Pet::_LoadAuras(PreparedQueryResult auraResult, PreparedQueryResult effectR
             int32 maxDuration = fields[6].GetInt32();
             int32 remainTime = fields[7].GetInt32();
             uint8 remainCharges = fields[8].GetUInt8();
+            WorldLocation dst(fields[9].GetInt32(), fields[10].GetFloat(), fields[11].GetFloat(), fields[12].GetFloat(), fields[13].GetFloat());
 
             SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(key.SpellId, difficulty);
             if (!spellInfo)
@@ -1802,13 +1824,18 @@ void Pet::_LoadAuras(PreparedQueryResult auraResult, PreparedQueryResult effectR
             else
                 remainCharges = 0;
 
+            if ((dst.GetMapId() != MAPID_INVALID && !sMapStore.HasRecord(dst.GetMapId()))
+                || !Trinity::IsValidMapCoord(dst.GetPositionX(), dst.GetPositionY(), dst.GetPositionZ(), dst.GetOrientation()))
+                dst = WorldLocation();
+
             AuraLoadEffectInfo& info = effectInfo[key];
             ObjectGuid castId = ObjectGuid::Create<HighGuid::Cast>(SPELL_CAST_SOURCE_NORMAL, GetMapId(), spellInfo->Id, GetMap()->GenerateLowGuid<HighGuid::Cast>());
             AuraCreateInfo createInfo(castId, spellInfo, difficulty, key.EffectMask, this);
             createInfo
                 .SetCasterGUID(casterGuid)
                 .SetBaseAmount(info.BaseAmounts.data())
-                .SetStackAmount(stackCount);
+                .SetStackAmount(stackCount)
+                .SetDst(&dst);
 
             if (Aura* aura = Aura::TryCreate(createInfo))
             {
@@ -1864,6 +1891,11 @@ void Pet::_SaveAuras(CharacterDatabaseTransaction trans)
         stmt->setInt32(index++, aura->GetMaxDuration());
         stmt->setInt32(index++, aura->GetDuration());
         stmt->setUInt8(index++, aura->GetCharges());
+        stmt->setInt32(index++, aura->GetDst().GetMapId());
+        stmt->setFloat(index++, aura->GetDst().GetPositionX());
+        stmt->setFloat(index++, aura->GetDst().GetPositionY());
+        stmt->setFloat(index++, aura->GetDst().GetPositionZ());
+        stmt->setFloat(index++, aura->GetDst().GetOrientation());
         trans->Append(stmt);
 
         for (AuraEffect const* effect : aura->GetAuraEffects())
@@ -2276,11 +2308,6 @@ void Pet::LearnPetPassives()
         for (uint32 spellId : petStore->second)
             addSpell(spellId, ACT_DECIDE, PETSPELL_NEW, PETSPELL_FAMILY);
     }
-
-    // Classic 1.60: the passive that gives a hunter pet (2.0 sec swing) the attack speed its beast has in the wild
-    if (getPetType() == HUNTER_PET)
-        if (ClassicPetAttackSpeed::Step const* step = ClassicPetAttackSpeed::ForWildAttackTime(cInfo->BaseAttackTime))
-            addSpell(step->spellId, ACT_DECIDE, PETSPELL_NEW, PETSPELL_FAMILY);
 }
 
 void Pet::CastPetAuras(bool current)

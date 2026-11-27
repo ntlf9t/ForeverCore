@@ -1,4 +1,9 @@
 #include "BotNamePool.h"
+#include "BotSurnames.h"
+#include "BotAccountMgr.h"
+#include "../Services.h"
+#include "CharacterCache.h"
+#include "NameReservationMgr.h"
 
 #include "CharacterCache.h"
 #include "Config.h"
@@ -502,6 +507,79 @@ void BotNamePool::ReconcileOnBoot()
     // Then load the (post-cleanup) is_used=0 set into memory.
     std::lock_guard lk(g_mutex);
     Load_locked();
+}
+
+std::string BotNamePool::AcquireSurname(std::string const& name, uint8 race)
+{
+    return BotSurnames::Pick(race, g_rng, [&](std::string const& surname)
+    {
+        return !sCharacterCache->GetCharacterCacheByFullName(name, surname)
+            && NameReservation::CanUse(sNameReservationMgr->Check(name, surname, 0));
+    });
+}
+
+namespace
+{
+// Only surnames change: identity, first-name pool ownership, equipment and progress stay intact.
+bool ReplaceBotSurname(ObjectGuid guid, std::string const& name, uint8 race)
+{
+    std::string surname = BotNamePool::AcquireSurname(name, race);
+    if (surname.empty())
+        return false;
+
+    CharacterDatabase.DirectPExecute("UPDATE characters SET surname = '{}' WHERE guid = {}",
+        EscapeForSql(surname), guid.GetCounter());
+    // Player saves do not write surname. Verify persistence before releasing the name in the cache.
+    auto saved = CharacterDatabase.PQuery("SELECT surname FROM characters WHERE guid = {}", guid.GetCounter());
+    if (!saved || saved->Fetch()[0].GetString() != surname)
+        return false;
+    sCharacterCache->UpdateCharacterSurname(guid, surname);
+    TC_LOG_INFO("playerbot.v2", "[BotNamePool] Bot {} now uses surname {} ({})",
+        name, surname, guid.ToString());
+    return true;
+}
+} // anonymous
+
+void BotNamePool::RegisterNameReservationHooks()
+{
+    sNameReservationMgr->SetExemptAccountCheck([](uint32 gameAccountId)
+    {
+        return Services::Accounts().is_pool_account(gameAccountId);
+    });
+
+    sNameReservationMgr->SetYieldHandler([](ObjectGuid holder, std::string const& name)
+    {
+        CharacterCacheEntry const* entry = sCharacterCache->GetCharacterCacheByGuid(holder);
+        // a player's character, or a bot alt on a player's own account, keeps its name
+        if (!entry || !Services::Accounts().is_pool_account(entry->AccountId))
+            return false;
+        return ReplaceBotSurname(holder, name, entry->Race);
+    });
+}
+
+uint32 BotNamePool::RenameBotsHoldingReservedNames()
+{
+    // Also upgrades legacy bots with no surname, even when name reservation is disabled.
+    QueryResult r = CharacterDatabase.Query(
+        "SELECT c.guid, c.name, c.race, c.surname FROM characters c "
+        "JOIN playerbot_v2_account a ON a.account_id = c.account "
+        "WHERE c.name IS NOT NULL AND c.name <> '' AND c.online = 0 AND c.deleteDate IS NULL");
+    if (!r)
+        return 0;
+
+    uint32 renamed = 0;
+    do
+    {
+        Field* f = r->Fetch();
+        std::string name = f[1].GetString();
+        std::string surname = f[3].GetString();
+        if (surname.empty() || !NameReservation::CanUse(sNameReservationMgr->Check(name, surname, 0)))
+            if (ReplaceBotSurname(ObjectGuid::Create<HighGuid::Player>(f[0].GetUInt64()), name, f[2].GetUInt8()))
+                ++renamed;
+    } while (r->NextRow());
+
+    TC_LOG_INFO("server.loading", "[PlayerbotV2] Bot names: {} surnames assigned or replaced", renamed);
+    return renamed;
 }
 
 BotNamePool::PoolStats BotNamePool::GetStats()

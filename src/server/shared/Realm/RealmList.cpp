@@ -377,17 +377,44 @@ uint32 RealmList::GetCurrentRealmSuperDistrict() const
 
 std::string RealmList::GetClassicSuperDistrictListEntries() const
 {
-    std::string entries, allEntries;
+    // A ruleset whose realms are all offline (realmlist.flag 2: no worldserver running, or one not open yet) is still
+    // offered, greyed out (disallowLogin): the client draws the card disabled with Blizzard's "not available" tooltip.
+    // Cards go out in the order of their lowest realm id, in case the client keeps the list's order.
+    struct Card { uint32 FirstRealmId; uint32 SuperDistrictId; bool Online; };
+    std::vector<Card> cards;
+    std::string allEntries;
     for (uint32 superDistrictId = 1; superDistrictId <= 5; ++superDistrictId)
     {
-        std::string entry = Trinity::StringFormat(R"({{"superDistrictID":{},"disallowLogin":false,"holdDownUntilTime":0}})", superDistrictId);
-        allEntries += (allEntries.empty() ? "" : ",") + entry;
+        allEntries += Trinity::StringFormat(R"({}{{"superDistrictID":{},"disallowLogin":false,"holdDownUntilTime":0}})",
+            allEntries.empty() ? "" : ",", superDistrictId);
 
         // only offer rulesets with a realm, like the real Classic realm list
-        if (uint32 contentSetId = GetClassicContentSetForSuperDistrict(superDistrictId))
-            if (GetRealmIdForContentSet(contentSetId))
-                entries += (entries.empty() ? "" : ",") + entry;
+        uint32 contentSetId = GetClassicContentSetForSuperDistrict(superDistrictId);
+        if (!contentSetId)
+            continue;
+
+        Optional<Card> card;
+        {
+            std::shared_lock lock(_realmsMutex);
+            for (auto const& [id, realm] : _realms)
+            {
+                if (realm->ContentSetId != contentSetId)
+                    continue;
+                if (!card)
+                    card = Card{ id.Realm, superDistrictId, false };
+                card->FirstRealmId = std::min(card->FirstRealmId, id.Realm);
+                card->Online = card->Online || realm->PopulationLevel != RealmPopulationState::Offline;
+            }
+        }
+        if (card)
+            cards.push_back(*card);
     }
+
+    std::ranges::sort(cards, {}, &Card::FirstRealmId);
+    std::string entries;
+    for (Card const& card : cards)
+        entries += Trinity::StringFormat(R"({}{{"superDistrictID":{},"disallowLogin":{},"holdDownUntilTime":0}})",
+            entries.empty() ? "" : ",", card.SuperDistrictId, card.Online ? "false" : "true");
     return entries.empty() ? allEntries : entries;
 }
 

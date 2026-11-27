@@ -1435,12 +1435,6 @@ bool OwnerWordOrder(Player* sender, Player* bot, std::string const& n)
     std::string const me = bot->GetName();
     uint64 const bid = bot->GetGUID().GetCounter();
     auto say = [&](std::string text) { Push(bot, WhisperIntent{sender->GetName(), std::move(text)}); };
-    auto tail_after = [&](std::string_view prefix) -> std::string
-    {
-        std::string r = n.size() > prefix.size() ? n.substr(prefix.size()) : std::string();
-        size_t const b = r.find_first_not_of(' ');
-        return b == std::string::npos ? std::string() : r.substr(b);
-    };
 
     // ---- quests (QuestOrders, the questing worker) ------------------------------------------------------------------
 #ifdef PBV2_HAVE_QUEST_ORDERS
@@ -9250,7 +9244,7 @@ done_dispel:
         auto formatLine = [&](char const* label, dtQueryFilterTC::RoadStats const& st) {
             return fmt::format("{} paths_run={} with_road={} ({:.1f}%) disabled={} ({:.1f}%) "
                                "in_instance={} slope_penalty={} ({:.1f}%) "
-                               "road_polys={}/{} ({:.2f}%)",
+                               "road_polys={}/{} ({:.2f}%) out_of_nodes={} ({:.2f}%) poly_cap={} ({:.2f}%)",
                                label,
                                st.pathsRun,
                                st.pathsWithRoadPoly,
@@ -9261,7 +9255,9 @@ done_dispel:
                                st.pathsWithSlopePenalty,
                                st.pathsRun ? 100.0 * st.pathsWithSlopePenalty / st.pathsRun : 0.0,
                                st.roadPolysVisited, st.totalPolysVisited,
-                               st.totalPolysVisited ? 100.0 * st.roadPolysVisited / st.totalPolysVisited : 0.0);
+                               st.totalPolysVisited ? 100.0 * st.roadPolysVisited / st.totalPolysVisited : 0.0,
+                               st.pathsOutOfNodes, st.pathsRun ? 100.0 * st.pathsOutOfNodes / st.pathsRun : 0.0,
+                               st.pathsPolyCapHit, st.pathsRun ? 100.0 * st.pathsPolyCapHit / st.pathsRun : 0.0);
         };
 
         // Sub-mode parsing. parsed.tail carries the raw arg suffix.

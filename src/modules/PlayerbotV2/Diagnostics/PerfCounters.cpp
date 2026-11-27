@@ -1,6 +1,7 @@
 #include "PerfCounters.h"
 #include <mutex>
 #include <bit>
+#include <mutex>
 
 namespace Playerbot {
 

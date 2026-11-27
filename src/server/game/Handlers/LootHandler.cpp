@@ -405,9 +405,18 @@ void WorldSession::DoLootRelease(Loot* loot)
 
 void WorldSession::DoLootReleaseAll()
 {
-    std::unordered_map<ObjectGuid, Loot*> lootView = _player->GetAELootView();
-    for (auto const& [lootGuid, loot] : lootView)
-        DoLootRelease(loot);
+    // Releasing one loot can free another the player also has open (a chest or vein that resets, an item destroyed with its
+    // loot). That loot's destructor takes it out of the view, but a copy of the view still held its pointer, and releasing it
+    // next erased from freed memory (live worldserver segfaults in set<ObjectGuid>::equal_range under DoLootRelease, 11-25/26).
+    // Walk the loot guids and look each one up again in the live view, so a loot freed on the way is skipped.
+    std::vector<ObjectGuid> lootGuids;
+    lootGuids.reserve(_player->GetAELootView().size());
+    for (auto const& [lootGuid, loot] : _player->GetAELootView())
+        lootGuids.push_back(lootGuid);
+
+    for (ObjectGuid const& lootGuid : lootGuids)
+        if (Loot* loot = Trinity::Containers::MapGetValuePtr(_player->GetAELootView(), lootGuid))
+            DoLootRelease(loot);
 }
 
 void WorldSession::HandleLootMasterGiveOpcode(WorldPackets::Loot::MasterLootItem& masterLootItem)

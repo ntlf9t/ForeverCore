@@ -268,7 +268,8 @@ bool QuestObjectiveCriteriaMgr::CanUpdateCriteriaTree(Criteria const* criteria, 
     }
 
     Quest const* quest = ASSERT_NOTNULL(sObjectMgr->GetQuestTemplate(objective->QuestID));
-    if (_owner->GetGroup() && _owner->GetGroup()->IsRaidForQuests() && !quest->IsAllowedInRaid(referencePlayer->GetMap()->GetDifficultyID()))
+    // battleground raids may complete any quest, as Player::KilledMonster and the other quest credit paths allow
+    if (_owner->GetGroup() && _owner->GetGroup()->IsRaidForQuests() && !quest->IsAllowedInRaid(referencePlayer->GetMap()->GetDifficultyID()) && !_owner->InBattleground())
     {
         TC_LOG_TRACE("criteria.quest", "QuestObjectiveCriteriaMgr::CanUpdateCriteriaTree: (Id: {} Type {} Quest Objective {}) Quest cannot be completed in raid group",
             criteria->ID, CriteriaMgr::GetCriteriaTypeString(criteria->Entry->Type), objective->ID);

@@ -20,6 +20,7 @@
 #include "Common.h"
 #include "Containers.h"
 #include "CreatureAI.h"
+#include "DB2Stores.h"
 #include "DynamicObject.h"
 #include "GridNotifiersImpl.h"
 #include "Item.h"
@@ -297,6 +298,8 @@ void AuraApplication::BuildUpdatePacket(WorldPackets::Spells::AuraInfo& auraInfo
                     auraData.EstimatedPoints[effect->GetEffIndex()] = effect->GetEstimatedAmount().value_or(effect->GetAmount());
         }
     }
+
+    auraData.DstLocation.Pos.Relocate(aura->GetDst());
 }
 
 void AuraApplication::ClientUpdate(bool remove)
@@ -497,9 +500,15 @@ m_lastProcAttemptTime(GameTime::Now() - Seconds(10)), m_lastProcSuccessTime(Game
 
     m_maxDuration = CalcMaxDuration(createInfo.Caster);
     m_duration = m_maxDuration;
+    if (GetSpellInfo()->HasAttribute(SPELL_ATTR15_AURA_HAS_SEPARATE_STACK_DURATIONS))
+        m_stackDropTimes.insert({ .DropTime = GameTime::Now() + Milliseconds(m_maxDuration), .StackAmount = m_stackAmount });
+
     m_procCharges = CalcMaxCharges(createInfo.Caster);
     m_isUsingCharges = m_procCharges != 0;
     // m_casterLevel = cast item level/caster level, caster level should be saved to db, confirmed with sniffs
+
+    if (createInfo.Dst)
+        m_dst.WorldRelocate(createInfo.Dst);
 }
 
 AuraScript* Aura::GetScriptByType(std::type_info const& type) const
@@ -596,6 +605,28 @@ void Aura::_ApplyForTarget(Unit* target, Unit* caster, AuraApplication* auraApp)
     ASSERT (!IsAppliedOnTarget(target->GetGUID()) && "Aura::_ApplyForTarget: aura musn't be already applied on target");
 
     m_applications[target->GetGUID()] = auraApp;
+
+    // Classic 1.60 (WoW Forever): a charge buff gained while its wearer channels a spell its modifiers name is spent at that channel's end
+    // (R-0048; Clearcasting during Arcane Missiles)
+    if (IsUsingCharges() && target == GetUnitOwner())
+    {
+        if (Spell* channel = target->GetCurrentSpell(CURRENT_CHANNELED_SPELL))
+        {
+            if (channel->GetSpellInfo()->IsChanneled())
+            {
+                for (AuraEffect const* aurEff : GetAuraEffects())
+                {
+                    if (!aurEff || (aurEff->GetAuraType() != SPELL_AURA_ADD_FLAT_MODIFIER && aurEff->GetAuraType() != SPELL_AURA_ADD_PCT_MODIFIER))
+                        continue;
+                    if (channel->GetSpellInfo()->IsAffected(m_spellInfo->SpellFamilyName, aurEff->GetSpellEffectInfo().SpellClassMask))
+                    {
+                        channel->ClassicReserveCharge(GetCasterGUID(), GetId());
+                        break;
+                    }
+                }
+            }
+        }
+    }
 
     // set infinity cooldown state for spells
     if (caster && caster->GetTypeId() == TYPEID_PLAYER)
@@ -865,6 +896,17 @@ void Aura::Update(uint32 diff, Unit* caster)
         if (m_duration < 0)
             m_duration = 0;
 
+        if (!IsExpired() && !m_stackDropTimes.empty())
+        {
+            TimePoint now = GameTime::Now();
+            auto itr = m_stackDropTimes.begin();
+            while (itr != m_stackDropTimes.end() && itr->DropTime <= now)
+            {
+                ModStackAmount(-itr->StackAmount, AURA_REMOVE_BY_EXPIRE); // erases from m_stackDropTimes
+                itr = m_stackDropTimes.begin();
+            }
+        }
+
         // handle manaPerSecond/manaPerSecondPerLevel
         if (m_timeCla)
         {
@@ -951,6 +993,9 @@ void Aura::SetDuration(int32 duration, bool withMods)
                 modOwner->ApplySpellMod(GetSpellInfo(), SpellModOp::Duration, duration);
 
     m_duration = duration;
+    if (GetSpellInfo()->HasAttribute(SPELL_ATTR15_AURA_HAS_SEPARATE_STACK_DURATIONS))
+        SetLastStackDuration(duration);
+
     SetNeedClientUpdateForTargets();
 }
 
@@ -994,6 +1039,42 @@ void Aura::RefreshTimers(bool resetPeriodicTimer)
     Unit* caster = GetCaster();
     for (AuraEffect* aurEff : GetAuraEffects())
         aurEff->CalculatePeriodic(caster, resetPeriodicTimer, false);
+}
+
+void Aura::AddStackDropTime(TimePoint dropTime, int32 stacks)
+{
+    auto [itr, isNew] = m_stackDropTimes.insert({ .DropTime = dropTime, .StackAmount = stacks });
+    if (!isNew)
+        itr->StackAmount += stacks;
+}
+
+void Aura::RemoveStackDropTime(int32 stacksToRemove)
+{
+    do
+    {
+        auto oldestStacksItr = m_stackDropTimes.begin();
+        if (stacksToRemove < oldestStacksItr->StackAmount)
+        {
+            oldestStacksItr->StackAmount -= stacksToRemove;
+            stacksToRemove = 0;
+        }
+        else
+        {
+            stacksToRemove -= oldestStacksItr->StackAmount;
+            m_stackDropTimes.erase(oldestStacksItr);
+        }
+    } while (stacksToRemove > 0);
+}
+
+void Aura::SetLastStackDuration(int32 duration)
+{
+    if (m_stackDropTimes.empty())
+        return;
+
+    auto latestStacksItr = m_stackDropTimes.begin() + (std::ssize(m_stackDropTimes) - 1);
+    int32 stackAmount = latestStacksItr->StackAmount;
+    m_stackDropTimes.erase(latestStacksItr);
+    AddStackDropTime(GameTime::Now() + Milliseconds(duration), stackAmount);
 }
 
 void Aura::SetCharges(uint8 charges)
@@ -1097,7 +1178,8 @@ uint32 Aura::CalcMaxStackAmount() const
 
 bool Aura::ModStackAmount(int32 num, AuraRemoveMode removeMode /*= AURA_REMOVE_BY_DEFAULT*/, bool resetPeriodicTimer /*= true*/)
 {
-    int32 stackAmount = m_stackAmount + num;
+    int32 oldStackAmount = m_stackAmount;
+    int32 stackAmount = oldStackAmount + num;
     int32 maxStackAmount = int32(CalcMaxStackAmount());
 
     // limit the stack amount (only on stack increase, stack amount may be changed manually)
@@ -1116,10 +1198,23 @@ bool Aura::ModStackAmount(int32 num, AuraRemoveMode removeMode /*= AURA_REMOVE_B
         return true;
     }
 
-    bool refresh = stackAmount >= GetStackAmount() && (m_spellInfo->StackAmount || (!m_spellInfo->HasAttribute(SPELL_ATTR1_AURA_UNIQUE) && !m_spellInfo->HasAttribute(SPELL_ATTR5_AURA_UNIQUE_PER_CASTER)));
+    bool refresh = stackAmount >= oldStackAmount && (m_spellInfo->StackAmount || (!m_spellInfo->HasAttribute(SPELL_ATTR1_AURA_UNIQUE) && !m_spellInfo->HasAttribute(SPELL_ATTR5_AURA_UNIQUE_PER_CASTER)));
 
     // Update stack amount
     SetStackAmount(stackAmount);
+
+    if (GetSpellInfo()->HasAttribute(SPELL_ATTR15_AURA_HAS_SEPARATE_STACK_DURATIONS))
+    {
+        if (num > 0)
+        {
+            AddStackDropTime(GameTime::Now() + Milliseconds(m_maxDuration), std::clamp(num, 1, maxStackAmount));
+            int32 overflowStacks = oldStackAmount + num - stackAmount;
+            if (overflowStacks > 0)
+                RemoveStackDropTime(overflowStacks);
+        }
+        else
+            RemoveStackDropTime(-num);
+    }
 
     if (refresh)
     {
@@ -1772,37 +1867,8 @@ bool Aura::CanStackWith(Aura const* existingAura) const
     }
 
     // Classic 1.60: not every rank pair is chained through SkillLineAbility (Blessing of Sacrifice 6940 / 20729 stacked on one target, 45 + 55 redirected).
-    // Only a rank-like pair counts: same caster, same name, same family and class mask, the same effect/aura layout in every effect, both timed and
-    // not passive, neither enchant-proc, and neither triggers the other. Talent + proc pairs and multi-part buffs differ in one of those.
-    auto const looksLikeRank = [&]()
-    {
-        if (!sameCaster || m_spellInfo->ChainEntry || existingSpellInfo->ChainEntry || m_spellInfo->Id == existingSpellInfo->Id)
-            return false;
-        if (!m_spellInfo->SpellName || !existingSpellInfo->SpellName || !m_spellInfo->IsPositive() || !existingSpellInfo->IsPositive())
-            return false;
-        if (m_spellInfo->IsPassive() || existingSpellInfo->IsPassive() || m_spellInfo->GetDuration() <= 0 || existingSpellInfo->GetDuration() <= 0)
-            return false;
-        if (m_spellInfo->HasAttribute(SPELL_ATTR0_CU_ENCHANT_PROC) || existingSpellInfo->HasAttribute(SPELL_ATTR0_CU_ENCHANT_PROC))
-            return false;
-        if (m_spellInfo->SpellFamilyName == SPELLFAMILY_GENERIC || m_spellInfo->SpellFamilyName != existingSpellInfo->SpellFamilyName
-            || m_spellInfo->SpellFamilyFlags[0] != existingSpellInfo->SpellFamilyFlags[0] || m_spellInfo->SpellFamilyFlags[1] != existingSpellInfo->SpellFamilyFlags[1]
-            || m_spellInfo->SpellFamilyFlags[2] != existingSpellInfo->SpellFamilyFlags[2] || m_spellInfo->SpellFamilyFlags[3] != existingSpellInfo->SpellFamilyFlags[3])
-            return false;
-        if (strcmp((*m_spellInfo->SpellName)[sWorld->GetDefaultDbcLocale()], (*existingSpellInfo->SpellName)[sWorld->GetDefaultDbcLocale()]) != 0)
-            return false;
-        // Ranks may differ in their number of effects (Mark of the Wild 1126 has one, 5234 eight): compare the effects both have. GetEffect past the
-        // other spell's last effect asserts (235 crash 01:35, a druid bot's 5234 on a target holding 1126).
-        SpellInfo const* fewer = m_spellInfo->GetEffects().size() <= existingSpellInfo->GetEffects().size() ? m_spellInfo : existingSpellInfo;
-        SpellInfo const* more = fewer == m_spellInfo ? existingSpellInfo : m_spellInfo;
-        for (SpellEffectInfo const& a : fewer->GetEffects())
-        {
-            SpellEffectInfo const& b = more->GetEffect(a.EffectIndex);
-            if (a.Effect != b.Effect || a.ApplyAuraName != b.ApplyAuraName || a.TriggerSpell == more->Id || b.TriggerSpell == fewer->Id)
-                return false;
-        }
-        return true;
-    };
-    if (looksLikeRank())
+    // A rank-like pair from the same caster replaces the other (SpellInfo::IsClassicUnchainedRankOf).
+    if (sameCaster && m_spellInfo->IsClassicUnchainedRankOf(existingSpellInfo))
         return false;
 
     return true;
@@ -1846,11 +1912,46 @@ void Aura::PrepareProcToTrigger(AuraApplication* aurApp, ProcEventInfo& eventInf
     SetLastProcSuccessTime(now);
 }
 
+// Classic 1.60 (WoW Forever): a charge buff hit by its wearer's channel (the channel's cast or one of its ticks) is spent when that channel
+// ends, interrupted or not, not at its first hit: the channel holds one charge (Spell::ClassicReserveCharge) and its later ticks use the
+// buff for free (wowsims/forever, MIT, docs/rulings R-0048, sim/core/spelldata/charges.go; evidence pending).
+bool Aura::ClassicReserveChannelCharge(ProcEventInfo const& eventInfo)
+{
+    Unit* owner = GetUnitOwner();
+    if (!owner || eventInfo.GetActor() != owner)
+        return false;
+
+    Spell* channel = owner->GetCurrentSpell(CURRENT_CHANNELED_SPELL);
+    if (!channel || !channel->GetSpellInfo()->IsChanneled())
+        return false;
+
+    if (Spell const* procSpell = eventInfo.GetProcSpell())
+    {
+        if (procSpell != channel && procSpell->GetTriggeredByAuraSpell() != channel->GetSpellInfo())
+            return false;
+    }
+    else if (eventInfo.GetSpellInfo() != channel->GetSpellInfo())     // a periodic tick of the channel's own aura
+        return false;
+
+    channel->ClassicReserveCharge(GetCasterGUID(), GetId());
+    return true;
+}
+
 void Aura::PrepareProcChargeDrop(SpellProcEntry const* procEntry, ProcEventInfo const& eventInfo)
 {
+    m_classicChargeReserved = false;
+
     // Failed attempts may burn a charge; unrelated event types must not.
     if (GetSpellInfo()->HasAttribute(SPELL_ATTR15_UNK13) && !(eventInfo.GetTypeMask() & procEntry->ProcFlags))
         return;
+
+    bool const consumes = (procEntry->AttributesMask & PROC_ATTR_USE_STACKS_FOR_CHARGES)
+        || (IsUsingCharges() && (!eventInfo.GetSpellInfo() || !eventInfo.GetSpellInfo()->HasAttribute(SPELL_ATTR6_DO_NOT_CONSUME_RESOURCES)));
+    if (consumes && ClassicReserveChannelCharge(eventInfo))
+    {
+        m_classicChargeReserved = true;
+        return;
+    }
 
     // take one charge, aura expiration will be handled in Aura::TriggerProcOnEvent (if needed)
     if (!(procEntry->AttributesMask & PROC_ATTR_USE_STACKS_FOR_CHARGES) && IsUsingCharges() && (!eventInfo.GetSpellInfo() || !eventInfo.GetSpellInfo()->HasAttribute(SPELL_ATTR6_DO_NOT_CONSUME_RESOURCES)))
@@ -1862,6 +1963,13 @@ void Aura::PrepareProcChargeDrop(SpellProcEntry const* procEntry, ProcEventInfo 
 
 void Aura::ConsumeProcCharges(SpellProcEntry const* procEntry)
 {
+    // Classic 1.60: the wearer's channel holds this charge and spends it at its end (ClassicReserveChannelCharge)
+    if (m_classicChargeReserved)
+    {
+        m_classicChargeReserved = false;
+        return;
+    }
+
     // Remove aura if we've used last charge to proc
     if (procEntry->AttributesMask & PROC_ATTR_USE_STACKS_FOR_CHARGES)
     {
@@ -2093,6 +2201,24 @@ float Aura::CalcProcChance(SpellProcEntry const& procEntry, ProcEventInfo& event
         if (Player* modOwner = caster->GetSpellModOwner())
             modOwner->ApplySpellMod(GetSpellInfo(), SpellModOp::ProcChance, chance);
     }
+
+    // WoW Forever downranking: Blizzard, build 70755, took the low rank penalty off talent procs ("This penalty does still apply to
+    // Blizzard"): only a lower Blizzard rank, more than 12 levels below the caster, lowers the chance of the actor's own Arcane
+    // Concentration, Frostbite and Fingers of Frost (SpellMgr::GetClassicBlizzardProcDownrankFactor). The share applies to the roll here
+    // and so to the chances scripts roll after it too.
+    if (Unit const* actor = eventInfo.GetActor())
+        if (SpellInfo const* triggering = eventInfo.GetSpellInfo())
+            if (actor->GetTypeId() == TYPEID_PLAYER && GetCasterGUID() == actor->GetGUID())
+                switch (GetId())
+                {
+                    case 11213:     // Arcane Concentration
+                    case 11071:     // Frostbite
+                    case 400647:    // Fingers of Frost
+                        chance *= sSpellMgr->GetClassicBlizzardProcDownrankFactor(triggering, actor);
+                        break;
+                    default:
+                        break;
+                }
 
     // proc chance is reduced by an additional 3.333% per level past 60
     if ((procEntry.AttributesMask & PROC_ATTR_REDUCE_PROC_60) && eventInfo.GetActor()->GetLevel() > 60)

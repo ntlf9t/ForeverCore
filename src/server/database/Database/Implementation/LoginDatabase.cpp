@@ -213,7 +213,7 @@ void LoginDatabaseConnection::DoPrepareStatements()
     PrepareStatement(LOGIN_SEL_BOT_ACCOUNTS_ALL, "SELECT ba.id, ba.email, a.id as legacy_account_id FROM battlenet_accounts ba LEFT JOIN account a ON a.battlenet_account = ba.id WHERE ba.email LIKE '%#%' OR ba.email LIKE '%@playerbot.local' ORDER BY ba.email", CONNECTION_SYNCH);
 }
 
-LoginDatabaseConnection::LoginDatabaseConnection(MySQLConnectionInfo& connInfo, ConnectionFlags connectionFlags) : MySQLConnection(connInfo, connectionFlags)
+LoginDatabaseConnection::LoginDatabaseConnection(MySQLConnectionInfo const& connInfo, ConnectionFlags connectionFlags) : MySQLConnection(connInfo, connectionFlags)
 {
 }
 

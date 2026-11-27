@@ -29,6 +29,7 @@
 #include "TemporarySummon.h"
 #include "Player.h"
 #include "SpellInfo.h"
+#include "SpellScript.h"
 #include "GameObject.h"
 #include "MovementDefines.h"
 #include "QuaternionData.h"

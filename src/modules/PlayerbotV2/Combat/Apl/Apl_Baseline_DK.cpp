@@ -49,7 +49,7 @@ constexpr uint32 DEATHS_ADVANCE      = 48265;    // L9  — sprint + snare remov
 constexpr uint32 ICEBOUND_FORTITUDE  = 48792;    // class talent (L38 row) — 30% dmg reduction, stun immune
 
 BASELINE_SPELL_RULE(DeathCoil,    DEATH_COIL)
-BASELINE_SPELL_RULE(DeathStrike,  DEATH_STRIKE)
+void DoDeathStrike(ApPredicateContext const& ctx, BotIntentEmitter& e) { e.cast(DEATH_STRIKE, ctx.bot.victim()); }
 BASELINE_INTERRUPT_RULE(MindFreeze, MIND_FREEZE)
 BASELINE_SPELL_RULE(RuneStrike,   RUNE_STRIKE)
 

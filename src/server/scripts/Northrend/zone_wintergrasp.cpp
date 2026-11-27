@@ -527,8 +527,7 @@ public:
             return false;
         // Wintergrasp exists only on Northrend, and only while Wintergrasp.Enable is on: anywhere else (a quest giver in Duskwood
         // whose quest carries this condition, a realm with the battle turned off) nobody holds it
-        Battlefield* wintergrasp = sBattlefieldMgr->GetBattlefieldByBattleId(sourceInfo.mConditionMap, BATTLEFIELD_BATTLEID_WG);
-        return wintergrasp && wintergrasp->IsEnabled() && wintergrasp->GetDefenderTeam() == TEAM_HORDE;
+        return IsBattlefieldHeldBy(sBattlefieldMgr->GetBattlefieldByBattleId(sourceInfo.mConditionMap, BATTLEFIELD_BATTLEID_WG), TEAM_HORDE);
     }
 };
 
@@ -543,8 +542,7 @@ public:
             return false;
         // Wintergrasp exists only on Northrend, and only while Wintergrasp.Enable is on: anywhere else (a quest giver in Duskwood
         // whose quest carries this condition, a realm with the battle turned off) nobody holds it
-        Battlefield* wintergrasp = sBattlefieldMgr->GetBattlefieldByBattleId(sourceInfo.mConditionMap, BATTLEFIELD_BATTLEID_WG);
-        return wintergrasp && wintergrasp->IsEnabled() && wintergrasp->GetDefenderTeam() == TEAM_ALLIANCE;
+        return IsBattlefieldHeldBy(sBattlefieldMgr->GetBattlefieldByBattleId(sourceInfo.mConditionMap, BATTLEFIELD_BATTLEID_WG), TEAM_ALLIANCE);
     }
 };
 

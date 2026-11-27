@@ -420,7 +420,8 @@ struct TC_GAME_API CreatureMovementData
 };
 
 const uint32 CREATURE_REGEN_INTERVAL = 2 * IN_MILLISECONDS;
-const uint32 PET_FOCUS_REGEN_INTERVAL = 4 * IN_MILLISECONDS;
+// Classic 1.60 (WoW Forever): hunter pet focus comes back continuously, so it ticks every second (vanilla: every 4 seconds)
+const uint32 PET_FOCUS_REGEN_INTERVAL = 1 * IN_MILLISECONDS;
 const uint32 CREATURE_NOPATH_EVADE_TIME = 5 * IN_MILLISECONDS;
 
 const uint8 MAX_KILL_CREDIT = 2;

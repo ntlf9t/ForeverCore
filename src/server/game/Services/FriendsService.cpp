@@ -21,6 +21,7 @@
 #include "CharacterCache.h"
 #include "Chat.h"
 #include "DatabaseEnv.h"
+#include "FullName.h"
 #include "GameTime.h"
 #include "Language.h"
 #include "Log.h"

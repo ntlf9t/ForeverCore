@@ -1855,6 +1855,7 @@ bool OnAddonWhisper(Player* sender, Player* /*receiver*/,
             && mtype != "PING"
             && mtype != "LFG_REQ"
             && mtype != "POP_REQ"
+            && mtype != "HIRE_REQ"
             && mtype != "BOT_TRADE_VIEW"
             && mtype != "BOT_TRADE_ACCEPT"
             && mtype != "HIRE_REQ"

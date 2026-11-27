@@ -70,7 +70,7 @@ namespace WorldPackets
             std::string GuildVirtualRealmName;
             Trinity::RaceMask<int32, 2> RaceFilter = { 0, 0 };
             int32 ClassFilter = -1;
-            std::vector<WhoWord> Words;
+            Array<WhoWord, 7> Words;                        // Classic 1.60: 3 bit count, up to 7 words (retail 4)
             bool ShowEnemies = false;
             bool ShowArenaPlayers = false;
             bool ExactName = false;

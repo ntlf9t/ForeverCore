@@ -726,7 +726,7 @@ void WorldSession::SendListInventory(ObjectGuid vendorGuid)
             if (float priceMod = _player->GetTotalAuraModifier(SPELL_AURA_MOD_VENDOR_ITEMS_PRICES))
                 price -= CalculatePct(price, priceMod);
 
-            price = _player->ApplyClassicLegacyPriceMod(price, 0);   // Legacy perk Bartering
+            price = _player->ApplyClassicLegacyPriceMod(price, 1);   // Legacy perk Bartering (aura 620 misc 1, forever-bugs #209)
 
             if (basePrice > 0)
                 price = std::max(uint64(1), price);
@@ -1263,27 +1263,6 @@ void WorldSession::HandleItemRefund(WorldPackets::Item::ItemPurchaseRefund& pack
     GetPlayer()->RefundItem(item);
 }
 
-bool WorldSession::CanUseBank(ObjectGuid bankerGUID) const
-{
-    // bankerGUID parameter is optional, set to 0 by default.
-    if (!bankerGUID)
-        bankerGUID = _player->PlayerTalkClass->GetInteractionData().SourceGuid;
-
-    bool isUsingBankCommand = (bankerGUID == GetPlayer()->GetGUID() && bankerGUID == _player->PlayerTalkClass->GetInteractionData().SourceGuid);
-
-    if (!isUsingBankCommand)
-    {
-        Creature* creature = GetPlayer()->GetNPCIfCanInteractWith(bankerGUID, UNIT_NPC_FLAG_BANKER, UNIT_NPC_FLAG_2_NONE);
-        // Classic 1.60 Legacy perk Personal Banking 1225493: the bank opened through an innkeeper (Player::OnGossipSelect)
-        if (!creature && GetPlayer()->HasAura(1225493))
-            creature = GetPlayer()->GetNPCIfCanInteractWith(bankerGUID, UNIT_NPC_FLAG_INNKEEPER, UNIT_NPC_FLAG_2_NONE);
-        if (!creature)
-            return false;
-    }
-
-    return true;
-}
-
 void WorldSession::HandleUseCritterItem(WorldPackets::Item::UseCritterItem& useCritterItem)
 {
     Item* item = _player->GetItemByGuid(useCritterItem.ItemGuid);
@@ -1296,8 +1275,9 @@ void WorldSession::HandleUseCritterItem(WorldPackets::Item::UseCritterItem& useC
             continue;
 
         if (BattlePetSpeciesEntry const* speciesEntry = BattlePets::BattlePetMgr::GetBattlePetSpeciesBySpell(uint32(itemEffect->SpellID)))
-            GetBattlePetMgr()->AddPet(speciesEntry->ID, BattlePets::BattlePetMgr::SelectPetDisplay(speciesEntry),
-                BattlePets::BattlePetMgr::RollPetBreed(speciesEntry->ID), BattlePets::BattlePetMgr::GetDefaultPetQuality(speciesEntry->ID));
+            if (BattlePets::BattlePetMgr* battlePetMgr = GetBattlePetMgr())
+                battlePetMgr->AddPet(speciesEntry->ID, BattlePets::BattlePetMgr::SelectPetDisplay(speciesEntry),
+                    BattlePets::BattlePetMgr::RollPetBreed(speciesEntry->ID), BattlePets::BattlePetMgr::GetDefaultPetQuality(speciesEntry->ID));
     }
 
     _player->DestroyItem(item->GetBagSlot(), item->GetSlot(), true);
@@ -1472,7 +1452,7 @@ void BagSorter::Collect()
             continue;
 
         // "ignore this bag when sorting"
-        if (_player->GetBagSlotFlags(bagSlot - INVENTORY_SLOT_BAG_START).HasFlag(BagSlotFlags::DisableAutoSort))
+        if (GetSortFlags(bagSlot).HasFlag(BagSlotFlags::DisableAutoSort))
             continue;
 
         AddContainer(bagSlot, 0, uint8(bag->GetBagSize()), rightToLeft);

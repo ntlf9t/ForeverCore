@@ -79,7 +79,7 @@ void ClassicScriptText(uint32 broadcastTextId, WorldObject* source, Unit* target
 
     auto const& types = ChatTypes();
     auto itr = types.find(broadcastTextId);
-    uint8 type = itr != types.end() ? itr->second : CLASSIC_CHAT_SAY;
+    uint8 type = itr != types.end() ? itr->second : uint8(CLASSIC_CHAT_SAY);
 
     switch (type)
     {

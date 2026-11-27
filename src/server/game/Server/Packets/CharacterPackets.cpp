@@ -471,14 +471,13 @@ void CheckCharacterNameAvailability::Read()
     _worldPacket >> SequenceIndex;
     // Classic 1.60.1.70009: 6 bit name length, 3 unknown bits, 6 bit surname length, then name and surname data
     // (e.g. "gear" + "fd": 10 04 67656172 6664)
-    std::string surname;
     _worldPacket >> SizedString::BitsSize<6>(Name);
     _worldPacket.ReadBits(3);
-    _worldPacket >> SizedString::BitsSize<6>(surname);
+    _worldPacket >> SizedString::BitsSize<6>(Surname);
     _worldPacket.ResetBitPos();
 
     _worldPacket >> SizedString::Data(Name);
-    _worldPacket >> SizedString::Data(surname);
+    _worldPacket >> SizedString::Data(Surname);
 }
 
 WorldPacket const* CheckCharacterNameAvailabilityResult::Write()
@@ -972,6 +971,46 @@ void SavePersonalEmblem::Read()
 WorldPacket const* PlayerSavePersonalEmblem::Write()
 {
     _worldPacket << int32(Error);
+
+    return &_worldPacket;
+}
+
+void GetAccountCharacterList::Read()
+{
+    _worldPacket >> Token;
+    _worldPacket >> Bits<1>(ConsoleCommand);
+}
+
+ByteBuffer& operator<<(ByteBuffer& data, AccountCharacterData const& character)
+{
+    data << character.WowAccount;
+    data << character.Guid;
+    data << uint32(character.VirtualRealmAddress);
+    data << uint8(character.RaceID);
+    data << uint8(character.ClassID);
+    data << uint8(character.SexID);
+    data << uint8(character.ExperienceLevel);
+    data << character.LastActiveTime;
+    data << int32(character.ContentSetID);
+    data << SizedString::BitsSize<6>(character.CharacterName);
+    data << SizedString::BitsSize<9>(character.RealmName);
+    data.FlushBits();
+
+    data << SizedString::Data(character.CharacterName);
+    data << SizedString::Data(character.RealmName);
+
+    return data;
+}
+
+WorldPacket const* GetAccountCharacterListResult::Write()
+{
+    _worldPacket << uint32(Token);
+    _worldPacket << Size<uint32>(Characters);
+    for (AccountCharacterData const& character : Characters)
+        _worldPacket << character;
+
+    _worldPacket << Bits<1>(ConsoleCommand);
+    _worldPacket.FlushBits();
 
     return &_worldPacket;
 }

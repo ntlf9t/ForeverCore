@@ -578,6 +578,7 @@ ApRule const kRules[] = {
     { ShouldRescueLowestAlly,     DoRescueLowestAlly,     "Rescue (peel ally <=25%)"       },
     { ShouldBlessingOfTheBronze,  DoBlessingOfTheBronze,  "Blessing of the Bronze (buff)"  },
     { ShouldZephyr,               DoZephyr,               "Zephyr (group AoE DR)"          },
+    { ShouldSourceOfMagic,        DoSourceOfMagic,        "Source of Magic (caster)"       },
 
     // 6) Lust.
     { ShouldFuryOfTheAspects,     DoFuryOfTheAspects,     "Fury of the Aspects (boss)"     },

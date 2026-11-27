@@ -547,7 +547,7 @@ bool Item::Create(ObjectGuid::LowType guidlow, uint32 itemId, ItemContext contex
 
     _bonusData.Initialize(itemProto);
     SetCount(1);
-    SetUpdateFieldValue(m_values.ModifyValue(&Item::m_itemData).ModifyValue(&UF::ItemData::MaxDurability), itemProto->MaxDurability);
+    SetMaxDurability(itemProto->MaxDurability);
     SetDurability(itemProto->MaxDurability);
 
     for (ItemEffectEntry const* effect : GetEffects())
@@ -625,7 +625,7 @@ void Item::UpdateDuration(Player* owner, uint32 diff)
 // action bar. Each effect takes its own slot: the first effect naming a slot gets it, and an effect without a usable slot of its own
 // takes the lowest slot no other effect has. In the 70790 data one item, 239695, has two effects in slot 1 (charges -1 and 0); giving
 // the second one slot 1 as well wrote its 0 over the first one's charge when the item was made, and the item could not be used.
-static uint32 GetSpellChargesSlotForEffect(BonusData const& bonusData, uint32 effectIndex)
+uint32 GetSpellChargesSlotForEffect(BonusData const& bonusData, uint32 effectIndex)
 {
     static constexpr uint32 MaxSpellChargesSlot = UF::size<decltype(UF::ItemData::SpellCharges)>();
     if (effectIndex >= MaxSpellChargesSlot)
@@ -2021,7 +2021,8 @@ void Item::SetNotRefundable(Player* owner, bool changestate /*= true*/, Characte
 
     owner->DeleteRefundReference(GetGUID());
     if (addToCollection)
-        owner->GetSession()->GetCollectionMgr()->AddItemAppearance(this);
+        if (CollectionMgr* collectionMgr = owner->GetSession()->GetCollectionMgr())
+            collectionMgr->AddItemAppearance(this);
 }
 
 uint32 Item::GetPlayedTime() const
@@ -2046,7 +2047,8 @@ void Item::ClearSoulboundTradeable(Player* currentOwner)
     if (allowedGUIDs.empty())
         return;
 
-    currentOwner->GetSession()->GetCollectionMgr()->AddItemAppearance(this);
+    if (CollectionMgr* collectionMgr = currentOwner->GetSession()->GetCollectionMgr())
+        collectionMgr->AddItemAppearance(this);
     allowedGUIDs.clear();
     SetState(ITEM_CHANGED, currentOwner);
     CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_ITEM_BOP_TRADE);
@@ -2340,6 +2342,25 @@ uint32 Item::GetSellPrice(ItemTemplate const* proto, uint32 /*quality*/, uint32 
 // table cell; the game files' caster tables equal the regular ones. These shares reproduce the in-game range of all 165 flagged weapons
 // and of Brutal War Axe of the Physician, 43 - 66 (wowsims/forever, MIT, tools/database/dbc/item_damage.go, docs/evidence EV-0097,
 // EV-0110). Without them Death Speaker Scepter hit for 42 - 78 where the game shows 28 - 52.
+uint32 Item::GetRetailSellPrice(ItemTemplate const* proto, uint32 quality, uint32 itemLevel)
+{
+    if (proto->HasFlag(ITEM_FLAG2_OVERRIDE_GOLD_COST))
+        return proto->GetSellPrice();
+
+    bool standardPrice;
+    uint32 cost = GetBuyPrice(proto, quality, itemLevel, standardPrice);
+    if (!standardPrice)
+        return proto->GetSellPrice();
+
+    if (ItemClassEntry const* classEntry = sDB2Manager.GetItemClassByOldEnum(proto->GetClass()))
+    {
+        uint32 buyCount = std::max(proto->GetBuyCount(), 1u);
+        return cost * classEntry->PriceModifier / buyCount;
+    }
+
+    return 0;
+}
+
 float Item::GetClassicWeaponDPS(Player const* owner) const
 {
     return GetTemplate()->GetClassicDPS(GetItemLevel(owner), _bonusData.ClassicReducedCasterDps);
@@ -2560,7 +2581,11 @@ ItemDisenchantLootEntry const* Item::GetBaseDisenchantLoot(ItemTemplate const* i
     if (itemTemplate->GetArea(0) || itemTemplate->GetArea(1) || itemTemplate->GetMap() || itemTemplate->GetMaxStackSize() > 1)
         return nullptr;
 
-    if (!Item::GetSellPrice(itemTemplate, quality, itemLevel) && !sDB2Manager.HasItemCurrencyCost(itemTemplate->GetId()))
+    // Worthless items can't be disenchanted. "Worth" here is the retail price, as before advocaite #283 made vendors use the
+    // Classic sell price: 422 rare and uncommon items (252424 Black Whelp Slippers ...) have a Classic sell price of 0, and
+    // nothing says Forever stops them being disenchanted.
+    if (!Item::GetSellPrice(itemTemplate, quality, itemLevel) && !Item::GetRetailSellPrice(itemTemplate, quality, itemLevel)
+        && !sDB2Manager.HasItemCurrencyCost(itemTemplate->GetId()))
         return nullptr;
 
     uint32 itemClass = itemTemplate->GetClass();
@@ -3096,7 +3121,7 @@ void BonusData::Initialize(ItemTemplate const* proto)
     CanDisenchant = !proto->HasFlag(ITEM_FLAG_NO_DISENCHANT);
     CanScrap = proto->HasFlag(ITEM_FLAG4_SCRAPABLE);
     CanSalvage = !proto->HasFlag(ITEM_FLAG4_NO_SALVAGE);
-    ClassicReducedCasterDps = proto->HasFlag(ITEM_FLAG4_REGULATED_COMMODITY);   // Forever reuses bit 0x100 as REDUCED_CASTER_DPS
+    ClassicReducedCasterDps = proto->HasFlag(ITEM_FLAG5_CLASSIC_REDUCED_CASTER_DPS);
     CanRecraft = proto->HasFlag(ITEM_FLAG4_RECRAFTABLE);
     CannotTradeBindOnPickup = proto->HasFlag(ITEM_FLAG2_NO_TRADE_BIND_ON_ACQUIRE);
     IgnoreSquish = false;

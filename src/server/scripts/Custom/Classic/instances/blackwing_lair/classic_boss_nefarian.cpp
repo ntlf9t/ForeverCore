@@ -23,6 +23,7 @@
 #include "Log.h"
 #include "ScriptMgr.h"
 #include "InstanceScript.h"
+#include "Log.h"
 #include "Map.h"
 #include "MapReference.h"
 #include "MotionMaster.h"

@@ -47,6 +47,7 @@
 #include "MiscPackets.h"
 #include "Object.h"
 #include "ObjectAccessor.h"
+#include "FullName.h"
 #include "ObjectMgr.h"
 #include "OutdoorPvP.h"
 #include "Player.h"
@@ -163,7 +164,7 @@ void WorldSession::HandleWhoOpcode(WorldPackets::Who::WhoRequestPkt& whoRequest)
                 continue;
 
         // check if target's level is in level range
-        uint8 lvl = target.GetLevel();
+        int32 lvl = target.GetLevel();
         if (lvl < request.MinLevel || lvl > request.MaxLevel)
             continue;
 
@@ -175,11 +176,12 @@ void WorldSession::HandleWhoOpcode(WorldPackets::Who::WhoRequestPkt& whoRequest)
         if (!request.RaceFilter.HasRace(target.GetRace()))
             continue;
 
+        // WoW Forever 70450: "Who List search now supports subzones (example: characters in Northshire Valley will show up in both
+        // queries "/who northshire" and "/who elwynn")": the target's subzone counts as well as its zone
         if (!whoRequest.Areas.empty())
-        {
-            if (std::find(whoRequest.Areas.begin(), whoRequest.Areas.end(), int32(target.GetZoneId())) == whoRequest.Areas.end())
+            if (std::ranges::find(whoRequest.Areas, int32(target.GetZoneId())) == whoRequest.Areas.end()
+                && (!target.GetAreaId() || std::ranges::find(whoRequest.Areas, int32(target.GetAreaId())) == whoRequest.Areas.end()))
                 continue;
-        }
 
         std::wstring const& wTargetName = target.GetWidePlayerName();
         if (!(wPlayerName.empty() || wTargetName.find(wPlayerName) != std::wstring::npos))
@@ -195,6 +197,10 @@ void WorldSession::HandleWhoOpcode(WorldPackets::Who::WhoRequestPkt& whoRequest)
             std::string aName;
             if (AreaTableEntry const* areaEntry = sAreaTableStore.LookupEntry(target.GetZoneId()))
                 aName = areaEntry->AreaName[GetSessionDbcLocale()];
+            std::string subzoneName;
+            if (target.GetAreaId() != target.GetZoneId())
+                if (AreaTableEntry const* subzoneEntry = sAreaTableStore.LookupEntry(target.GetAreaId()))
+                    subzoneName = subzoneEntry->AreaName[GetSessionDbcLocale()];
 
             bool show = false;
             for (size_t i = 0; i < wWords.size(); ++i)
@@ -203,7 +209,8 @@ void WorldSession::HandleWhoOpcode(WorldPackets::Who::WhoRequestPkt& whoRequest)
                 {
                     if (wTargetName.find(wWords[i]) != std::wstring::npos ||
                         wTargetGuildName.find(wWords[i]) != std::wstring::npos ||
-                        Utf8FitTo(aName, wWords[i]))
+                        Utf8FitTo(aName, wWords[i]) ||
+                        (!subzoneName.empty() && Utf8FitTo(subzoneName, wWords[i])))
                     {
                         show = true;
                         break;
@@ -420,7 +427,7 @@ void WorldSession::HandleStandStateChangeOpcode(WorldPackets::Misc::StandStateCh
 }
 
 // Classic 1.60 (WoW Forever): sitting near a campfire (spell focus 4) starts a 60 s rest (1289723) that gives Boosted Rest
-// (classic_spell_campfire_rest); standing up ends it (ymir sniff of the official beta: /sit by a campfire -> the player casts it).
+// (classic_spell_campfire_rest); moving ends it (ymir sniff of the official beta: /sit by a campfire -> the player casts it).
 // Also called for the sit text emote: a typed /sit in another language (ruRU "/сесть", 2026-11-05 report) can reach the server
 // only as the emote, without a stand state change, and then the rest never started.
 // Also called when the player sits down on a chair or bench (GameObject::Use), which sits them without a stand state packet.
@@ -441,6 +448,9 @@ void WorldSession::UpdateCampfireRest(uint8 standState)
     static constexpr uint32 SPELL_FOCUS_CAMPFIRE = 4;
     static constexpr float CAMPFIRE_RANGE = 15.0f;
 
+    // Sitting, lying down or kneeling starts the rest; once it runs, standing up (crafting stands the player up) does not end it, only
+    // moving does (the aura's Moving interrupt flag): Blizzard on forever-bugs #115 (fixed on live), and the tooltip "You may also craft
+    // using tradeskills, as long as you do not move". Standing up used to remove it, so crafting at a fire never gave the buffs.
     switch (standState)
     {
         case UNIT_STAND_STATE_SIT:
@@ -448,9 +458,10 @@ void WorldSession::UpdateCampfireRest(uint8 standState)
         case UNIT_STAND_STATE_SIT_LOW_CHAIR:
         case UNIT_STAND_STATE_SIT_MEDIUM_CHAIR:
         case UNIT_STAND_STATE_SIT_HIGH_CHAIR:
+        case UNIT_STAND_STATE_SLEEP:
+        case UNIT_STAND_STATE_KNEEL:
             break;
         default:
-            _player->RemoveAurasDueToSpell(SPELL_CAMPFIRE_REST);
             return;
     }
 
@@ -908,7 +919,7 @@ void WorldSession::HandleWhoIsOpcode(WorldPackets::Who::WhoIsRequest& packet)
         return;
     }
 
-    if (packet.CharName.empty() || !normalizePlayerName(packet.CharName))
+    if (packet.CharName.empty() || !Trinity::FullName::Normalize(packet.CharName))
     {
         SendNotification(LANG_NEED_CHARACTER_NAME);
         return;
@@ -1250,6 +1261,9 @@ void WorldSession::HandleMountSpecialAnimOpcode(WorldPackets::Misc::MountSpecial
 
 void WorldSession::HandleMountSetFavorite(WorldPackets::Misc::MountSetFavorite& mountSetFavorite)
 {
+    if (!_collectionMgr) // a bot session has none (DropClientOnlyManagers)
+        return;
+
     _collectionMgr->MountSetFavorite(mountSetFavorite.MountSpellID, mountSetFavorite.IsFavorite);
 }
 

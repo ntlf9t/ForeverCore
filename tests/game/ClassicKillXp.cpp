@@ -16,6 +16,7 @@
  */
 
 #include "tc_catch2.h"
+#include "DungeonCarryRule.h"
 #include "Formulas.h"
 #include "World.h"
 

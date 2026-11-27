@@ -18,6 +18,7 @@
 #include "Creature.h"
 #include "BattlegroundMgr.h"
 #include "BotGroupRules.h"
+#include "CreatureTapRules.h"
 #include "CellImpl.h"
 #include "CharmInfo.h"
 #include "CombatPackets.h"
@@ -33,6 +34,7 @@
 #include "GameTime.h"
 #include "GridNotifiersImpl.h"
 #include "Group.h"
+#include "HunterPetForever.h"
 #include "ItemTemplate.h"
 #include "Log.h"
 #include "Loot.h"
@@ -339,7 +341,6 @@ Creature::Creature(bool isWorldObject) : Unit(isWorldObject), MapObject(), m_Pla
     m_CombatDistance = 0;//MELEE_RANGE;
 
     ResetLootMode(); // restore default loot mode
-    m_isTempWorldObject = false;
 }
 
 Creature::~Creature() = default;
@@ -553,6 +554,7 @@ bool Creature::InitEntry(uint32 entry, CreatureData const* data /*= nullptr*/)
     SetName(creatureInfo->Name);                              // at normal entry always
 
     SetModCastingSpeed(1.0f);
+    SetModCastingSpeedNeg(1.0f);
     SetModSpellHaste(1.0f);
     SetModHaste(1.0f);
     SetModRangedHaste(1.0f);
@@ -987,8 +989,13 @@ void Creature::Regenerate(Powers power)
     {
     case POWER_FOCUS:
     {
-        // For hunter pets.
-        addvalue = 24 * sWorld->getRate(RATE_POWER_FOCUS);
+        // For hunter pets. Classic 1.60 (WoW Forever): 10 focus per second in and out of combat, from the client's PowerType row
+        // (RegenPeace and RegenCombat 10; Classic Hunter Lodge wiki, Pet-Fundamentals). Vanilla gave 24 every 4 seconds.
+        float focusPerSecond = HunterPetForever::FocusPerSecondFallback;
+        if (PowerTypeEntry const* powerType = sDB2Manager.GetPowerTypeEntry(POWER_FOCUS))
+            focusPerSecond = IsInCombat() ? powerType->RegenCombat : powerType->RegenPeace;
+
+        addvalue = HunterPetForever::FocusPerTick(focusPerSecond, PET_FOCUS_REGEN_INTERVAL) * sWorld->getRate(RATE_POWER_FOCUS);
         break;
     }
     case POWER_ENERGY:
@@ -1123,16 +1130,11 @@ void Creature::Motion_Initialize()
     GetMotionMaster()->Initialize();
 }
 
-bool Creature::Create(ObjectGuid::LowType guidlow, Map* map, uint32 entry, Position const& pos, CreatureData const* data /*= nullptr*/, uint32 vehId /*= 0*/, bool dynamic)
+bool Creature::Create(ObjectGuid::LowType guidlow, Map* map, InitialPhaseShift const& phaseShift, uint32 entry, Position const& pos, CreatureData const* data /*= nullptr*/, uint32 vehId /*= 0*/, bool dynamic)
 {
     ASSERT(map);
     SetMap(map);
-
-    if (data)
-    {
-        PhasingHandler::InitDbPhaseShift(GetPhaseShift(), data->phaseUseFlags, data->phaseId, data->phaseGroup);
-        PhasingHandler::InitDbVisibleMapId(GetPhaseShift(), data->terrainSwapMap);
-    }
+    PhasingHandler::InitPhaseShift(this, phaseShift);
 
     // Set if this creature can handle dynamic spawns
     if (!dynamic)
@@ -1226,7 +1228,7 @@ bool Creature::Create(ObjectGuid::LowType guidlow, Map* map, uint32 entry, Posit
     return true;
 }
 
-Creature* Creature::CreateCreature(uint32 entry, Map* map, Position const& pos, uint32 vehId /*= 0*/)
+Creature* Creature::CreateCreature(uint32 entry, Map* map, Position const& pos, InitialPhaseShift const& phaseShift, uint32 vehId /*= 0*/)
 {
     CreatureTemplate const* cInfo = sObjectMgr->GetCreatureTemplate(entry);
     if (!cInfo)
@@ -1239,7 +1241,7 @@ Creature* Creature::CreateCreature(uint32 entry, Map* map, Position const& pos, 
         lowGuid = map->GenerateLowGuid<HighGuid::Creature>();
 
     Creature* creature = new Creature();
-    if (!creature->Create(lowGuid, map, entry, pos, nullptr, vehId))
+    if (!creature->Create(lowGuid, map, phaseShift, entry, pos, nullptr, vehId))
     {
         delete creature;
         return nullptr;
@@ -2019,7 +2021,7 @@ bool Creature::LoadFromDB(ObjectGuid::LowType spawnId, Map* map, bool addToMap, 
     m_wanderDistance = data->wander_distance;
     m_respawnDelay = data->spawntimesecs;
 
-    if (!Create(map->GenerateLowGuid<HighGuid::Creature>(), map, data->id, data->spawnPoint, data, 0U , !m_respawnCompatibilityMode))
+    if (!Create(map->GenerateLowGuid<HighGuid::Creature>(), map, InitialPhaseShift(data), data->id, data->spawnPoint, data, 0U, !m_respawnCompatibilityMode))
         return false;
 
     //We should set first home position, because then AI calls home movement
@@ -2890,14 +2892,8 @@ bool Creature::CanCreatureAttack(Unit const* victim, bool /*force*/) const
         return false;
 
     if (!GetCharmerOrOwnerGUID().IsPlayer())
-    {
         if (GetMap()->IsDungeon())
             return true;
-
-        // don't check distance to home position if recently damaged, this should include taunt auras
-        if (!isWorldBoss() && (GetLastDamagedTime() > GameTime::GetGameTime() || HasAuraType(SPELL_AURA_MOD_TAUNT)))
-            return true;
-    }
 
     // Map visibility range, but no more than 2*cell size
     float dist = std::min<float>(GetMap()->GetVisibilityRange(), SIZE_OF_GRID_CELL * 2);
@@ -2906,6 +2902,14 @@ bool Creature::CanCreatureAttack(Unit const* victim, bool /*force*/) const
         return victim->IsWithinDist(unit, dist);
     else
     {
+        // Everlake: leash at ThreatRadius from home (never below this mob's aggro radius).
+        // A mob hit or taunted in the last few seconds keeps chasing out to the old
+        // visibility-range leash instead of chasing without any limit. World bosses keep
+        // the visibility-range leash as before.
+        bool longLeash = isWorldBoss() || GetLastDamagedTime() > GameTime::GetGameTime() || HasAuraType(SPELL_AURA_MOD_TAUNT);
+        if (!longLeash)
+            dist = std::min(dist, std::max(sWorld->getFloatConfig(CONFIG_THREAT_RADIUS), GetAttackDistance(victim)));
+
         // include sizes for huge npcs
         dist += GetCombatReach() + victim->GetCombatReach();
 

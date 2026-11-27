@@ -42,6 +42,7 @@ class WorldPacket;
 struct BattlegroundPlayerScoreTemplate;
 struct BattlegroundScore;
 struct BattlegroundTemplate;
+struct ChrSpecializationEntry;
 struct PVPDifficultyEntry;
 struct WorldSafeLocsEntry;
 enum class HonorGainSource : uint8;
@@ -437,6 +438,9 @@ class TC_GAME_API Battleground
         static constexpr bool IsEnclosedStartArea(uint32 mapId) { return mapId == 489; }
         // the client's indoor test on the MOGP flags of the wmo group: interior (0x2000) and not exterior (0x8)
         static constexpr bool IsIndoorWmoGroup(uint32 mogpFlags) { return (mogpFlags & 0x2000) != 0 && (mogpFlags & 0x8) == 0; }
+        // The LFG role (0 tank, 1 healer, 2 damage) the client shows on the entry popup and the scoreboard: the role of the player's
+        // specialization, damage without one. A hard 0 made every player a tank.
+        static uint8 GetLfgRole(ChrSpecializationEntry const* spec);
 
         float GetStartMaxDist() const;
 

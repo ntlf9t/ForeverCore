@@ -105,19 +105,17 @@ class TC_GAME_API Pet final : public Guardian
         float GetHappinessDamageMod() const;                    // unhappy 75%, content 100%, happy 125%
         static int32 GetFoodBenefit(uint8 petLevel, uint32 foodLevel); // happiness per Feed Pet tick, 0 = too low level
 
-        // Classic 1.60 hunter pet loyalty and training points (vanilla rules, VMaNGOS Pet::ModifyLoyalty / GetTPForSpell). The client shows
-        // the loyalty level in the stable and the pet paper doll (StablePetInfo::LoyaltyLevel) and gets the training points in UnitData.
+        // Classic 1.60 hunter pet loyalty and training points. Loyalty follows WoW Forever (HunterPetForever.h): a rank needs XP earned since
+        // the last rank plus time out; training points are vanilla (VMaNGOS GetTPForSpell). The client shows the loyalty level in the stable
+        // and the pet paper doll (StablePetInfo::LoyaltyLevel) and gets the training points in UnitData.
         enum PetLoyaltyLevel : uint8 { REBELLIOUS = 1, UNRULY = 2, SUBMISSIVE = 3, DEPENDABLE = 4, FAITHFUL = 5, BEST_FRIEND = 6 };
-        static constexpr int32 LOYALTY_TAMED = 1000;             // loyalty points of a freshly tamed beast (Rebellious)
-        static constexpr uint32 LOYALTY_TICK_INTERVAL = 12000;
+        static constexpr uint32 LOYALTY_TICK_INTERVAL = 12000;   // how often the time out is counted and a rank up checked
         bool HasLoyalty() const { return getPetType() == HUNTER_PET; }
         uint8 GetLoyaltyLevel() const { return m_loyaltyLevel; }
-        int32 GetLoyaltyPoints() const { return m_loyaltyPoints; }
-        void InitLoyalty(uint8 loyaltyLevel, int32 loyaltyPoints);
-        bool ModifyLoyalty(int32 addvalue);                      // false: the pet ran away (loyalty below 0 while Rebellious)
-        void KillLoyaltyBonus(uint8 level);
-        static int32 GetLoyaltyLevelUpPoints(uint8 loyaltyLevel);
-        static int32 GetLoyaltyStartPoints(uint8 loyaltyLevel);
+        int32 GetLoyaltyPoints() const { return m_loyaltyPoints; }  // XP earned toward the next rank
+        uint32 GetLoyaltySeconds() const { return m_loyaltySeconds; } // time out (summoned and alive) toward the next rank
+        void InitLoyalty(uint8 loyaltyLevel, int32 loyaltyPoints, uint32 loyaltySeconds = 0);
+        void AddLoyaltyProgress(uint32 xp, uint32 seconds);
         static uint32 GetSpellTrainingPoints(uint32 spellId);   // classic_pet_spell_training_points, 0 = free
         uint32 GetTrainingPointsTotal() const;                  // level * (loyalty level - 1)
         uint32 GetTrainingPointsUsed() const;
@@ -137,6 +135,10 @@ class TC_GAME_API Pet final : public Guardian
         static std::vector<uint32> const* GetTameSpells(uint32 creatureEntry);  // nullptr = the beast comes with no ability
         static uint32 GetBeastTrainingTeachSpell(uint32 petSpellId);           // 0 = no Beast Training rank teaches it
         void LearnTameSpells();
+        // Classic 1.60 (WoW Forever): the beast's Faster Attack or Slower Attack passive, the one classic_pet_tame_spell row of
+        // HunterPetForever::AttackSpeedPassives it has; a pet knows that one and no other.
+        void SyncTameAttackSpeed();
+        int32 GetAttackSpeedPassivePercent() const;                       // its Mod Attack Speed amount, 0 without a passive
         bool KnowsActiveSpell() const;                                    // any spell besides passives (auto attack is no spell)
         void CheckLearning(uint32 spellId);
 
@@ -209,7 +211,8 @@ class TC_GAME_API Pet final : public Guardian
         uint32  m_happinessTimer = HAPPINESS_LOSS_INTERVAL;
         uint32  m_loyaltyTimer = LOYALTY_TICK_INTERVAL;
         uint8   m_loyaltyLevel = REBELLIOUS;
-        int32   m_loyaltyPoints = LOYALTY_TAMED;
+        int32   m_loyaltyPoints = 0;
+        uint32  m_loyaltySeconds = 0;
         uint32  m_groupUpdateMask;
 
         std::unique_ptr<DeclinedName> m_declinedname;

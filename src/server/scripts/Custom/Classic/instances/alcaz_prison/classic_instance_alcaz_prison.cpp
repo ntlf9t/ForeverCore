@@ -36,6 +36,9 @@
 
 #include "ScriptMgr.h"
 #include "Creature.h"
+#include "GameObject.h"
+#include "GameObjectAI.h"
+#include "PhasingHandler.h"
 #include "InstanceScript.h"
 #include "Map.h"
 #include "ObjectAccessor.h"
@@ -113,6 +116,13 @@ constexpr int32 AlcazGarroteBleed = 120;        // client: 10 per tick
 constexpr int32 AlcazSearingScalesTick = 200;   // client: 5 per tick
 
 constexpr uint8 AlcazRevealPct = 30;
+constexpr uint32 CAP_BOSS_BLAZEROAR = CALC_ENC_BLAZEROAR;
+constexpr uint32 CAP_NPC_BLAZEROAR = NPC_ALCAZ_BLAZEROAR;
+constexpr uint32 CAP_GO_PERFUMED_NOTE = 630604;
+constexpr uint32 CAP_NPC_KC_READ_NOTE = 264861;
+constexpr uint32 CAP_QUESTS_READ_NOTE[] = { 95262, 95454 };
+constexpr float CAP_NOTE_FALLBACK[4] = { -8867.0f, 2967.0f, 5.8f, 3.789f };
+constexpr uint32 CAP_NOTE_CHECK_MS = 5000;
 
 // a client spell, triggered, with our own value in one effect
 void AlcazCast(Creature* me, Unit* target, uint32 spellId, SpellValueModFloat effect, int32 value)
@@ -174,11 +184,51 @@ public:
         void OnUnitDeath(Unit* unit) override
         {
             _encounterTracker.OnUnitDeath(unit);
+            if (unit->GetTypeId() == TYPEID_UNIT && unit->GetEntry() == CAP_NPC_BLAZEROAR)
+            {
+                _notePos.Relocate(unit->GetPositionX(), unit->GetPositionY(), unit->GetPositionZ(), unit->GetOrientation());
+                SpawnNote();
+            }
         }
 
         void Update(uint32 diff) override
         {
             _encounterTracker.Update(diff);
+
+            _noteCheck += diff;
+            if (_noteCheck < CAP_NOTE_CHECK_MS)
+                return;
+            _noteCheck = 0;
+            if (GetBossState(CAP_BOSS_BLAZEROAR) == DONE && instance->IsGridLoaded(_notePos)
+                && (_noteGuid.IsEmpty() || !instance->GetGameObject(_noteGuid)))
+                SpawnNote();
+        }
+
+    private:
+        ObjectGuid _noteGuid;
+        Position _notePos{ CAP_NOTE_FALLBACK[0], CAP_NOTE_FALLBACK[1], CAP_NOTE_FALLBACK[2], CAP_NOTE_FALLBACK[3] };
+        uint32 _noteCheck = 0;
+
+        // The note belongs to the instance, not to Blazeroar: it stays after his corpse is gone and never despawns on a timer.
+        void SpawnNote()
+        {
+            if (!_noteGuid.IsEmpty())
+                if (GameObject* old = instance->GetGameObject(_noteGuid))
+                    old->Delete();
+            _noteGuid.Clear();
+
+            GameObject* note = GameObject::CreateGameObject(CAP_GO_PERFUMED_NOTE, instance, _notePos,
+                QuaternionData::fromEulerAnglesZYX(_notePos.GetOrientation(), 0.0f, 0.0f), InitialPhaseShift(), 255, GO_STATE_READY);
+            if (!note)
+                return;
+            note->SetRespawnTime(0);
+            note->SetSpawnedByDefault(false);
+            if (!instance->AddToMap(note))
+            {
+                delete note;
+                return;
+            }
+            _noteGuid = note->GetGUID();
         }
     };
 
@@ -464,6 +514,22 @@ private:
     bool _revealed = false;
 };
 
+struct classic_go_alcaz_perfumed_note : public GameObjectAI
+{
+    classic_go_alcaz_perfumed_note(GameObject* go) : GameObjectAI(go) { }
+
+    bool OnGossipHello(Player* player) override
+    {
+        for (uint32 questId : CAP_QUESTS_READ_NOTE)
+            if (player->GetQuestStatus(questId) == QUEST_STATUS_INCOMPLETE)
+            {
+                player->KilledMonsterCredit(CAP_NPC_KC_READ_NOTE);
+                break;
+            }
+        return false;
+    }
+};
+
 void AddSC_classic_instance_alcaz_prison()
 {
     new classic_instance_alcaz_prison();
@@ -472,4 +538,5 @@ void AddSC_classic_instance_alcaz_prison()
     RegisterCreatureAI(classic_boss_alcaz_katerina);
     RegisterCreatureAI(classic_boss_alcaz_questioner);
     RegisterCreatureAI(classic_boss_alcaz_blazeroar);
+    RegisterGameObjectAI(classic_go_alcaz_perfumed_note);
 }

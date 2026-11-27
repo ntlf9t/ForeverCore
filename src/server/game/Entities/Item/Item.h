@@ -127,6 +127,10 @@ private:
     } _state;
 };
 
+// The ItemData::SpellCharges slot the client reads for the effect at effectIndex in bonusData.Effects: the effect's own
+// LegacySlotIndex when no earlier effect took it, else the lowest free slot (advocaite/TrinityCore#301)
+TC_GAME_API uint32 GetSpellChargesSlotForEffect(BonusData const& bonusData, uint32 effectIndex);
+
 struct ArtifactPowerData
 {
     uint32 ArtifactPowerId = 0;
@@ -430,6 +434,8 @@ class TC_GAME_API Item : public Object
         static uint32 GetBuyPrice(ItemTemplate const* proto, uint32 quality, uint32 itemLevel, bool& standardPrice);
         uint32 GetSellPrice(Player const* owner, bool forVendor = false) const;
         static uint32 GetSellPrice(ItemTemplate const* proto, uint32 quality, uint32 itemLevel);
+        // the retail item level price (what GetSellPrice returned before advocaite #283); the disenchant check still uses it
+        static uint32 GetRetailSellPrice(ItemTemplate const* proto, uint32 quality, uint32 itemLevel);
 
         uint32 GetVisibleEntry(Player const* owner) const;
         uint16 GetVisibleAppearanceModId(Player const* owner) const;

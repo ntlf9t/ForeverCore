@@ -312,6 +312,7 @@ namespace WorldPackets
 
             uint32 SequenceIndex = 0;
             std::string Name;
+            std::string Surname;    // Classic 1.60
         };
 
         class CheckCharacterNameAvailabilityResult final : public ServerPacket
@@ -919,6 +920,49 @@ namespace WorldPackets
             WorldPacket const* Write() override;
 
             int32 Error;
+        };
+
+        // the client asks for the account's characters when it enters the world; it offers them in name boxes that complete
+        // what is typed (the mail window's To box)
+        class GetAccountCharacterList final : public ClientPacket
+        {
+        public:
+            explicit GetAccountCharacterList(WorldPacket&& packet) : ClientPacket(CMSG_GET_ACCOUNT_CHARACTER_LIST, std::move(packet)) { }
+
+            void Read() override;
+
+            uint32 Token = 0;
+            bool ConsoleCommand = false;
+        };
+
+        struct AccountCharacterData
+        {
+            ObjectGuid WowAccount;
+            ObjectGuid Guid;
+            uint32 VirtualRealmAddress = 0;
+            uint8 RaceID = 0;
+            uint8 ClassID = 0;
+            uint8 SexID = 0;
+            uint8 ExperienceLevel = 0;
+            Timestamp<> LastActiveTime;
+            int32 ContentSetID = 0;
+            std::string CharacterName;          // 6 bit length
+            std::string RealmName;              // 9 bit length
+        };
+
+        // 12.1.0 layout (WowPacketParser V12_0_0_65390 AccountDataHandler, which the Classic 1.60 client falls back to): the
+        // ConsoleCommand bit comes after the characters, as in the other 12.1.0 packets of this core. Before 12.1.0 (and in
+        // TrinityCore's cata_classic e36b4c53b7) it comes before them.
+        class GetAccountCharacterListResult final : public ServerPacket
+        {
+        public:
+            explicit GetAccountCharacterListResult() : ServerPacket(SMSG_GET_ACCOUNT_CHARACTER_LIST_RESULT, 4 + 4 + 1) { }
+
+            WorldPacket const* Write() override;
+
+            uint32 Token = 0;
+            std::vector<AccountCharacterData> Characters;
+            bool ConsoleCommand = false;
         };
     }
 }

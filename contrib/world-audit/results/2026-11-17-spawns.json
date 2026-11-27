@@ -1,0 +1,128 @@
+[
+ {
+  "kind": "go",
+  "entry": 10076,
+  "name": "Scrying Bowl",
+  "state": "ready"
+ },
+ {
+  "kind": "npc",
+  "entry": 11560,
+  "name": "Magrami Spectre",
+  "state": "ready"
+ },
+ {
+  "kind": "npc",
+  "entry": 11626,
+  "name": "Rigger Gizelton",
+  "state": "ready"
+ },
+ {
+  "kind": "npc",
+  "entry": 15203,
+  "name": "Prince Skaldrenox",
+  "state": "ready"
+ },
+ {
+  "kind": "npc",
+  "entry": 15204,
+  "name": "High Marshal Whirlaxis",
+  "state": "ready"
+ },
+ {
+  "kind": "npc",
+  "entry": 15205,
+  "name": "Baron Kazum",
+  "state": "ready"
+ },
+ {
+  "kind": "npc",
+  "entry": 15206,
+  "name": "The Duke of Cynders",
+  "state": "ready"
+ },
+ {
+  "kind": "npc",
+  "entry": 15207,
+  "name": "The Duke of Fathoms",
+  "state": "ready"
+ },
+ {
+  "kind": "npc",
+  "entry": 15208,
+  "name": "The Duke of Shards",
+  "state": "ready"
+ },
+ {
+  "kind": "npc",
+  "entry": 15209,
+  "name": "Crimson Templar",
+  "state": "ready"
+ },
+ {
+  "kind": "npc",
+  "entry": 15211,
+  "name": "Azure Templar",
+  "state": "ready"
+ },
+ {
+  "kind": "npc",
+  "entry": 15212,
+  "name": "Hoary Templar",
+  "state": "ready"
+ },
+ {
+  "kind": "npc",
+  "entry": 15220,
+  "name": "The Duke of Zephyrs",
+  "state": "ready"
+ },
+ {
+  "kind": "npc",
+  "entry": 15305,
+  "name": "Lord Skwol",
+  "state": "ready"
+ },
+ {
+  "kind": "npc",
+  "entry": 15307,
+  "name": "Earthen Templar",
+  "state": "ready"
+ },
+ {
+  "kind": "npc",
+  "entry": 15449,
+  "name": "Hive'Zora Abomination",
+  "state": "ready"
+ },
+ {
+  "kind": "npc",
+  "entry": 16422,
+  "name": "Skeletal Soldier",
+  "state": "ready"
+ },
+ {
+  "kind": "npc",
+  "entry": 16423,
+  "name": "Spectral Apparition",
+  "state": "ready"
+ },
+ {
+  "kind": "npc",
+  "entry": 16437,
+  "name": "Spectral Spirit",
+  "state": "ready"
+ },
+ {
+  "kind": "npc",
+  "entry": 16438,
+  "name": "Skeletal Trooper",
+  "state": "ready"
+ },
+ {
+  "kind": "npc",
+  "entry": 255013,
+  "name": "DNT KILL CREDIT",
+  "state": "ready"
+ }
+]

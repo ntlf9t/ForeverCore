@@ -142,10 +142,9 @@ void WorldSession::SendPetitionSigns(Petition const* petition, Player* sendTo)
 
     for (Signature const& signature : petition->Signatures)
     {
-        WorldPackets::Petition::ServerPetitionShowSignatures::PetitionSignature signaturePkt;
+        WorldPackets::Petition::ServerPetitionShowSignatures::PetitionSignature& signaturePkt = signaturesPacket.Signatures.emplace_back();
         signaturePkt.Signer = signature.second;
         signaturePkt.Choice = 0;
-        signaturesPacket.Signatures.push_back(signaturePkt);
     }
 
     sendTo->SendDirectMessage(signaturesPacket.Write());
@@ -304,8 +303,6 @@ void WorldSession::HandleDeclinePetition(WorldPackets::Petition::DeclinePetition
 {
     TC_LOG_DEBUG("network", "Petition {} declined by {}", packet.PetitionGUID.ToString(), _player->GetGUID().ToString());
 
-    // Disabled because packet isn't handled by the client in any way
-    /*
     Petition const* petition = sPetitionMgr->GetPetition(packet.PetitionGUID);
     if (!petition)
         return;
@@ -313,11 +310,10 @@ void WorldSession::HandleDeclinePetition(WorldPackets::Petition::DeclinePetition
     // petition owner online
     if (Player* owner = ObjectAccessor::FindConnectedPlayer(petition->OwnerGuid))
     {
-        WorldPackets::Petition::PetitionDeclined packet;
-        packet.Decliner = _player->GetGUID();
-        owner->SendDirectMessage(packet.Write());
+        WorldPackets::Petition::PetitionDeclined petitionDeclined;
+        petitionDeclined.Decliner = _player->GetGUID();
+        owner->SendDirectMessage(petitionDeclined.Write());
     }
-    */
 }
 
 void WorldSession::HandleOfferPetition(WorldPackets::Petition::OfferPetition& packet)

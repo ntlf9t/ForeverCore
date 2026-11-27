@@ -1,11 +1,9 @@
--- Spawns taken from the AnoCore project's world database (AnoCore v10 repack). Credit and thanks to the AnoCore project.
--- AnoCore is a GPL-2.0 TrinityCore based server; its vanilla spawn data comes from GPL projects (CMaNGOS classic-db, TDB).
---
 -- Put back creature and gameobject spawns that the AnoCore world data has and our world does not.
 -- Our world comes from advocaite's TDB (vMaNGOS spawns). AnoCore's is a different spawn set, so some spots never came over.
 -- Only spots with nothing of ours within 5 yards, and only up to the live-count gap per creature/object and map.
 -- Safe to run twice: a row goes in only if its guid is free and no spawn of the same creature/object is within 5 yards.
 -- Battlegrounds, City of Dalaran (2959), world-event spawns, herb/ore nodes, doors and traps are left out.
+-- Undo: spawns-restore-anocore-1102-rollback.sql
 
 DROP TEMPORARY TABLE IF EXISTS `tmp_rs_c`;
 CREATE TEMPORARY TABLE `tmp_rs_c` (`guid` bigint unsigned NOT NULL PRIMARY KEY,`id` int unsigned NOT NULL,`map` smallint unsigned NOT NULL,`zoneId` smallint unsigned NOT NULL,`areaId` smallint unsigned NOT NULL,`spawnDifficulties` varchar(100) NOT NULL,`equipment_id` tinyint NOT NULL,`position_x` float NOT NULL,`position_y` float NOT NULL,`position_z` float NOT NULL,`orientation` float NOT NULL,`spawntimesecs` int unsigned NOT NULL,`wander_distance` float NOT NULL,`MovementType` tinyint unsigned NOT NULL,`pool` int unsigned NOT NULL DEFAULT 0);

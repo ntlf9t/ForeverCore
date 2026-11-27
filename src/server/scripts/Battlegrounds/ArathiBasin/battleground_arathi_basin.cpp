@@ -26,6 +26,7 @@
 #include "Log.h"
 #include "Map.h"
 #include "ObjectAccessor.h"
+#include "PhasingHandler.h"
 #include "Player.h"
 #include "Random.h"
 #include "ScriptMgr.h"
@@ -909,7 +910,7 @@ private:
         using namespace ClassicArathiBasin;
         Position const& pos = BuffPositions[node];
         GameObject* buff = GameObject::CreateGameObject(Buff_Entries[urand(0, 2)], battlegroundMap, pos,
-            QuaternionData::fromEulerAnglesZYX(pos.GetOrientation(), 0.f, 0.f), 255, GO_STATE_READY);
+            QuaternionData::fromEulerAnglesZYX(pos.GetOrientation(), 0.f, 0.f), InitialPhaseShift(), 255, GO_STATE_READY);
         if (!buff)
             return;
 

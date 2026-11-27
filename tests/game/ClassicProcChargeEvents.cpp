@@ -23,7 +23,7 @@ namespace
             // are explicitly synthetic controls for the shared charge path.
             Name.ID = Misc.SpellID = Options.SpellID = Effect.SpellID = spell;
             Misc.Attributes[0] = SPELL_ATTR0_PROC_FAILURE_BURNS_CHARGE;
-            Misc.Attributes[15] = native ? SPELL_ATTR15_UNK13 : 0;
+            Misc.Attributes[15] = native ? uint32(SPELL_ATTR15_UNK13) : 0u;
             Options.ProcChance = 100;
             Options.ProcCharges = 3;
             Options.ProcTypeMask[0] = PROC_FLAG_DEAL_MELEE_SWING;

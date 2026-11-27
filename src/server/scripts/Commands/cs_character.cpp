@@ -24,7 +24,9 @@ EndScriptData */
 
 #include "ScriptMgr.h"
 #include "AccountMgr.h"
+#include "BattlenetAccountMgr.h"
 #include "CharacterCache.h"
+#include "NameReservationMgr.h"
 #include "Chat.h"
 #include "ChatCommand.h"
 #include "DatabaseEnv.h"
@@ -228,11 +230,25 @@ public:
             return;
         }
 
-        if (!sCharacterCache->GetCharacterGuidByName(delInfo.name).IsEmpty())
+        // Classic 1.60: the full name has to be free; several characters may share a name
+        std::string const surname = sCharacterCache->GetCharacterSurnameByGuid(delInfo.guid);
+        if (sCharacterCache->GetCharacterCacheByFullName(delInfo.name, surname))
         {
             handler->PSendSysMessage(LANG_CHARACTER_DELETED_SKIP_NAME, delInfo.name.c_str(), Trinity::ToString(delInfo.guid.GetCounter()), delInfo.accountId);
             return;
         }
+
+        // Everlake: the name must still be free for the account's Battle.net account on every realm
+        uint32 bnetAccount = Battlenet::AccountMgr::GetIdByGameAccount(delInfo.accountId);
+        NameReservationGuard nameReservation;
+        if (nameReservation.Reserve(delInfo.name, surname, delInfo.accountId, bnetAccount) != NameReservationMgr::Result::Reserved)
+        {
+            handler->PSendSysMessage(LANG_CHARACTER_DELETED_SKIP_NAME, delInfo.name.c_str(), Trinity::ToString(delInfo.guid.GetCounter()), delInfo.accountId);
+            return;
+        }
+        nameReservation.Commit();
+        sNameReservationMgr->Attach(delInfo.name, surname, delInfo.accountId, bnetAccount,
+            delInfo.guid.GetCounter());
 
         CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_UPD_RESTORE_DELETE_INFO);
         stmt->setString(0, delInfo.name);
@@ -330,8 +346,18 @@ public:
                 }
             }
 
-            CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_SEL_CHECK_NAME);
+            // Everlake: the new name must be free for the character's Battle.net account on every realm; a bot on this
+            // realm holding it gives it up
+            uint32 targetAccount = sCharacterCache->GetCharacterAccountIdByGuid(player->GetGUID());
+            uint32 targetBnetAccount = Battlenet::AccountMgr::GetIdByGameAccount(targetAccount);
+            // the character keeps its surname: the new full name is newName + that surname
+            std::string const surname = sCharacterCache->GetCharacterSurnameByGuid(player->GetGUID());
+            if (!sNameReservationMgr->IsExempt(targetAccount))
+                sNameReservationMgr->TryYield(newName, surname, targetBnetAccount);
+
+            CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_SEL_CHECK_NAME_SURNAME);
             stmt->setString(0, newName);
+            stmt->setString(1, surname);
             PreparedQueryResult result = CharacterDatabase.Query(stmt);
             if (result)
             {
@@ -339,6 +365,17 @@ public:
                 handler->SetSentErrorMessage(true);
                 return false;
             }
+
+            NameReservationGuard nameReservation;
+            if (nameReservation.Reserve(newName, surname, targetAccount, targetBnetAccount) != NameReservationMgr::Result::Reserved)
+            {
+                handler->PSendSysMessage(LANG_RENAME_PLAYER_ALREADY_EXISTS, newName.c_str());
+                handler->SetSentErrorMessage(true);
+                return false;
+            }
+            nameReservation.Commit();
+            sNameReservationMgr->Attach(newName, surname, targetAccount,
+                targetBnetAccount, player->GetGUID().GetCounter());
 
             // Remove declined name from db
             stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_CHAR_DECLINED_NAME);

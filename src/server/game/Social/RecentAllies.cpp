@@ -30,6 +30,7 @@
 #include "Group.h"
 #include "Creature.h"
 #include "Log.h"
+#include "Packet.h"
 #include "StringFormat.h"
 #include "ThreatManager.h"
 #include <mutex>

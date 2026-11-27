@@ -39,6 +39,8 @@ namespace
     std::atomic<uint64_t> g_roadPolysVisited{0};
     std::atomic<uint64_t> g_totalPolysVisited{0};
     std::atomic<uint64_t> g_pathsInInstance{0};
+    std::atomic<uint64_t> g_pathsOutOfNodes{0};
+    std::atomic<uint64_t> g_pathsPolyCapHit{0};
 
     // Per-map counters: same fields but fragmented by source-unit map id.
     // Protected by g_perMapMutex because std::unordered_map isn't a
@@ -76,6 +78,8 @@ dtQueryFilterTC::RoadStats dtQueryFilterTC::SampleStats()
     s.roadPolysVisited        = g_roadPolysVisited.load(std::memory_order_relaxed);
     s.totalPolysVisited       = g_totalPolysVisited.load(std::memory_order_relaxed);
     s.pathsInInstance         = g_pathsInInstance.load(std::memory_order_relaxed);
+    s.pathsOutOfNodes         = g_pathsOutOfNodes.load(std::memory_order_relaxed);
+    s.pathsPolyCapHit         = g_pathsPolyCapHit.load(std::memory_order_relaxed);
     return s;
 }
 
@@ -88,6 +92,8 @@ void dtQueryFilterTC::ResetStats()
     g_roadPolysVisited.store(0, std::memory_order_relaxed);
     g_totalPolysVisited.store(0, std::memory_order_relaxed);
     g_pathsInInstance.store(0, std::memory_order_relaxed);
+    g_pathsOutOfNodes.store(0, std::memory_order_relaxed);
+    g_pathsPolyCapHit.store(0, std::memory_order_relaxed);
 
     std::scoped_lock lock(g_perMapMutex);
     g_perMapStats.clear();
@@ -117,9 +123,15 @@ void dtQueryFilterTC::TallyPath(dtNavMesh const* mesh,
                                 bool roadBonusDisabled,
                                 float maxSlopeFactor,
                                 bool inInstance,
-                                uint32 mapId)
+                                uint32 mapId,
+                                bool outOfNodes,
+                                bool polyCapHit)
 {
     g_pathsRun.fetch_add(1, std::memory_order_relaxed);
+    if (outOfNodes)
+        g_pathsOutOfNodes.fetch_add(1, std::memory_order_relaxed);
+    if (polyCapHit)
+        g_pathsPolyCapHit.fetch_add(1, std::memory_order_relaxed);
     if (roadBonusDisabled)
         g_pathsRoadBonusDisabled.fetch_add(1, std::memory_order_relaxed);
     if (maxSlopeFactor > 1.10f)
@@ -161,6 +173,10 @@ void dtQueryFilterTC::TallyPath(dtNavMesh const* mesh,
             ++m.pathsWithSlopePenalty;
         if (inInstance)
             ++m.pathsInInstance;
+        if (outOfNodes)
+            ++m.pathsOutOfNodes;
+        if (polyCapHit)
+            ++m.pathsPolyCapHit;
         m.totalPolysVisited += polyCount;
         m.roadPolysVisited += roadCount;
         if (roadCount > 0)

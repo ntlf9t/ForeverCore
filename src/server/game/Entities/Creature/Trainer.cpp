@@ -101,12 +101,27 @@ namespace Trainer
         // Training window can cast it; casting it on the spot only trains the currently summoned pet once and
         // never lets the hunter train another pet. Profession ranks and the like teach a player spell and keep
         // the cast-to-learn behaviour, so only triggers that are real pet abilities are rerouted.
-        for (SpellEffectInfo const& effect : sSpellMgr->AssertSpellInfo(SpellId, DIFFICULTY_NONE)->GetEffects())
+        return IsPetTrainingSpell(*sSpellMgr->AssertSpellInfo(SpellId, DIFFICULTY_NONE), [](uint32 spellId) { return sSpellMgr->IsPetAbility(spellId); });
+    }
+
+    bool Spell::IsCastToTeach() const
+    {
+        return ::Trainer::IsCastToTeach(*sSpellMgr->AssertSpellInfo(SpellId, DIFFICULTY_NONE), [](uint32 spellId) { return sSpellMgr->IsPetAbility(spellId); });
+    }
+
+    bool IsPetTrainingSpell(SpellInfo const& spellInfo, std::function<bool(uint32)> const& isPetAbility)
+    {
+        for (SpellEffectInfo const& effect : spellInfo.GetEffects())
             if ((effect.Effect == SPELL_EFFECT_LEARN_SPELL || effect.Effect == SPELL_EFFECT_LEARN_PET_SPELL)
-                && effect.TriggerSpell && sSpellMgr->IsPetAbility(effect.TriggerSpell))
+                && effect.TriggerSpell && isPetAbility(effect.TriggerSpell))
                 return true;
 
         return false;
+    }
+
+    bool IsCastToTeach(SpellInfo const& spellInfo, std::function<bool(uint32)> const& isPetAbility)
+    {
+        return spellInfo.HasEffect(SPELL_EFFECT_LEARN_SPELL) && !IsPetTrainingSpell(spellInfo, isPetAbility);
     }
 
     Trainer::Trainer(uint32 id, Type type, std::string_view greeting, std::vector<Spell> spells) : _id(id), _type(type), _spells(std::move(spells))
@@ -182,7 +197,8 @@ namespace Trainer
         BattlePetSpeciesEntry const* speciesEntry = BattlePets::BattlePetMgr::GetBattlePetSpeciesBySpell(trainerSpell->SpellId);
         if (speciesEntry)
         {
-            if (player->GetSession()->GetBattlePetMgr()->HasMaxPetCount(speciesEntry, player->GetGUID()))
+            // A bot session has no battle pet journal (WorldSession::DropClientOnlyManagers): nothing to teach it
+            if (!player->GetSession()->GetBattlePetMgr() || player->GetSession()->GetBattlePetMgr()->HasMaxPetCount(speciesEntry, player->GetGUID()))
             {
                 // Don't send any error to client (intended)
                 return;
@@ -208,7 +224,7 @@ namespace Trainer
         }
 
         // learn explicitly or cast explicitly
-        if (trainerSpell->IsCastable() && !trainerSpell->TeachesPetAbility())
+        if (trainerSpell->IsCastToTeach())
         {
             player->CastSpell(player, trainerSpell->SpellId, true);
             if (Pet::GetTrainerTaughtPetSpell(trainerSpell->SpellId))
@@ -220,6 +236,7 @@ namespace Trainer
 
             if (speciesEntry)
             {
+                // checked above
                 player->GetSession()->GetBattlePetMgr()->AddPet(speciesEntry->ID, BattlePets::BattlePetMgr::SelectPetDisplay(speciesEntry),
                     BattlePets::BattlePetMgr::RollPetBreed(speciesEntry->ID), BattlePets::BattlePetMgr::GetDefaultPetQuality(speciesEntry->ID));
                 // If the spell summons a battle pet, we fake that it has been learned and the battle pet is added
@@ -323,7 +340,8 @@ namespace Trainer
             if (tally)
                 ++tally->taught;
 
-            if (trainerSpell.IsCastable())
+            // the same rule as TeachSpell: a pet training spell goes into the bot hunter's spellbook (advocaite/TrinityCore#113)
+            if (trainerSpell.IsCastToTeach())
                 player->CastSpell(player, trainerSpell.SpellId, true);
             else
                 player->LearnSpell(trainerSpell.SpellId, false);

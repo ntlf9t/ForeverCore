@@ -203,7 +203,7 @@ void BattlegroundMgr::BuildBattlegroundStatusNeedConfirmation(WorldPackets::Batt
     BuildBattlegroundStatusHeader(&battlefieldStatus->Hdr, player, ticketId, joinTime, queueId);
     battlefieldStatus->Mapid = bg->GetMapId();
     battlefieldStatus->Timeout = timeout;
-    battlefieldStatus->Role = 0;
+    battlefieldStatus->Role = Battleground::GetLfgRole(player->GetPrimarySpecializationEntry());
 }
 
 void BattlegroundMgr::BuildBattlegroundStatusActive(WorldPackets::Battleground::BattlefieldStatusActive* battlefieldStatus, Battleground const* bg, Player const* player, uint32 ticketId, uint32 joinTime, BattlegroundQueueTypeId queueId)
@@ -364,6 +364,22 @@ uint32 BattlegroundMgr::CreateClientVisibleInstanceId(BattlegroundTypeId bgTypeI
 
     clientIds.insert(nextId);
     return nextId;
+}
+
+// PlayerbotV2: the battleground with this instance id, whatever queue made it (GetBattleground also checks the queue)
+Battleground* BattlegroundMgr::FindBattlegroundByInstanceId(uint32 instanceId) const
+{
+    if (!instanceId)
+        return nullptr;
+
+    for (auto const& [bgTypeId, data] : bgDataStore)
+    {
+        BattlegroundContainer::const_iterator itr = data.m_Battlegrounds.find(instanceId);
+        if (itr != data.m_Battlegrounds.end())
+            return itr->second.get();
+    }
+
+    return nullptr;
 }
 
 // create a new battleground that will really be used to play

@@ -18,6 +18,7 @@
 #include "Map.h"
 #include "ScriptMgr.h"
 #include "InstanceScript.h"
+#include "Map.h"
 #include "MotionMaster.h"
 #include "naxxramas.h"
 #include "ObjectAccessor.h"
