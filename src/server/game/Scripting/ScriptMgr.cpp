@@ -1066,6 +1066,14 @@ public:
 
         std::unique_ptr<ScriptType> script_ptr(script);
 
+        if constexpr (std::is_base_of_v<MapScript<Map>, ScriptType> ||
+                      std::is_base_of_v<MapScript<InstanceMap>, ScriptType> ||
+                      std::is_base_of_v<MapScript<BattlegroundMap>, ScriptType>)
+        {
+            if (!script->GetEntry())
+                return;
+        }
+
         // Get an ID for the script.
         uint32 const id = sObjectMgr->GetScriptId(script->GetName());
 
@@ -2737,7 +2745,7 @@ WorldMapScript::WorldMapScript(char const* name, uint32 mapId) noexcept
     : ScriptObject(name), MapScript(sMapStore.LookupEntry(mapId))
 {
     if (!GetEntry())
-        TC_LOG_ERROR("scripts", "Invalid WorldMapScript for {}; no such map ID.", mapId);
+        TC_LOG_DEBUG("scripts", "WorldMapScript for map {} is unavailable; no such map ID.", mapId);
 
     if (GetEntry() && !GetEntry()->IsWorldMap())
         TC_LOG_ERROR("scripts", "WorldMapScript for map {} is invalid.", mapId);
@@ -2751,7 +2759,7 @@ InstanceMapScript::InstanceMapScript(char const* name, uint32 mapId) noexcept
     : ScriptObject(name), MapScript(sMapStore.LookupEntry(mapId))
 {
     if (!GetEntry())
-        TC_LOG_ERROR("scripts", "Invalid InstanceMapScript for {}; no such map ID.", mapId);
+        TC_LOG_DEBUG("scripts", "InstanceMapScript for map {} is unavailable; no such map ID.", mapId);
 
     if (GetEntry() && !GetEntry()->IsDungeon())
         TC_LOG_ERROR("scripts", "InstanceMapScript for map {} is invalid.", mapId);
@@ -2770,7 +2778,7 @@ BattlegroundMapScript::BattlegroundMapScript(char const* name, uint32 mapId) noe
     : ScriptObject(name), MapScript(sMapStore.LookupEntry(mapId))
 {
     if (!GetEntry())
-        TC_LOG_ERROR("scripts", "Invalid BattlegroundMapScript for {}; no such map ID.", mapId);
+        TC_LOG_DEBUG("scripts", "BattlegroundMapScript for map {} is unavailable; no such map ID.", mapId);
 
     if (GetEntry() && !GetEntry()->IsBattlegroundOrArena())
         TC_LOG_ERROR("scripts", "BattlegroundMapScript for map {} is invalid.", mapId);
