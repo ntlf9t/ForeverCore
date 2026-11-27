@@ -34,16 +34,19 @@ namespace BagSorting
         slotOwners.assign(slotCount, NoOwner);
         std::vector<bool> visited(slotCount);
 
-        auto assign = [&](auto&& self, std::size_t itemIndex) -> bool
+        auto assign = [&](auto&& self, std::size_t itemIndex, std::size_t fixedItems) -> bool
         {
             for (std::size_t slotIndex : preferences(itemIndex))
             {
                 if (visited[slotIndex] || !canAssign(itemIndex, slotIndex))
                     continue;
 
-                visited[slotIndex] = true;
                 std::size_t const owner = slotOwners[slotIndex];
-                if (owner == NoOwner || self(self, owner))
+                if (owner != NoOwner && owner < fixedItems)
+                    continue;
+
+                visited[slotIndex] = true;
+                if (owner == NoOwner || self(self, owner, fixedItems))
                 {
                     slotOwners[slotIndex] = itemIndex;
                     return true;
@@ -56,8 +59,33 @@ namespace BagSorting
         for (std::size_t itemIndex = itemCount; itemIndex-- > 0;)
         {
             std::fill(visited.begin(), visited.end(), false);
-            if (!assign(assign, itemIndex))
+            if (!assign(assign, itemIndex, 0))
                 return false;
+        }
+
+        // A displacement chain can reorder later items, so improve each assignment while keeping earlier ones fixed.
+        for (std::size_t itemIndex = 0; itemIndex < itemCount; ++itemIndex)
+        {
+            std::size_t const currentSlot = std::find(slotOwners.begin(), slotOwners.end(), itemIndex) - slotOwners.begin();
+            for (std::size_t slotIndex : preferences(itemIndex))
+            {
+                if (slotIndex == currentSlot)
+                    break;
+
+                std::size_t const owner = slotOwners[slotIndex];
+                if ((owner != NoOwner && owner < itemIndex) || !canAssign(itemIndex, slotIndex))
+                    continue;
+
+                slotOwners[currentSlot] = NoOwner;
+                std::fill(visited.begin(), visited.end(), false);
+                visited[slotIndex] = true;
+                if (owner == NoOwner || assign(assign, owner, itemIndex))
+                {
+                    slotOwners[slotIndex] = itemIndex;
+                    break;
+                }
+                slotOwners[currentSlot] = itemIndex;
+            }
         }
         return true;
     }

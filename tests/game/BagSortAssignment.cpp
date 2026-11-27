@@ -40,6 +40,19 @@ TEST_CASE("Bag sorting leaves a restricted slot available to its item", "[BagSor
     REQUIRE(owners == std::vector<std::size_t>{ 1, 0 });
 }
 
+TEST_CASE("Bag sorting preserves order after a chain of restricted-slot moves", "[BagSort]")
+{
+    std::array<std::size_t, 3> const order = { 0, 1, 2 };
+    std::vector<std::size_t> owners;
+    REQUIRE(BagSorting::AssignSlots(3, 3,
+        [&order](std::size_t) -> auto const& { return order; },
+        [](std::size_t item, std::size_t slot)
+        {
+            return item == 0 ? slot == 0 : item == 1 ? slot != 0 : true;
+        }, owners));
+    REQUIRE(owners == std::vector<std::size_t>{ 0, 1, 2 });
+}
+
 TEST_CASE("Bag sorting rejects an impossible assignment", "[BagSort]")
 {
     std::array<std::size_t, 1> const order = { 0 };
