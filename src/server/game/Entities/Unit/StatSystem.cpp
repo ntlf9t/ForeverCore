@@ -1498,13 +1498,23 @@ void Guardian::UpdateResistances(uint32 school)
 {
     if (school > SPELL_SCHOOL_NORMAL)
     {
-        float baseValue = GetFlatModifierValue(UnitMods(UNIT_MOD_RESISTANCE_START + school), BASE_VALUE);
-        float bonusValue = GetTotalAuraModValue(UnitMods(UNIT_MOD_RESISTANCE_START + school)) - baseValue;
+        UnitMods unitMod = UnitMods(UNIT_MOD_RESISTANCE_START + school);
+
+        // Same math as Unit::UpdateResistances: the full total must land in the main resistance field - it is what
+        // combat reads and what the character sheet displays. Writing only BASE_VALUE there shunted every flat/pct
+        // contribution (trained resistance ranks, owner-scaling pass-through) into the unread bonus field.
+        float value = GetFlatModifierValue(unitMod, BASE_VALUE);
+        value *= GetPctModifierValue(unitMod, BASE_PCT);
+
+        float baseValue = value;
+
+        value += GetFlatModifierValue(unitMod, TOTAL_VALUE);
+        value *= GetPctModifierValue(unitMod, TOTAL_PCT);
 
         // Classic 1.60 (vanilla): pets do not inherit their owner's resistances
 
-        SetResistance(SpellSchools(school), int32(baseValue));
-        SetBonusResistanceMod(SpellSchools(school), int32(bonusValue));
+        SetResistance(SpellSchools(school), int32(value));
+        SetBonusResistanceMod(SpellSchools(school), int32(value - baseValue));
     }
     else
         UpdateArmor();
