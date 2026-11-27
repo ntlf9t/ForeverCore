@@ -21,6 +21,7 @@
 #include "DBUpdater.h"
 #include "Log.h"
 
+#include <limits>
 #include <mysqld_error.h>
 
 DatabaseLoader::DatabaseLoader(std::string const& logger, uint32 const defaultUpdateMask)
@@ -51,9 +52,15 @@ DatabaseLoader& DatabaseLoader::AddDatabase(DatabaseWorkerPool<T>& pool, std::st
             return false;
         }
 
-        uint8 const synchThreads = uint8(sConfigMgr->GetIntDefault(name + "Database.SynchThreads", 1));
+        int32 const synchThreads = sConfigMgr->GetIntDefault(name + "Database.SynchThreads", 1);
+        if (synchThreads < 1 || synchThreads > std::numeric_limits<uint8>::max())
+        {
+            TC_LOG_ERROR(_logger, "{} database: invalid number of synchronous connections specified. "
+                "Please pick a value between 1 and 255.", name);
+            return false;
+        }
 
-        pool.SetConnectionInfo(dbString, asyncThreads, synchThreads);
+        pool.SetConnectionInfo(dbString, asyncThreads, uint8(synchThreads));
         if (uint32 error = pool.Open())
         {
             // Database does not exist

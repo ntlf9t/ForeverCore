@@ -151,6 +151,7 @@ HotfixDatabase.WorkerThreads    = 1
 #    CharacterDatabase.SynchThreads
 #    HotfixDatabase.SynchThreads
 #        Description: The number of MySQL connections spawned to handle.
+#                     Must be between 1 and 255.
 #        Default:     1 - (LoginDatabase.SynchThreads)
 #                     1 - (WorldDatabase.SynchThreads)
 #                     2 - (CharacterDatabase.SynchThreads)
