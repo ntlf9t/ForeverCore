@@ -427,7 +427,12 @@ void MySQLConnection::Ping()
         return;
     }
 
-    mysql_ping(m_Mysql);
+    if (mysql_ping(m_Mysql))
+    {
+        uint32 const error = mysql_errno(m_Mysql);
+        TC_LOG_ERROR("sql.sql", "MySQL ping failed for database `{}`: [{}] {}", m_connectionInfo.database, error, mysql_error(m_Mysql));
+        _HandleMySQLErrno(error);
+    }
 }
 
 uint32 MySQLConnection::GetLastError()
@@ -541,6 +546,8 @@ bool MySQLConnection::_HandleMySQLErrno(uint32 errNo, uint8 attempts /*= 15*/)
             {
                 TC_LOG_ERROR("sql.sql", "Lost the connection to the MySQL server!");
 
+                for (auto& stmt : m_stmts)
+                    stmt.reset();
                 mysql_close(m_Mysql);
                 m_Mysql = nullptr;
             }
