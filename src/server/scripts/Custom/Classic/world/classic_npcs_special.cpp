@@ -1023,6 +1023,17 @@ struct classic_npc_ayessa_spire : public ScriptedAI
         return true;
     }
 
+    void DamageTaken(Unit* /*attacker*/, uint32& damage, DamageEffectType /*damageType*/, SpellInfo const* /*spellInfo*/) override
+    {
+        if (!_busy)
+            return;
+
+        // Ayessa must survive to finish this scene and open its exit.
+        uint64 const health = me->GetHealth();
+        if (damage >= health)
+            damage = health > 1 ? uint32(health - 1) : 0;
+    }
+
     void ForAllies(std::function<void(Creature*)> const& fn)
     {
         for (uint32 entry : { NPC_SPIRE_SHAMAN, NPC_SPIRE_MAGE })
@@ -1144,8 +1155,10 @@ struct classic_npc_ayessa_spire : public ScriptedAI
                     // Elaadrin opens the Portal to Valanaar (1269466 on the official beta); it stays for the party to go home
                     if (Creature* elaadrin = me->FindNearestCreature(NPC_SPIRE_ELAADRIN, 60.0f))
                         elaadrin->CastSpell(elaadrin, SPELL_ELAADRIN_OPEN_PORTAL, true);
+                    // Keep the exit available after Ayessa leaves.
                     me->SummonGameObject(GO_PORTAL_TO_VALANAAR, SpirePortalHomePos,
-                        QuaternionData::fromEulerAnglesZYX(SpirePortalHomePos.GetOrientation(), 0.0f, 0.0f), 120s);
+                        QuaternionData::fromEulerAnglesZYX(SpirePortalHomePos.GetOrientation(), 0.0f, 0.0f),
+                        120s, GO_SUMMON_TIMED_DESPAWN);
                     break;
                 case EVENT_SPIRE_LEAVE:
                     me->CastSpell(me, SPELL_TELEPORT_VISUAL, true);
