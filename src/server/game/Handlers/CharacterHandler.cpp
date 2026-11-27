@@ -366,7 +366,6 @@ bool LoginQueryHolder::Initialize()
 
     stmt = CharacterDatabase.GetPreparedStatement(CHAR_SEL_ACCOUNT_CHARACTER_ACHIEVEMENTS);
     stmt->setUInt32(0, GetAccountId());
-    stmt->setUInt32(1, GetAccountId());
     res &= SetPreparedQuery(PLAYER_LOGIN_QUERY_LOAD_ACCOUNT_LEGACY_ACHIEVEMENTS, stmt);
 
     return res;
