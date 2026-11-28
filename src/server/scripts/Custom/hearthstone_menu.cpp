@@ -60,7 +60,10 @@ namespace
         SENDER_MAIN    = 1,
         SENDER_CITY    = 2,
         SENDER_PROFESSION = 3,
-        SENDER_UNSTUCK = 5
+        SENDER_UNSTUCK = 5,
+        SENDER_DUNGEON = 6,
+        SENDER_RAID = 7,
+        SENDER_BATTLEGROUND = 8
     };
 
     enum HearthstoneActions : uint32
@@ -73,12 +76,24 @@ namespace
         ACTION_BIND          = 6,
         ACTION_UNSTUCK_MENU  = 7,
         ACTION_CLOSE         = 8,
-        ACTION_PROFESSION_MENU = 9
+        ACTION_PROFESSION_MENU = 9,
+        ACTION_DUNGEON_MENU  = 10,
+        ACTION_RAID_MENU     = 11,
+        ACTION_BATTLEGROUND_MENU = 12
+    };
+
+    enum HearthstoneTeleportType : uint32
+    {
+        TELEPORT_CITY        = 0,
+        TELEPORT_DUNGEON     = 1,
+        TELEPORT_RAID        = 2,
+        TELEPORT_BATTLEGROUND = 3
     };
 
     struct HearthstoneTeleport
     {
         uint32 Team = 0;
+        uint32 Type = TELEPORT_CITY;
         uint32 Map = 0;
         float X = 0.f, Y = 0.f, Z = 0.f, O = 0.f;
         std::string Comment;
@@ -110,7 +125,7 @@ namespace
     {
         _cityTeleports.clear();
 
-        QueryResult result = WorldDatabase.Query("SELECT team, map, x, y, z, o, comment FROM Hearthstone_teleport ORDER BY idx ASC");
+        QueryResult result = WorldDatabase.Query("SELECT team, type, map, x, y, z, o, comment FROM Hearthstone_teleport ORDER BY idx ASC");
         if (!result)
         {
             TC_LOG_INFO("server.loading", ">> 炉石菜单：world.Hearthstone_teleport 为空，主城传送列表未加载。");
@@ -123,12 +138,13 @@ namespace
 
             HearthstoneTeleport tele;
             tele.Team    = fields[0].GetUInt32();
-            tele.Map     = fields[1].GetUInt32();
-            tele.X       = fields[2].GetFloat();
-            tele.Y       = fields[3].GetFloat();
-            tele.Z       = fields[4].GetFloat();
-            tele.O       = fields[5].GetFloat();
-            tele.Comment = fields[6].GetString();
+            tele.Type    = fields[1].GetUInt32();
+            tele.Map     = fields[2].GetUInt32();
+            tele.X       = fields[3].GetFloat();
+            tele.Y       = fields[4].GetFloat();
+            tele.Z       = fields[5].GetFloat();
+            tele.O       = fields[6].GetFloat();
+            tele.Comment = fields[7].GetString();
 
             _cityTeleports.push_back(std::move(tele));
         } while (result->NextRow());
@@ -208,6 +224,9 @@ namespace
         AddGossipItemFor(player, GossipOptionNpc::Binder,   "炉石回家（旅店绑定点）",   SENDER_MAIN, ACTION_HEARTHSTONE);
         AddGossipItemFor(player, GossipOptionNpc::Taxinode, "传送到炉石绑定点",         SENDER_MAIN, ACTION_TELEPORT_HOME);
         AddGossipItemFor(player, GossipOptionNpc::Taxinode, "世界主城传送",             SENDER_MAIN, ACTION_CITY_MENU);
+        AddGossipItemFor(player, GossipOptionNpc::Taxinode, "地下城副本传送",           SENDER_MAIN, ACTION_DUNGEON_MENU);
+        AddGossipItemFor(player, GossipOptionNpc::Taxinode, "团队副本传送",             SENDER_MAIN, ACTION_RAID_MENU);
+        AddGossipItemFor(player, GossipOptionNpc::Taxinode, "战场传送",                 SENDER_MAIN, ACTION_BATTLEGROUND_MENU);
         AddGossipItemFor(player, GossipOptionNpc::Vendor,   vendorText,                 SENDER_MAIN, ACTION_VENDOR);
         AddGossipItemFor(player, GossipOptionNpc::Binder,   bindText,                   SENDER_MAIN, ACTION_BIND,
             "确定要将炉石绑定点设置为当前位置吗？", 0, false);
@@ -243,7 +262,7 @@ namespace
         SendGossipMenuFor(player, DEFAULT_GOSSIP_MESSAGE, source);
     }
 
-    void ShowCityMenu(Player* player, ObjectGuid source)
+    void ShowTeleportMenu(Player* player, ObjectGuid source, uint32 type)
     {
         if (_cityTeleports.empty())
             LoadCityTeleports();
@@ -253,10 +272,21 @@ namespace
 
         for (uint32 i = 0; i < _cityTeleports.size(); ++i)
         {
+            if (_cityTeleports[i].Type != type)
+                continue;
+
             if (_cityTeleports[i].Team != 0 && _cityTeleports[i].Team != uint32(player->GetTeam()))
                 continue;
 
-            AddGossipItemFor(player, GossipOptionNpc::Taxinode, _cityTeleports[i].Comment, SENDER_CITY, i);
+            uint32 sender = SENDER_CITY;
+            if (type == TELEPORT_DUNGEON)
+                sender = SENDER_DUNGEON;
+            else if (type == TELEPORT_RAID)
+                sender = SENDER_RAID;
+            else if (type == TELEPORT_BATTLEGROUND)
+                sender = SENDER_BATTLEGROUND;
+
+            AddGossipItemFor(player, GossipOptionNpc::Taxinode, _cityTeleports[i].Comment, sender, i);
         }
 
         AddGossipItemFor(player, GossipOptionNpc::None, "返回", SENDER_MAIN, ACTION_MAIN_MENU);
@@ -344,7 +374,7 @@ namespace
             Notify(player, "炉石绑定点已失效，请重新绑定。");
     }
 
-    void TeleportToCity(Player* player, uint32 index)
+    void TeleportToCity(Player* player, uint32 index, uint32 expectedType)
     {
         CloseGossipMenuFor(player);
 
@@ -358,6 +388,12 @@ namespace
         }
 
         HearthstoneTeleport const& tele = _cityTeleports[index];
+        if (tele.Type != expectedType)
+        {
+            Notify(player, "该传送点不属于当前传送分类。");
+            return;
+        }
+
         if (tele.Team != 0 && tele.Team != uint32(player->GetTeam()))
         {
             Notify(player, "该传送点不属于你的阵营。");
@@ -638,7 +674,16 @@ public:
                         TeleportToBindPoint(player);
                         break;
                     case ACTION_CITY_MENU:
-                        ShowCityMenu(player, source);
+                        ShowTeleportMenu(player, source, TELEPORT_CITY);
+                        break;
+                    case ACTION_DUNGEON_MENU:
+                        ShowTeleportMenu(player, source, TELEPORT_DUNGEON);
+                        break;
+                    case ACTION_RAID_MENU:
+                        ShowTeleportMenu(player, source, TELEPORT_RAID);
+                        break;
+                    case ACTION_BATTLEGROUND_MENU:
+                        ShowTeleportMenu(player, source, TELEPORT_BATTLEGROUND);
                         break;
                     case ACTION_VENDOR:
                         SummonPortableVendor(player);
@@ -662,7 +707,16 @@ public:
                 }
                 break;
             case SENDER_CITY:
-                TeleportToCity(player, action);
+                TeleportToCity(player, action, TELEPORT_CITY);
+                break;
+            case SENDER_DUNGEON:
+                TeleportToCity(player, action, TELEPORT_DUNGEON);
+                break;
+            case SENDER_RAID:
+                TeleportToCity(player, action, TELEPORT_RAID);
+                break;
+            case SENDER_BATTLEGROUND:
+                TeleportToCity(player, action, TELEPORT_BATTLEGROUND);
                 break;
             case SENDER_PROFESSION:
                 LearnPrimaryProfession(player, action);
