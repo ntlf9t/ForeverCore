@@ -15,7 +15,6 @@
 
 #include "Chat.h"
 #include "ChatCommand.h"
-#include "Creature.h"
 #include "DatabaseEnv.h"
 #include "GameTime.h"
 #include "GossipDef.h"
@@ -30,7 +29,6 @@
 #include "Spell.h"
 #include "SpellHistory.h"
 #include "SpellMgr.h"
-#include "TemporarySummon.h"
 #include "World.h"
 #include "WorldSession.h"
 
@@ -47,11 +45,9 @@ namespace
     constexpr uint32 HEARTHSTONE_MENU_ID  = 21;      // 合法 GossipID，否则客户端会忽略服务器主动推送的菜单
     constexpr uint32 GHOST_AURA_SPELL_ID  = 8326;    // 幽灵状态
     constexpr uint32 UNSTUCK_COOLDOWN     = 7200;    // 解卡冷却：2 小时
-    constexpr uint32 VENDOR_COOLDOWN      = 600;     // 随身商人冷却：10 分钟
     constexpr uint32 BIND_COOLDOWN        = 600;     // 绑定炉石冷却：10 分钟
-    constexpr uint32 LONE_BIND_COOLDOWN   = 1800;    // 孤勇绑定炉石冷却：30 分钟
 
-    // 随身商人（与 portable_services 共用商人 NPC 及 npc_vendor 数据）
+    // 随身商人复用现有阵营武器商 npc_vendor 数据，但不会召唤 NPC。
     constexpr uint32 PORTABLE_VENDOR_HORDE    = 3625; // 兽人商人
     constexpr uint32 PORTABLE_VENDOR_ALLIANCE = 1459; // 人类商人
 
@@ -79,7 +75,9 @@ namespace
         ACTION_PROFESSION_MENU = 9,
         ACTION_DUNGEON_MENU  = 10,
         ACTION_RAID_MENU     = 11,
-        ACTION_BATTLEGROUND_MENU = 12
+        ACTION_BATTLEGROUND_MENU = 12,
+        ACTION_BANK          = 13,
+        ACTION_MAILBOX       = 14
     };
 
     enum HearthstoneTeleportType : uint32
@@ -186,11 +184,6 @@ namespace
         return std::to_string(minutes) + " 分钟";
     }
 
-    uint32 GetBindCooldown(Player* player)
-    {
-        return PlayerMode::IsLone(player) ? LONE_BIND_COOLDOWN : BIND_COOLDOWN;
-    }
-
     uint32 GetUnstuckCooldownRemaining(uint64 guidLow, uint32 now)
     {
         QueryResult result = CharacterDatabase.PQuery(
@@ -212,13 +205,9 @@ namespace
 
         uint32 now = uint32(GameTime::GetGameTime());
         ObjectGuid::LowType guid = player->GetGUID().GetCounter();
-        std::string vendorText = "召唤随身商人";
         std::string bindText = "绑定炉石（记录当前位置）";
 
-        if (uint32 remaining = GetCooldownRemaining(guid, "last_vendor_time", VENDOR_COOLDOWN, now))
-            vendorText += "（冷却：" + FormatCooldown(remaining) + "）";
-
-        if (uint32 remaining = GetCooldownRemaining(guid, "last_bind_time", GetBindCooldown(player), now))
+        if (uint32 remaining = GetCooldownRemaining(guid, "last_bind_time", BIND_COOLDOWN, now))
             bindText += "（冷却：" + FormatCooldown(remaining) + "）";
 
         AddGossipItemFor(player, GossipOptionNpc::Binder,   "炉石回家（旅店绑定点）",   SENDER_MAIN, ACTION_HEARTHSTONE);
@@ -227,7 +216,9 @@ namespace
         AddGossipItemFor(player, GossipOptionNpc::Taxinode, "地下城副本传送",           SENDER_MAIN, ACTION_DUNGEON_MENU);
         AddGossipItemFor(player, GossipOptionNpc::Taxinode, "团队副本传送",             SENDER_MAIN, ACTION_RAID_MENU);
         AddGossipItemFor(player, GossipOptionNpc::Taxinode, "战场传送",                 SENDER_MAIN, ACTION_BATTLEGROUND_MENU);
-        AddGossipItemFor(player, GossipOptionNpc::Vendor,   vendorText,                 SENDER_MAIN, ACTION_VENDOR);
+        AddGossipItemFor(player, GossipOptionNpc::Vendor,   "打开随身商人",             SENDER_MAIN, ACTION_VENDOR);
+        AddGossipItemFor(player, GossipOptionNpc::Banker,   "打开随身银行",             SENDER_MAIN, ACTION_BANK);
+        AddGossipItemFor(player, GossipOptionNpc::Mailbox,  "打开随身邮箱",             SENDER_MAIN, ACTION_MAILBOX);
         AddGossipItemFor(player, GossipOptionNpc::Binder,   bindText,                   SENDER_MAIN, ACTION_BIND,
             "确定要将炉石绑定点设置为当前位置吗？", 0, false);
         if (sWorld->getIntConfig(CONFIG_MAX_PRIMARY_TRADE_SKILL) > 2)
@@ -443,7 +434,7 @@ namespace
         ChatHandler(player->GetSession()).PSendSysMessage("已学习主专业：%s。", profession.Name);
     }
 
-    // 随身商人：召唤临时商人并直接打开购买列表
+    // 随身商人：直接打开虚拟阵营商人窗口
     void SummonPortableVendor(Player* player)
     {
         CloseGossipMenuFor(player);
@@ -451,39 +442,20 @@ namespace
         if (!player->IsInWorld())
             return;
 
-        uint32 now = uint32(GameTime::GetGameTime());
-        if (uint32 remaining = GetCooldownRemaining(player->GetGUID().GetCounter(), "last_vendor_time", VENDOR_COOLDOWN, now))
-        {
-            Notify(player, "随身商人冷却中，剩余 " + FormatCooldown(remaining) + "。");
-            return;
-        }
+        uint32 entry = player->GetTeam() == ALLIANCE ? PORTABLE_VENDOR_ALLIANCE : PORTABLE_VENDOR_HORDE;
+        player->GetSession()->SendListInventory(player->GetGUID(), entry);
+    }
 
-        bool alliance = player->GetTeam() == ALLIANCE;
-        uint32 entry = alliance ? PORTABLE_VENDOR_ALLIANCE : PORTABLE_VENDOR_HORDE;
+    void ShowPortableBank(Player* player)
+    {
+        CloseGossipMenuFor(player);
+        player->GetSession()->SendShowBank(player->GetGUID(), PlayerInteractionType::CharacterBanker);
+    }
 
-        float x = player->GetPositionX() + 2.0f;
-        float y = player->GetPositionY();
-        float z = player->GetPositionZ();
-        float o = player->GetOrientation();
-
-        TempSummon* summon = player->SummonCreature(entry, x, y, z, o, TEMPSUMMON_TIMED_DESPAWN, 60s);
-        if (!summon)
-        {
-            Notify(player, "无法召唤随身商人，请稍后再试。");
-            return;
-        }
-
-        Creature* vendor = summon->ToCreature();
-        if (!vendor)
-            return;
-
-        // 只禁止攻击，不改阵营
-        vendor->SetFaction(alliance ? 12 : 1215);
-        vendor->SetUnitFlag(UNIT_FLAG_NON_ATTACKABLE);
-        vendor->SetReactState(REACT_PASSIVE);
-
-        player->GetSession()->SendListInventory(vendor->GetGUID());
-        UpdateCooldown(player->GetGUID().GetCounter(), "last_vendor_time", now);
+    void ShowPortableMailbox(Player* player)
+    {
+        CloseGossipMenuFor(player);
+        player->GetSession()->SendShowMailBox(player->GetGUID());
     }
 
     // 绑定炉石：将当前位置写入 characters.Hearthstone_teleport_home
@@ -498,7 +470,7 @@ namespace
         }
 
         uint32 now = uint32(GameTime::GetGameTime());
-        if (uint32 remaining = GetCooldownRemaining(player->GetGUID().GetCounter(), "last_bind_time", GetBindCooldown(player), now))
+        if (uint32 remaining = GetCooldownRemaining(player->GetGUID().GetCounter(), "last_bind_time", BIND_COOLDOWN, now))
         {
             Notify(player, "绑定炉石冷却中，剩余 " + FormatCooldown(remaining) + "。");
             return;
@@ -687,6 +659,12 @@ public:
                         break;
                     case ACTION_VENDOR:
                         SummonPortableVendor(player);
+                        break;
+                    case ACTION_BANK:
+                        ShowPortableBank(player);
+                        break;
+                    case ACTION_MAILBOX:
+                        ShowPortableMailbox(player);
                         break;
                     case ACTION_BIND:
                         BindHearthstone(player);

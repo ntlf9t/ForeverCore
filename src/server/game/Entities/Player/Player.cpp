@@ -25277,10 +25277,10 @@ inline bool Player::_StoreOrEquipNewItem(uint32 vendorslot, uint32 item, uint8 c
         EquipNewItem(uiDest, item, ItemContext::Vendor, true);
     if (it)
     {
-        uint32 new_count = pVendor->UpdateVendorItemCurrentCount(crItem, count);
+        uint32 new_count = pVendor ? pVendor->UpdateVendorItemCurrentCount(crItem, count) : 0;
 
         WorldPackets::Item::BuySucceeded packet;
-        packet.VendorGUID = pVendor->GetGUID();
+        packet.VendorGUID = pVendor ? pVendor->GetGUID() : GetGUID();
         packet.Muid = vendorslot + 1;
         packet.NewQuantity = crItem->maxcount > 0 ? new_count : 0xFFFFFFFF;
         packet.QuantityBought = count;
@@ -25323,7 +25323,11 @@ bool Player::BuyCurrencyFromVendorSlot(ObjectGuid vendorGuid, uint32 vendorSlot,
     }
 
     Creature* creature = GetNPCIfCanInteractWith(vendorGuid, UNIT_NPC_FLAG_VENDOR, UNIT_NPC_FLAG_2_NONE);
-    if (!creature)
+    InteractionData& interaction = PlayerTalkClass->GetInteractionData();
+    uint32 virtualVendorEntry = vendorGuid == GetGUID()
+        && interaction.IsInteractingWith(vendorGuid, PlayerInteractionType::Vendor)
+        ? interaction.GetVirtualVendorEntry() : 0;
+    if (!creature && !virtualVendorEntry)
     {
         TC_LOG_DEBUG("network", "Player::BuyCurrencyFromVendorSlot: Vendor ({}) not found or player '{}' ({}) can't interact with him.",
             vendorGuid.ToString(), GetName(), GetGUID().ToString());
@@ -25331,7 +25335,7 @@ bool Player::BuyCurrencyFromVendorSlot(ObjectGuid vendorGuid, uint32 vendorSlot,
         return false;
     }
 
-    VendorItemData const* vItems = creature->GetVendorItems();
+    VendorItemData const* vItems = creature ? creature->GetVendorItems() : sObjectMgr->GetNpcVendorItemList(virtualVendorEntry);
     if (!vItems || vItems->Empty())
     {
         SendBuyError(BUY_ERR_CANT_FIND_ITEM, creature, vendorSlot);
@@ -25521,7 +25525,11 @@ bool Player::BuyItemFromVendorSlot(ObjectGuid vendorguid, uint32 vendorslot, uin
         return false;
 
     Creature* creature = GetNPCIfCanInteractWith(vendorguid, UNIT_NPC_FLAG_VENDOR, UNIT_NPC_FLAG_2_NONE);
-    if (!creature)
+    InteractionData& interaction = PlayerTalkClass->GetInteractionData();
+    uint32 virtualVendorEntry = vendorguid == GetGUID()
+        && interaction.IsInteractingWith(vendorguid, PlayerInteractionType::Vendor)
+        ? interaction.GetVirtualVendorEntry() : 0;
+    if (!creature && !virtualVendorEntry)
     {
         TC_LOG_DEBUG("network", "Player::BuyItemFromVendorSlot: Vendor ({}) not found or player '{}' ({}) can't interact with him.",
             vendorguid.ToString(), GetName(), GetGUID().ToString());
@@ -25529,15 +25537,16 @@ bool Player::BuyItemFromVendorSlot(ObjectGuid vendorguid, uint32 vendorslot, uin
         return false;
     }
 
-    if (!sConditionMgr->IsObjectMeetingVendorItemConditions(creature->GetEntry(), item, this, creature))
+    uint32 vendorEntry = creature ? creature->GetEntry() : virtualVendorEntry;
+    if (!sConditionMgr->IsObjectMeetingVendorItemConditions(vendorEntry, item, this, creature))
     {
         TC_LOG_DEBUG("condition", "Player::BuyItemFromVendorSlot: Player '{}' ({}) doesn't meed conditions for creature (Entry: {}, Item: {})",
-            GetName(), GetGUID().ToString(), creature->GetEntry(), item);
+            GetName(), GetGUID().ToString(), vendorEntry, item);
         SendBuyError(BUY_ERR_CANT_FIND_ITEM, creature, vendorslot);
         return false;
     }
 
-    VendorItemData const* vItems = creature->GetVendorItems();
+    VendorItemData const* vItems = creature ? creature->GetVendorItems() : sObjectMgr->GetNpcVendorItemList(virtualVendorEntry);
     if (!vItems || vItems->Empty())
     {
         SendBuyError(BUY_ERR_CANT_FIND_ITEM, creature, vendorslot);
@@ -25567,7 +25576,7 @@ bool Player::BuyItemFromVendorSlot(ObjectGuid vendorguid, uint32 vendorslot, uin
     // check current item amount if it limited
     if (crItem->maxcount != 0)
     {
-        if (creature->GetVendorItemCurrentCount(crItem) < count)
+        if (creature && creature->GetVendorItemCurrentCount(crItem) < count)
         {
             SendBuyError(BUY_ERR_ITEM_ALREADY_SOLD, creature, vendorslot);
             return false;
@@ -25680,7 +25689,7 @@ bool Player::BuyItemFromVendorSlot(ObjectGuid vendorguid, uint32 vendorslot, uin
         price = Trinity::VendorPrice::ForItems(basePrice, pProto->GetBuyCount(), count);
 
         // reputation discount
-        price = uint64(floor(price * GetReputationPriceDiscount(creature)));
+        price = uint64(floor(price * (creature ? GetReputationPriceDiscount(creature) : 1.0f)));
         if (basePrice > 0)
             price = std::max(uint64(1), price);
 

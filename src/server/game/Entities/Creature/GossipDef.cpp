@@ -386,6 +386,7 @@ void InteractionData::StartInteraction(ObjectGuid target, PlayerInteractionType 
 {
     SourceGuid = target;
     Type = type;
+    _virtualVendorEntry = 0;
     IsLaunchedByQuest = false;
     switch (type)
     {
@@ -404,6 +405,7 @@ void InteractionData::Reset()
 {
     SourceGuid.Clear();
     Type = PlayerInteractionType::None;
+    _virtualVendorEntry = 0;
     IsLaunchedByQuest = false;
     _data.emplace<std::monostate>();
 }

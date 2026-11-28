@@ -280,6 +280,8 @@ public:
 
     void StartInteraction(ObjectGuid target, PlayerInteractionType type);
     bool IsInteractingWith(ObjectGuid target, PlayerInteractionType type) const { return SourceGuid == target && Type == type; }
+    uint32 GetVirtualVendorEntry() const { return _virtualVendorEntry; }
+    void SetVirtualVendorEntry(uint32 entry) { _virtualVendorEntry = entry; }
     void Reset();
 
     ObjectGuid SourceGuid;
@@ -298,6 +300,7 @@ public:
     bool IsLaunchedByQuest = false;
 
 private:
+    uint32 _virtualVendorEntry = 0;
     uint16 _playerChoiceResponseIdentifierGenerator = 0; // not reset between interactions
     std::variant<std::monostate, TrainerData, PlayerChoiceData> _data;
 };

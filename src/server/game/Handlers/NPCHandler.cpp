@@ -88,6 +88,8 @@ void WorldSession::SendTabardVendorActivate(ObjectGuid guid, TabardVendorType ty
 
 void WorldSession::SendShowMailBox(ObjectGuid guid)
 {
+    _player->PlayerTalkClass->GetInteractionData().StartInteraction(guid, PlayerInteractionType::MailInfo);
+
     WorldPackets::NPC::NPCInteractionOpenResult npcInteraction;
     npcInteraction.Npc = guid;
     npcInteraction.InteractionType = PlayerInteractionType::MailInfo;
@@ -428,7 +430,11 @@ void WorldSession::HandleRepairItemOpcode(WorldPackets::Item::RepairItem& packet
         packet.NpcGUID.ToString(), packet.ItemGUID.ToString(), packet.UseGuildBank);
 
     Creature* unit = GetPlayer()->GetNPCIfCanInteractWith(packet.NpcGUID, UNIT_NPC_FLAG_REPAIR, UNIT_NPC_FLAG_2_NONE);
-    if (!unit)
+    InteractionData& interaction = GetPlayer()->PlayerTalkClass->GetInteractionData();
+    bool isVirtualVendor = packet.NpcGUID == GetPlayer()->GetGUID()
+        && interaction.IsInteractingWith(packet.NpcGUID, PlayerInteractionType::Vendor)
+        && interaction.GetVirtualVendorEntry();
+    if (!unit && !isVirtualVendor)
     {
         TC_LOG_DEBUG("network", "WORLD: HandleRepairItemOpcode - {} not found or you can not interact with him.", packet.NpcGUID.ToString());
         return;
@@ -439,7 +445,7 @@ void WorldSession::HandleRepairItemOpcode(WorldPackets::Item::RepairItem& packet
         GetPlayer()->RemoveAurasByType(SPELL_AURA_FEIGN_DEATH);
 
     // reputation discount
-    float discountMod = _player->GetReputationPriceDiscount(unit);
+    float discountMod = unit ? _player->GetReputationPriceDiscount(unit) : 1.0f;
 
     if (!packet.ItemGUID.IsEmpty())
     {
