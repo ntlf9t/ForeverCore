@@ -104,6 +104,10 @@ std::vector<Catalog::Entry> const& RussianChatterEntries();
 Catalog const& Chinese();
 std::vector<Catalog::Entry> const& ChineseEntries();
 
+// Adds database-provided stock chatter at module initialization, before worker threads start.
+// The source and translation retain ike3's %placeholders and are registered with Catalog::AddChatter.
+bool AddChatterTranslation(Lang lang, std::string_view source, std::string_view translation);
+
 // `text` for a player reading `lang`.
 std::string Translate(Lang lang, std::string_view text);
 

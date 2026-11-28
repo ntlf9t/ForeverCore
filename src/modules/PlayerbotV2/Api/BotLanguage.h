@@ -2,7 +2,7 @@
 //
 // The text itself is translated by Util/BotLocaleText (the catalogs). This file decides the reader's language and sends:
 //
-//   * the player's choice, `.bot language auto|en|ru` (per account, kept in playerbot_v2_owner_language);
+//   * the player's choice, `.bot language auto|en|ru|zh` (per account, kept in playerbot_v2_owner_language);
 //   * else the client's language: the session's locale when the realm loads that language (Load.Locales / DBC files), else the
 //     locale the client reported at login (auth `account.locale`, read once per login), so a Russian client on a realm with
 //     English data still gets Russian replies;

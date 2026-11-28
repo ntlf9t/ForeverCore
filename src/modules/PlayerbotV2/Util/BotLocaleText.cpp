@@ -409,15 +409,32 @@ Catalog const& Russian()
     return catalog;
 }
 
-Catalog const& Chinese()
+namespace
 {
-    static Catalog const catalog = []
+Catalog& ChineseMutable()
+{
+    static Catalog catalog = []
     {
         Catalog c(ChineseEntries());
         c.SetMoneyUnits("金", "银", "铜");
         return c;
     }();
     return catalog;
+}
+}
+
+Catalog const& Chinese()
+{
+    return ChineseMutable();
+}
+
+bool AddChatterTranslation(Lang lang, std::string_view source, std::string_view translation)
+{
+    if (lang != Lang::Zh)
+        return false;
+
+    // Chinese() is backed by a catalog whose contents are extended once during module initialization.
+    return ChineseMutable().AddChatter(source, translation);
 }
 
 bool NeverTranslate(std::string_view text)

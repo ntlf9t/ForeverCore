@@ -76,6 +76,24 @@ private:
 void Load()
 {
     g_enabled = sConfigMgr->GetBoolDefault("Playerbot.Language.Enable", true, true);
+    std::string const shared = sConfigMgr->GetStringDefault("Playerbot.SharedDatabase", "playerbot", true);
+    size_t chatter_loaded = 0;
+    size_t chatter_rejected = 0;
+    if (QueryResult r = CharacterDatabase.Query(Trinity::StringFormat(
+            "SELECT DISTINCT b.text, l.text FROM `{}`.playerbot_v2_bot_text_locale l "
+            "JOIN `{}`.playerbot_v2_bot_text b ON b.id = l.text_id "
+            "WHERE l.locale = 'zhCN' ORDER BY b.text", shared, shared).c_str()))
+    {
+        do
+        {
+            Field* f = r->Fetch();
+            if (Locale::AddChatterTranslation(Locale::Lang::Zh, f[0].GetString(), f[1].GetString()))
+                ++chatter_loaded;
+            else
+                ++chatter_rejected;
+        } while (r->NextRow());
+    }
+
     std::unordered_map<uint32, Pref> prefs;
     if (QueryResult r = CharacterDatabase.Query("SELECT owner_account_id, language FROM playerbot_v2_owner_language"))
         do
@@ -92,6 +110,8 @@ void Load()
     }
     TC_LOG_INFO("playerbot.v2", "[language] bot replies in the player's language {} ({} Russian, {} Chinese catalog entries, {} players chose a language)",
         g_enabled ? "on" : "off", Locale::Russian().Size(), Locale::Chinese().Size(), n);
+    TC_LOG_INFO("playerbot.v2", "[language] loaded {} Simplified Chinese bot-text translation(s); {} refused",
+        chatter_loaded, chatter_rejected);
     for (std::string const& bad : Locale::Russian().Rejected())
         TC_LOG_ERROR("playerbot.v2", "[language] Russian catalog entry refused (malformed or duplicate): \"{}\"", bad);
     for (std::string const& bad : Locale::Chinese().Rejected())
