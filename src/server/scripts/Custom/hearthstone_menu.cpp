@@ -48,8 +48,8 @@ namespace
     constexpr uint32 BIND_COOLDOWN        = 600;     // 绑定炉石冷却：10 分钟
 
     // 随身商人复用现有阵营武器商 npc_vendor 数据，但不会召唤 NPC。
-    constexpr uint32 PORTABLE_VENDOR_HORDE    = 3625; // 兽人商人
-    constexpr uint32 PORTABLE_VENDOR_ALLIANCE = 1459; // 人类商人
+    constexpr uint32 PORTABLE_VENDOR_HORDE    = 981;  // Hartash，兽人武器商（支持维修）
+    constexpr uint32 PORTABLE_VENDOR_ALLIANCE = 4231; // Kieran，联盟武器商（支持维修）
 
     enum HearthstoneSenders : uint32
     {

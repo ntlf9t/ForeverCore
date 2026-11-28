@@ -1,18 +1,18 @@
 -- ============================================================
 -- 随身商店：基础箭矢 / 弹药
--- 部落 3625 兽人商人；联盟 1459 人类商人
+-- 部落 981 Hartash 武器商；联盟 4231 Kieran 武器商（均支持维修）
 -- ============================================================
 SET NAMES utf8mb4;
 
 -- 商品
-DELETE FROM world.npc_vendor WHERE entry IN (3625, 1459) AND item IN (274387, 274388);
+DELETE FROM world.npc_vendor WHERE entry IN (981, 4231) AND item IN (274387, 274388);
 INSERT INTO world.npc_vendor
   (entry, slot, item, maxcount, incrtime, ExtendedCost, type, BonusListIDs, PlayerConditionID, IgnoreFiltering, VerifiedBuild)
 VALUES
-  (3625, 100, 274387, 0, 0, 0, 1, NULL, 0, 0, 70959),
-  (3625, 101, 274388, 0, 0, 0, 1, NULL, 0, 0, 70959),
-  (1459, 100, 274387, 0, 0, 0, 1, NULL, 0, 0, 70959),
-  (1459, 101, 274388, 0, 0, 0, 1, NULL, 0, 0, 70959);
+  (981, 100, 274387, 0, 0, 0, 1, NULL, 0, 0, 70959),
+  (981, 101, 274388, 0, 0, 0, 1, NULL, 0, 0, 70959),
+  (4231, 100, 274387, 0, 0, 0, 1, NULL, 0, 0, 70959),
+  (4231, 101, 274388, 0, 0, 0, 1, NULL, 0, 0, 70959);
 
 -- 改成 1 级可用的基础箭矢 / 弹药，价格 10 铜
 UPDATE hotfixes.item_sparse
@@ -38,4 +38,4 @@ VALUES (@hid, @hid, 1397625698, 274388, 1, 70959);
 SELECT v.entry, v.item, s.Display, s.ItemLevel, s.RequiredLevel, s.BuyPrice
 FROM world.npc_vendor v
 JOIN hotfixes.item_sparse s ON s.ID = v.item
-WHERE v.entry = 3625 AND v.item IN (274387, 274388);
+WHERE v.entry = 981 AND v.item IN (274387, 274388);
