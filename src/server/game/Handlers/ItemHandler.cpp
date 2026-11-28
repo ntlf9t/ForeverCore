@@ -687,6 +687,20 @@ void WorldSession::SendListInventory(ObjectGuid vendorGuid, uint32 virtualVendor
     if (GetPlayer()->HasUnitState(UNIT_STATE_DIED))
         GetPlayer()->RemoveAurasByType(SPELL_AURA_FEIGN_DEATH);
 
+    if (!vendor && vendorGuid == GetPlayer()->GetGUID()
+        && !interaction.IsInteractingWith(vendorGuid, PlayerInteractionType::Vendor))
+    {
+        interaction.StartInteraction(vendorGuid, PlayerInteractionType::Vendor);
+        interaction.SetVirtualVendorEntry(virtualVendorEntry);
+
+        WorldPackets::NPC::NPCInteractionOpenResult npcInteraction;
+        npcInteraction.Npc = vendorGuid;
+        npcInteraction.InteractionType = PlayerInteractionType::Merchant;
+        npcInteraction.Success = true;
+        SendPacket(npcInteraction.Write());
+        return;
+    }
+
     interaction.StartInteraction(vendorGuid, PlayerInteractionType::Vendor);
     if (virtualVendorEntry)
         interaction.SetVirtualVendorEntry(virtualVendorEntry);

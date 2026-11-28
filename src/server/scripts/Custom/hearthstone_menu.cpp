@@ -449,13 +449,19 @@ namespace
     void ShowPortableBank(Player* player)
     {
         CloseGossipMenuFor(player);
-        player->GetSession()->SendShowBank(player->GetGUID(), PlayerInteractionType::CharacterBanker);
+        player->m_Events.AddEventAtOffset([player]()
+        {
+            player->GetSession()->SendShowBank(player->GetGUID(), PlayerInteractionType::Banker);
+        }, 100ms);
     }
 
     void ShowPortableMailbox(Player* player)
     {
         CloseGossipMenuFor(player);
-        player->GetSession()->SendShowMailBox(player->GetGUID());
+        player->m_Events.AddEventAtOffset([player]()
+        {
+            player->GetSession()->SendShowMailBox(player->GetGUID());
+        }, 100ms);
     }
 
     // 绑定炉石：将当前位置写入 characters.Hearthstone_teleport_home
