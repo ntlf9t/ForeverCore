@@ -80,7 +80,7 @@ void Load()
     size_t chatter_loaded = 0;
     size_t chatter_rejected = 0;
     if (QueryResult r = CharacterDatabase.Query(Trinity::StringFormat(
-            "SELECT DISTINCT b.text, l.text FROM `{}`.playerbot_v2_bot_text_locale l "
+            "SELECT DISTINCT b.text AS source_text, l.text AS localized_text FROM `{}`.playerbot_v2_bot_text_locale l "
             "JOIN `{}`.playerbot_v2_bot_text b ON b.id = l.text_id "
             "WHERE l.locale = 'zhCN' ORDER BY b.text", shared, shared).c_str()))
     {
